@@ -1,0 +1,6 @@
+{
+  "name": "Autonomous AI Employee Hub",
+  "description": "Платформа для создания и управления штабом автономных ИИ-агентов для малого бизнеса: голосовой клон, SMART-планирование, ведение соцсетей, ответы клиентам и аналитика.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

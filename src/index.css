@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Manrope:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Manrope", "Inter", sans-serif;
+  --font-mono: "Inter", "Manrope", sans-serif;
+  
+  --color-accent: var(--accent, #F5A623);
+  --color-accent-hover: #e08d10;
+  --color-dark-base: #0A0A0B;
+  --color-dark-sec-1: #0E0E10;
+  --color-dark-sec-2: #131316;
+  --color-dark-card: rgba(255, 255, 255, 0.04);
+}
+
+@layer base {
+  body {
+    background: #0A0A0B;
+    background-image: 
+      radial-gradient(circle at 10% 15%, rgba(245, 166, 35, 0.05) 0%, transparent 45%),
+      radial-gradient(circle at 90% 85%, rgba(245, 166, 35, 0.04) 0%, transparent 50%),
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.01) 0%, transparent 60%);
+    background-attachment: fixed;
+    color: #FFFFFF;
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom premium scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0A0A0B;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+/* Glowing utilities */
+.neon-glow-accent {
+  text-shadow: 0 0 16px rgba(245, 166, 35, 0.25), 0 0 32px rgba(245, 166, 35, 0.1);
+}
+
+.premium-border {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.premium-card {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04), 0 8px 32px 0 rgba(0, 0, 0, 0.35);
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.premium-card:hover {
+  border-color: rgba(245, 166, 35, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.06), 0 12px 40px -10px rgba(0, 0, 0, 0.5), 0 0 25px 0 rgba(245, 166, 35, 0.15);
+}
+
+/* Audio wave animation */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+.animate-wave {
+  animation: wave 1.2s ease-in-out infinite;
+}
+
