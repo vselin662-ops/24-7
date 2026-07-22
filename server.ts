@@ -653,6 +653,7 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
 
   const config = getCompanyConfig();
   const voiceName = config.tts_voice || config.voice_id || 'Kore';
+  const TTS_MODEL_CHAIN = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview", "gemini-2.0-flash-preview-tts"];
 
   let pcmPath: string | null = null;
   let oggPath: string | null = null;
@@ -662,23 +663,37 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
       throw new Error("Gemini AI client is not initialized.");
     }
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName }
-          }
-        }
-      }
-    });
+    let base64Audio: string | undefined = undefined;
+    let lastTtsErr: any = null;
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    for (const m of TTS_MODEL_CHAIN) {
+      try {
+        const response = await ai.models.generateContent({
+          model: m,
+          contents: [{ parts: [{ text }] }],
+          config: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName }
+              }
+            }
+          }
+        });
+        const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (audio) {
+          base64Audio = audio;
+          console.log(`✅ TTS succeeded via model ${m}`);
+          break;
+        }
+      } catch (e: any) {
+        lastTtsErr = e;
+        console.warn(`⚠️ TTS model ${m} failed:`, e?.message || e);
+      }
+    }
 
     if (!base64Audio) {
-      throw new Error("No audio payload returned from Gemini TTS.");
+      throw lastTtsErr || new Error("No TTS model produced audio.");
     }
 
     const timestamp = Date.now();
@@ -687,8 +702,6 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
     oggPath = path.join(process.cwd(), `temp_${timestamp}_${randomSuffix}.ogg`);
 
     fs.writeFileSync(pcmPath, Buffer.from(base64Audio, "base64"));
-
-    // Convert raw PCM s16le 24000Hz mono to ogg/opus using ffmpeg
     execSync(`ffmpeg -y -f s16le -ar 24000 -ac 1 -i "${pcmPath}" -c:a libopus -b:a 32k "${oggPath}"`, { stdio: 'ignore' });
 
     if (!fs.existsSync(oggPath)) {
@@ -697,7 +710,7 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
 
     await botInstance.sendVoice(chatId, fs.createReadStream(oggPath));
   } catch (err: any) {
-    console.warn("⚠️ Voice synthesis or sending error, falling back to text message:", err.message || err);
+    console.warn("⚠️ Voice synthesis failed on all TTS models, falling back to text:", err.message || err);
     if (!skipFallbackText) {
       try {
         await botInstance.sendMessage(chatId, text);
