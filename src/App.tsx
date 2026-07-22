@@ -11,6 +11,7 @@ import { NeonButton } from './components/NeonButton';
 import { KnowledgeBasePanel } from './components/KnowledgeBasePanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ModerationPanel } from './components/ModerationPanel';
+import { LaunchModal } from './components/LaunchModal';
 import {
   Bot,
   Calendar,
@@ -25,7 +26,8 @@ import {
   Sparkles,
   Zap,
   Database,
-  Sliders
+  Sliders,
+  Rocket
 } from 'lucide-react';
 // @ts-ignore
 import logoImg from './assets/images/logo_1784642385346.jpg';
@@ -40,6 +42,19 @@ export default function App() {
   const [dbStatus, setDbStatus] = useState<{ connected: boolean; mode: string } | null>(null);
   const [logoError, setLogoError] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
+  const [readinessState, setReadinessState] = useState<{ is_live?: boolean; all_ready?: boolean } | null>(null);
+
+  const fetchReadiness = () => {
+    fetch('/api/readiness')
+      .then(res => res.json())
+      .then(data => setReadinessState(data))
+      .catch(err => console.warn("Failed to fetch readiness status:", err));
+  };
+
+  useEffect(() => {
+    fetchReadiness();
+  }, []);
 
   // Poll pending moderation count
   useEffect(() => {
@@ -231,6 +246,30 @@ export default function App() {
               </div>
             </div>
           </div>
+
+          {/* Launch Headquarters Button */}
+          <button
+            onClick={() => setIsLaunchModalOpen(true)}
+            className={`px-4 py-2 rounded-xl font-sans text-xs font-bold transition-all duration-300 flex items-center gap-2 cursor-pointer ${
+              config?.is_live || readinessState?.is_live
+                ? 'bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
+                : readinessState?.all_ready
+                ? 'bg-[#F5A623] text-black hover:bg-[#F5A623]/90 shadow-[0_0_15px_rgba(245,166,35,0.3)]'
+                : 'bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            {config?.is_live || readinessState?.is_live ? (
+              <>
+                <Zap className="h-4 w-4 text-emerald-400 animate-pulse" />
+                <span>Штаб работает 24/7</span>
+              </>
+            ) : (
+              <>
+                <Rocket className="h-4 w-4 text-[#F5A623]" />
+                <span>ЗАПУСТИТЬ ШТАБ</span>
+              </>
+            )}
+          </button>
         </div>
       </header>
 
@@ -393,6 +432,15 @@ export default function App() {
           © 2026 Автономный цифровой сотрудник · 152-ФЗ РФ
         </span>
       </footer>
+
+      <LaunchModal
+        isOpen={isLaunchModalOpen}
+        onClose={() => setIsLaunchModalOpen(false)}
+        onLaunched={() => {
+          setConfig(prev => prev ? { ...prev, is_live: true } : null);
+          fetchReadiness();
+        }}
+      />
     </div>
   );
 }

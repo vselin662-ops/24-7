@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import { execSync } from "child_process";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -32,6 +33,24 @@ if (apiKey) {
   });
 } else {
   console.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
+}
+
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+async function withRetry<T>(fn: () => Promise<T>, attempts = 2, delayMs = 1200): Promise<T> {
+  let lastErr: any;
+  for (let i = 0; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`⚠️ Gemini attempt ${i + 1} failed:`, e?.message || e);
+      if (i < attempts) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // ==========================================
@@ -606,6 +625,78 @@ app.post("/api/telegram/send-message", (req, res) => {
   }
 });
 
+// Helper to synthesize and send voice message to Telegram
+async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: number | string, text: string): Promise<void> {
+  if (!botInstance) return;
+
+  try {
+    botInstance.sendChatAction(chatId, 'record_voice');
+  } catch (err) {
+    console.warn("Failed to sendChatAction record_voice:", err);
+  }
+
+  const config = getCompanyConfig();
+  const voiceName = config.tts_voice || config.voice_id || 'Kore';
+
+  let pcmPath: string | null = null;
+  let oggPath: string | null = null;
+
+  try {
+    if (!ai) {
+      throw new Error("Gemini AI client is not initialized.");
+    }
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName }
+          }
+        }
+      }
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+    if (!base64Audio) {
+      throw new Error("No audio payload returned from Gemini TTS.");
+    }
+
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 8);
+    pcmPath = path.join(process.cwd(), `temp_${timestamp}_${randomSuffix}.pcm`);
+    oggPath = path.join(process.cwd(), `temp_${timestamp}_${randomSuffix}.ogg`);
+
+    fs.writeFileSync(pcmPath, Buffer.from(base64Audio, "base64"));
+
+    // Convert raw PCM s16le 24000Hz mono to ogg/opus using ffmpeg
+    execSync(`ffmpeg -y -f s16le -ar 24000 -ac 1 -i "${pcmPath}" -c:a libopus -b:a 32k "${oggPath}"`, { stdio: 'ignore' });
+
+    if (!fs.existsSync(oggPath)) {
+      throw new Error("ffmpeg conversion failed to produce ogg file.");
+    }
+
+    await botInstance.sendVoice(chatId, fs.createReadStream(oggPath));
+  } catch (err: any) {
+    console.warn("⚠️ Voice synthesis or sending error, falling back to text message:", err.message || err);
+    try {
+      await botInstance.sendMessage(chatId, text);
+    } catch (msgErr) {
+      console.error("Failed to send fallback text message to Telegram:", msgErr);
+    }
+  } finally {
+    if (pcmPath && fs.existsSync(pcmPath)) {
+      try { fs.unlinkSync(pcmPath); } catch (e) {}
+    }
+    if (oggPath && fs.existsSync(oggPath)) {
+      try { fs.unlinkSync(oggPath); } catch (e) {}
+    }
+  }
+}
+
 // Helper to generate agent response (using RAG & Gemini or simulation fallback)
 async function generateAgentResponseHelper(user_message: string, agentRole: string, chatHistory: any[], config: any): Promise<string> {
   if (!ai) {
@@ -630,35 +721,47 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
         "2. Если в базе знаний нет точного или однозначного ответа на вопрос клиента, ты должен вежливо ответить: 'Я уточню этот вопрос у руководителя и обязательно вернусь к вам с ответом.' Не придумывай и не выдумывай несуществующие детали.\n";
     }
 
-    const conversationHistory = chatHistory.map((h: any) => 
+    const recent = chatHistory.slice(-10);
+    const conversationHistory = recent.map((h: any) => 
       `${h.sender === "customer" ? "Клиент" : "Агент"}: ${h.text}`
     ).join("\n");
 
+    const mission = (config.agent_missions || {})[agentRole] || "";
+    const missionText = mission ? `\nТВОЯ КОНКРЕТНАЯ МИССИЯ НА СЕГОДНЯ (строго следуй ей): ${mission}\n` : "";
+    const notLiveText = config.is_live !== true ? "\nРЕЖИМ: штаб ещё не запущен владельцем. Отвечай вежливо, но НЕ обещай запись/оплату/конкретику, которой нет в базе знаний; предлагай оставить контакт." : "";
+
     const prompt = `Ты — цифровой агент "${agentRole}" компании "${config.business_name}".
 Сфера бизнеса: ${config.industry || "Услуги и продажи"}. Владелец: ${config.owner_name || "Предприниматель"}.
-Твой стиль общения (тон): ${config.tone || "friendly"}.
+Твой стиль общения (тон): ${config.tone || "friendly"}.${missionText}
 Ты должен ответить клиенту от лица компании. Никогда не говори, что ты ИИ или языковая модель. Пиши строго на русском языке.
 Будь естественным, убедительным, лаконичным и профессиональным.
+
+ОБЯЗАТЕЛЬНОЕ ПРАВИЛО СТИЛЯ:
+Отвечай как живой человек в переписке: 1-2 коротких предложения, разговорно, без списков, без маркеров, без 'во-первых/во-вторых', без простыней. Голосом список не слушают.
 
 Предыдущая история беседы:
 ${conversationHistory}
 
-${ragContext}
+${ragContext}${notLiveText}
 
 Напиши свой следующий ответ клиенту прямо сейчас:`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const response = await withRetry(() => ai.models.generateContent({
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         temperature: 0.7,
       }
-    });
+    }), 2);
 
     return response.text || "Извините, произошла ошибка генерации ответа.";
   } catch (err: any) {
-    console.error("Gemini Generation Error in helper:", err);
-    return "Извините, сейчас я испытываю временные технические трудности с подключением к нейросети.";
+    console.error("Gemini Generation Error:", err?.message || err);
+    if (agentRole === "sales") {
+      return "Секунду, уточню детали по вашему запросу и сразу вернусь с предложением.";
+    } else {
+      return "Принял ваше сообщение, отвечу по нему буквально через минуту.";
+    }
   }
 }
 
@@ -768,19 +871,90 @@ app.post("/api/moderation/action", async (req, res) => {
       saveTelegramChats(chats);
     }
 
-    // Send to Telegram if real bot
+    // Send to Telegram as voice if real bot
     if (item.chatId.startsWith("tg_") && bot) {
       const realId = item.chatId.replace("tg_", "");
       try {
-        bot.sendMessage(realId, finalResponseText);
+        await synthesizeAndSendVoice(bot, realId, finalResponseText);
       } catch (err) {
-        console.error("Failed to send approved message to telegram:", err);
+        console.error("Failed to send approved voice message to telegram:", err);
       }
     }
   }
 
   return res.json({ success: true });
 });
+
+// Helper to handle incoming text from Telegram client
+async function handleIncomingText(chatId: number, clientName: string, text: string, channel: string = "telegram", isVoice: boolean = false) {
+  const config = getCompanyConfig();
+  const chats = getTelegramChats();
+
+  // Find or create chat
+  let chatIndex = chats.findIndex((c: any) => c.id === `tg_${chatId}`);
+  if (chatIndex === -1) {
+    chats.push({
+      id: `tg_${chatId}`,
+      name: clientName,
+      channel: channel,
+      avatar: "👤",
+      lastMessage: text,
+      timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+      history: []
+    });
+    chatIndex = chats.length - 1;
+  }
+
+  // Append client message
+  chats[chatIndex].history.push({
+    sender: "customer",
+    text: text,
+    timestamp: new Date().toISOString(),
+    isVoice: isVoice
+  });
+  chats[chatIndex].lastMessage = text;
+  chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+  // Save client message to history so the operator can see it immediately
+  saveTelegramChats(chats);
+
+  // Determine agent role
+  let agentRole = "receiver";
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes("купить") || lowerText.includes("кп") || lowerText.includes("коммерческое") || lowerText.includes("цена") || lowerText.includes("стоимость") || lowerText.includes("заказать") || lowerText.includes("оформить")) {
+    agentRole = "sales";
+  }
+
+  // Generate response text
+  const responseText = await generateAgentResponseHelper(text, agentRole, chats[chatIndex].history, config);
+
+  if (config.autonomy_level === "human-supervised") {
+    // Enqueue for manual approval (voice will not be sent until approved)
+    const newItem = {
+      id: "mod_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+      chatId: `tg_${chatId}`,
+      clientName: clientName,
+      channel: channel,
+      userMessage: text,
+      proposedResponse: responseText,
+      agentRole: agentRole,
+      timestamp: new Date().toISOString()
+    };
+    cachedModerationQueue.push(newItem);
+    saveModerationQueue();
+    console.log(`📥 Enqueued message from ${clientName} for manual moderation.`);
+  } else {
+    // Fully autonomous: append reply to chat history and send as voice
+    chats[chatIndex].history.push({ sender: "agent", text: responseText });
+    chats[chatIndex].lastMessage = responseText;
+    chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    saveTelegramChats(chats);
+
+    if (bot) {
+      await synthesizeAndSendVoice(bot, chatId, responseText);
+    }
+  }
+}
 
 // Initialize Telegram Bot
 const tgToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -802,17 +976,15 @@ if (tgToken) {
     // Start command greeting
     bot.onText(/\/start/, (msg) => {
       const chatId = msg.chat.id;
-      const firstName = msg.from?.first_name || "предприниматель";
+      const firstName = msg.from?.first_name || "";
+      const nameGreeting = firstName ? `, ${firstName}` : "";
       const config = getCompanyConfig();
       const appUrl = process.env.APP_URL || "https://ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app";
 
-      const welcomeText = `👋 Здравствуйте, ${firstName}!
-
-Я — цифровой помощник компании "${config.business_name}". Рад приветствовать вас!
-
-Я готов ответить на любые ваши вопросы о наших услугах, помочь оформить заказ или рассчитать стоимость. Напишите свой вопрос прямо сюда!
-
-🔗 Вы также можете открыть наш Центр управления цифровым штабом по ссылке ниже:`;
+      let welcomeText = `Здравствуйте${nameGreeting}! Чем могу помочь сегодня?`;
+      if (config.business_name && config.business_name !== "Мой Бизнес") {
+        welcomeText = `Здравствуйте${nameGreeting}! Вас приветствует компания "${config.business_name}". Чем могу помочь сегодня?`;
+      }
 
       bot?.sendMessage(chatId, welcomeText, {
         reply_markup: {
@@ -825,104 +997,103 @@ if (tgToken) {
       });
     });
 
-    // Handle normal text messages
+    // Handle incoming messages (text and voice)
     bot.on("message", async (msg) => {
       const chatId = msg.chat.id;
-      const text = msg.text;
-
-      // Ignore commands (starting with /)
-      if (!text || text.startsWith("/")) return;
-
       const firstName = msg.from?.first_name || "";
       const lastName = msg.from?.last_name || "";
       const username = msg.from?.username ? `@${msg.from.username}` : "";
       const clientName = `${firstName} ${lastName}`.trim() || username || `Клиент #${chatId}`;
 
-      const config = getCompanyConfig();
-      const chats = getTelegramChats();
-
-      // Find or create chat
-      let chatIndex = chats.findIndex((c: any) => c.id === `tg_${chatId}`);
-      if (chatIndex === -1) {
-        chats.push({
-          id: `tg_${chatId}`,
-          name: clientName,
-          channel: "telegram",
-          avatar: "👤",
-          lastMessage: text,
-          timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-          history: []
-        });
-        chatIndex = chats.length - 1;
-      }
-
-      // Append client message
-      chats[chatIndex].history.push({ sender: "customer", text: text });
-      chats[chatIndex].lastMessage = text;
-      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-
-      // Save client message to history so the operator can see it immediately
-      saveTelegramChats(chats);
-
-      // Determine agent role
-      let agentRole = "receiver";
-      const lowerText = text.toLowerCase();
-      if (lowerText.includes("купить") || lowerText.includes("кп") || lowerText.includes("коммерческое") || lowerText.includes("цена") || lowerText.includes("стоимость") || lowerText.includes("заказать") || lowerText.includes("оформить")) {
-        agentRole = "sales";
-      }
-
-      // Generate response text
-      const responseText = await generateAgentResponseHelper(text, agentRole, chats[chatIndex].history, config);
-
-      if (config.autonomy_level === "human-supervised") {
-        // Enqueue for manual approval
-        const newItem = {
-          id: "mod_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
-          chatId: `tg_${chatId}`,
-          clientName: clientName,
-          channel: "telegram",
-          userMessage: text,
-          proposedResponse: responseText,
-          agentRole: agentRole,
-          timestamp: new Date().toISOString()
-        };
-        cachedModerationQueue.push(newItem);
-        saveModerationQueue();
-        console.log(`📥 Enqueued message from ${clientName} for manual moderation.`);
-      } else {
-        // Fully autonomous: append reply to chat history and send
-        chats[chatIndex].history.push({ sender: "agent", text: responseText });
-        chats[chatIndex].lastMessage = responseText;
-        chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-        saveTelegramChats(chats);
-
-        bot?.sendMessage(chatId, responseText);
-      }
-    });
-
-Предыдущая история беседы:
-${conversationHistory}
-
-${ragContext}
-
-Напиши свой следующий ответ клиенту прямо сейчас:`;
-
-          const response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: prompt,
-            config: {
-              temperature: 0.7,
-            }
-          });
-
-          responseText = response.text || "Извините, произошла ошибка генерации ответа.";
-        } catch (error: any) {
-          console.error("Telegram bot Gemini Error:", error);
-          responseText = "Извините, сейчас я испытываю временные технические трудности с подключением к нейросети.";
+      // Voice message handling
+      if (msg.voice) {
+        const voice = msg.voice;
+        if (!voice) return;
+        if (voice.file_size && voice.file_size > 20 * 1024 * 1024) {
+          bot?.sendMessage(chatId, "Голосовое слишком длинное, напишите текстом или короче.");
+          return;
         }
+        bot?.sendChatAction(chatId, "typing").catch(() => {});
+
+        let file: any = null;
+        try {
+          file = await bot!.getFile(voice.file_id);
+        } catch (err: any) {
+          console.error("Voice getFile error:", err?.message || err);
+          bot?.sendMessage(chatId, "Не смог скачать голосовое.");
+          return;
+        }
+
+        if (!file.file_path) {
+          console.error("Voice getFile error: file_path is missing");
+          bot?.sendMessage(chatId, "Не смог скачать голосовое.");
+          return;
+        }
+
+        const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        console.log("🎙️ fetching voice:", fileUrl.slice(0, 60));
+
+        let buf: Buffer;
+        try {
+          const resp = await fetch(fileUrl);
+          if (!resp.ok) {
+            console.error("Voice fetch failed:", resp.status);
+            bot?.sendMessage(chatId, "Не смог скачать голосовое.");
+            return;
+          }
+          buf = Buffer.from(await resp.arrayBuffer());
+        } catch (err: any) {
+          console.error("Voice fetch error:", err?.message || err);
+          bot?.sendMessage(chatId, "Не смог скачать голосовое.");
+          return;
+        }
+
+        if (buf.length === 0) {
+          console.error("Voice buffer error: buffer is empty");
+          bot?.sendMessage(chatId, "Пустое голосовое.");
+          return;
+        }
+
+        const b64 = buf.toString("base64");
+        let transcript = "";
+
+        try {
+          if (ai) {
+            const tr = await withRetry(() => ai.models.generateContent({
+              model: GEMINI_MODEL,
+              contents: [{
+                role: "user",
+                parts: [
+                  { inlineData: { mimeType: "audio/ogg", data: b64 } },
+                  { text: "Верни ТОЛЬКО точную транскрипцию речи на русском, без комментариев. Если речи нет — пустую строку." }
+                ]
+              }],
+              config: { temperature: 0 }
+            }), 1);
+            transcript = (tr.text || "").trim();
+          }
+        } catch (err: any) {
+          console.error("Voice generateContent error:", err?.message || err);
+          bot?.sendMessage(chatId, "Не смог разобрать голосовое.");
+          return;
+        }
+
+        if (!transcript) {
+          bot?.sendMessage(chatId, "Не расслышал, повторите, пожалуйста.");
+          return;
+        }
+
+        console.log(`🎙️ Transcribed voice from ${chatId}: ${transcript}`);
+        await handleIncomingText(chatId, clientName, transcript, "telegram", true);
+        return;
       }
 
+      // Text message handling
+      const text = msg.text;
+      if (!text || text.startsWith("/")) return;
 
+      await handleIncomingText(chatId, clientName, text, "telegram", false);
+    });
 
   } catch (error) {
     console.error("❌ Failed to start Telegram Bot polling:", error);
@@ -1020,7 +1191,7 @@ app.post("/api/interview", async (req, res) => {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: formattedContents,
       config: {
         systemInstruction,
@@ -1128,7 +1299,7 @@ app.post("/api/smart-plan", async (req, res) => {
       "]";
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -1353,7 +1524,7 @@ app.post("/api/quest/generate-stations", async (req, res) => {
 }`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -1454,6 +1625,11 @@ app.post("/api/quest/generate-plan", async (req, res) => {
         icon: "CheckSquare"
       }
     ];
+    const simulatedMissions: Record<string, string> = {};
+    for (const item of simulatedPlan) {
+      simulatedMissions[item.agent] = item.mission;
+    }
+    saveCompanyConfig({ agent_missions: simulatedMissions, is_live: false });
     return res.json({ plan: simulatedPlan });
   }
 
@@ -1488,7 +1664,7 @@ ${JSON.stringify(selectedChoices, null, 2)}
 ]`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -1510,6 +1686,17 @@ ${JSON.stringify(selectedChoices, null, 2)}
     });
 
     const plan = JSON.parse(response.text || "[]");
+    const agent_missions: Record<string, string> = {};
+    if (Array.isArray(plan)) {
+      for (const item of plan) {
+        if (item.agent && item.mission) {
+          agent_missions[item.agent] = item.mission;
+        }
+      }
+    }
+    if (Object.keys(agent_missions).length > 0) {
+      saveCompanyConfig({ agent_missions, is_live: false });
+    }
     return res.json({ plan });
   } catch (error: any) {
     console.error("Failed to generate quest plan via Gemini:", error);
@@ -1546,6 +1733,11 @@ ${JSON.stringify(selectedChoices, null, 2)}
         icon: "CheckSquare"
       }
     ];
+    const fallbackMissions: Record<string, string> = {};
+    for (const item of simulatedPlan) {
+      fallbackMissions[item.agent] = item.mission;
+    }
+    saveCompanyConfig({ agent_missions: fallbackMissions, is_live: false });
     res.json({ plan: simulatedPlan });
   }
 });
@@ -1611,7 +1803,7 @@ app.post("/api/smart-interview/next", async (req, res) => {
 4. Тон: сдержанный, деловой, экспертный, уважительный, без лишней вежливости и "воды".`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: formattedContents,
       config: {
         systemInstruction,
@@ -1671,7 +1863,7 @@ ${formattedHistory}
 4. Верни СТРОГО JSON-объект с указанными полями.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -1815,7 +2007,7 @@ app.post("/api/smart-plan/generate-from-interview", async (req, res) => {
 ]`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -1842,6 +2034,17 @@ app.post("/api/smart-plan/generate-from-interview", async (req, res) => {
     });
 
     const tasks = JSON.parse(response.text || "[]");
+    const agent_missions: Record<string, string> = {};
+    if (Array.isArray(tasks)) {
+      for (const item of tasks) {
+        if (item.agent && (item.specific || item.title)) {
+          agent_missions[item.agent] = item.specific || item.title;
+        }
+      }
+    }
+    if (Object.keys(agent_missions).length > 0) {
+      saveCompanyConfig({ agent_missions, is_live: false });
+    }
     res.json({ tasks });
   } catch (error: any) {
     console.error("SMART Plan dynamic generation Error:", error);
@@ -1901,7 +2104,7 @@ app.post("/api/agent-respond", async (req, res) => {
       "Напиши свой ответ/результат:";
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         temperature: 0.7,
@@ -1957,6 +2160,40 @@ app.post("/api/synthesize", async (req, res) => {
     console.error("Gemini TTS Error:", error);
     res.status(500).json({ error: error.message || "Failed to synthesize voice" });
   }
+});
+
+// ==========================================
+// READINESS & LAUNCH ENDPOINTS
+// ==========================================
+function getReadinessState() {
+  const kb_ready = !!(cachedKnowledgeBase.chunks && cachedKnowledgeBase.chunks.length > 0);
+  const channel_ready = !!process.env.TELEGRAM_BOT_TOKEN;
+  const tone_ready = !!cachedConfig.tone;
+  const missions_ready = !!(cachedConfig.agent_missions && Object.keys(cachedConfig.agent_missions).length >= 3);
+  const is_live = !!cachedConfig.is_live;
+  const all_ready = kb_ready && channel_ready && tone_ready && missions_ready;
+
+  return {
+    kb_ready,
+    channel_ready,
+    tone_ready,
+    missions_ready,
+    is_live,
+    all_ready
+  };
+}
+
+app.get("/api/readiness", (req, res) => {
+  res.json(getReadinessState());
+});
+
+app.post("/api/launch", async (req, res) => {
+  const readiness = getReadinessState();
+  if (!readiness.all_ready) {
+    return res.status(400).json({ error: "not_ready", readiness });
+  }
+  saveCompanyConfig({ is_live: true });
+  res.json({ success: true, is_live: true });
 });
 
 // Integrate Vite middleware in development or serve static files in production

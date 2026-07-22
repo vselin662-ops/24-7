@@ -42,6 +42,9 @@ export interface AppConfig {
   is_active: boolean;
   auto_synthesize?: boolean;
   tts_voice?: string;
+  agent_missions?: Record<string, string>;
+  is_live?: boolean;
+  readiness?: { kb_ready: boolean; channel_ready: boolean; tone_ready: boolean; missions_ready: boolean };
 }
 
 export interface SimulatedCustomer {
