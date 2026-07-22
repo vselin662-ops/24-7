@@ -3,7 +3,7 @@ import { GlassPanel } from './GlassPanel';
 import { NeonButton } from './NeonButton';
 import { VoiceRecorder } from './VoiceRecorder';
 import { Message, AppConfig, Agent } from '../types';
-import { Users, Bot, MessageSquare, Send, Check, Shield, HelpCircle, Volume2, Sparkles, Sliders } from 'lucide-react';
+import { Users, Bot, MessageSquare, Send, Check, Shield, HelpCircle, Volume2, Sparkles, Sliders, Mic, StopCircle } from 'lucide-react';
 
 interface OnboardingFlowProps {
   onComplete: (config: AppConfig, customizedAgents: Agent[]) => void;
@@ -14,18 +14,68 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'model',
-      content: 'Приветствую! Я ваш персональный ИИ-ассистент по подбору кадров. Помогу вам за пару минут развернуть полноценный цифровой штаб сотрудников для автоматизации вашего бизнеса 24/7. Как я могу к вам обращаться?'
+      content: 'Приветствую! Я подстроюсь под вашу задачу. Расскажите голосом или напишите, что именно нужно автоматизировать в вашем бизнесе — и я соберу под это цифровой штаб. Как вас зовут и чем занимаетесь?'
     }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [detectedConfig, setDetectedConfig] = useState<AppConfig | null>(null);
 
+  // Recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
   // Customized agents state
   const [customizedAgents, setCustomizedAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('receiver');
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+      audioChunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        setIsRecording(false);
+
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const b64 = (reader.result as string).split(",")[1];
+          try {
+            const resp = await fetch("/api/transcribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ audio: b64, mimeType: blob.type })
+            });
+            const data = await resp.json();
+            if (data.text) {
+              setInputValue(prev => (prev ? prev + " " : "") + data.text);
+            }
+          } catch (err) {
+            console.error("Transcribe fetch error:", err);
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+      mr.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Mic access error:", err);
+      setIsRecording(false);
+    }
+  };
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -448,6 +498,18 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
                   </button>
                 </div>
                 <form onSubmit={handleSendMessage} className="p-5 bg-black/20 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    className={`px-4 py-3 rounded-xl border transition-all cursor-pointer ${
+                      isRecording
+                        ? "bg-red-500/20 border-red-500 text-red-400 animate-pulse"
+                        : "bg-white/5 border-white/10 text-slate-400 hover:border-accent hover:text-accent"
+                    }`}
+                    title="Сказать голосом"
+                  >
+                    {isRecording ? <StopCircle className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </button>
                   <input
                     type="text"
                     value={inputValue}

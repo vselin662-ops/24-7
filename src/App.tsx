@@ -27,7 +27,12 @@ import {
   Zap,
   Database,
   Sliders,
-  Rocket
+  Rocket,
+  Menu,
+  X,
+  Compass,
+  BarChart3,
+  Scale
 } from 'lucide-react';
 // @ts-ignore
 import logoImg from './assets/images/logo_1784642385346.jpg';
@@ -44,6 +49,25 @@ export default function App() {
   const [pendingCount, setPendingCount] = useState(0);
   const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
   const [readinessState, setReadinessState] = useState<{ is_live?: boolean; all_ready?: boolean } | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  interface MenuTabItem {
+    id: 'planner' | 'simulator' | 'knowledge' | 'analytics' | 'billing' | 'faq' | 'settings' | 'moderation';
+    label: string;
+    icon: React.ComponentType<any>;
+    badge?: number;
+  }
+
+  const menuTabs: MenuTabItem[] = [
+    { id: 'planner', label: 'Квест-Планировщик', icon: Compass },
+    { id: 'simulator', label: 'Каналы Связи', icon: MessageSquare },
+    { id: 'moderation', label: 'Модерация', icon: Shield, badge: pendingCount },
+    { id: 'knowledge', label: 'База знаний (RAG)', icon: Database },
+    { id: 'analytics', label: 'Аналитика штаба', icon: BarChart3 },
+    { id: 'billing', label: 'Тарифы & Биллинг', icon: CreditCard },
+    { id: 'faq', label: 'Инструкции & 152-ФЗ', icon: Scale },
+    { id: 'settings', label: 'Настройки штаба', icon: Sliders }
+  ];
 
   const fetchReadiness = () => {
     fetch('/api/readiness')
@@ -212,23 +236,25 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col justify-between py-6 px-4">
       {/* Header Panel */}
-      <header className="max-w-7xl mx-auto w-full mb-6">
-        <div className="premium-card p-4 rounded-2xl flex items-center justify-between gap-4">
+      <header className="max-w-7xl mx-auto w-full mb-6 relative">
+        <div className="premium-card p-4 rounded-2xl flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
-            {/* Logo container */}
-            <div className="relative w-12 h-12 md:w-14 md:h-14 rounded-full overflow-hidden border border-white/10 flex items-center justify-center bg-black/40 shadow-[0_0_15px_rgba(245,166,35,0.15)] shrink-0">
-              {!logoError ? (
-                <img 
-                  src={logoImg} 
-                  alt="Logo" 
-                  className="w-full h-full object-cover" 
-                  onError={() => setLogoError(true)}
-                />
-              ) : (
-                <div className="text-[#F5A623] flex items-center justify-center">
-                  <Bot className="h-6 w-6" />
-                </div>
-              )}
+            {/* Logo container - replaced with Selin SVG */}
+            <div className="w-12 h-12 shrink-0 bg-white rounded-2xl flex items-center justify-center overflow-hidden shadow-[0_2px_10px_rgba(0,0,0,0.3)]">
+              <svg viewBox="0 0 100 100" className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+                <g fill="#000000">
+                  <rect x="44" y="6"  width="12" height="12" transform="rotate(45 50 12)" />
+                  <rect x="71" y="17" width="12" height="12" transform="rotate(45 77 23)" />
+                  <rect x="82" y="44" width="12" height="12" transform="rotate(45 88 50)" />
+                  <rect x="71" y="71" width="12" height="12" transform="rotate(45 77 77)" />
+                  <rect x="44" y="82" width="12" height="12" transform="rotate(45 50 88)" />
+                  <rect x="17" y="71" width="12" height="12" transform="rotate(45 23 77)" />
+                  <rect x="6"  y="44" width="12" height="12" transform="rotate(45 12 50)" />
+                  <rect x="17" y="17" width="12" height="12" transform="rotate(45 23 23)" />
+                </g>
+                <text x="50" y="53" textAnchor="middle" fontFamily="Georgia, 'Times New Roman', serif" fontSize="15" fill="#000000">Selin</text>
+                <line x1="37" y1="58" x2="63" y2="58" stroke="#000000" strokeWidth="1.2" />
+              </svg>
             </div>
             
             {/* Title & Dot */}
@@ -247,136 +273,112 @@ export default function App() {
             </div>
           </div>
 
-          {/* Launch Headquarters Button */}
-          <button
-            onClick={() => setIsLaunchModalOpen(true)}
-            className={`px-4 py-2 rounded-xl font-sans text-xs font-bold transition-all duration-300 flex items-center gap-2 cursor-pointer ${
-              config?.is_live || readinessState?.is_live
-                ? 'bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
-                : readinessState?.all_ready
-                ? 'bg-[#F5A623] text-black hover:bg-[#F5A623]/90 shadow-[0_0_15px_rgba(245,166,35,0.3)]'
-                : 'bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            {config?.is_live || readinessState?.is_live ? (
-              <>
-                <Zap className="h-4 w-4 text-emerald-400 animate-pulse" />
-                <span>Штаб работает 24/7</span>
-              </>
-            ) : (
-              <>
-                <Rocket className="h-4 w-4 text-[#F5A623]" />
-                <span>ЗАПУСТИТЬ ШТАБ</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
+            {/* Launch Headquarters Button */}
+            <button
+              onClick={() => setIsLaunchModalOpen(true)}
+              className={`px-4 py-2 rounded-xl font-sans text-xs font-bold transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0 ${
+                config?.is_live || readinessState?.is_live
+                  ? 'bg-emerald-500/10 border border-emerald-500/40 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
+                  : readinessState?.all_ready
+                  ? 'bg-[#F5A623] text-black hover:bg-[#F5A623]/90 shadow-[0_0_15px_rgba(245,166,35,0.3)]'
+                  : 'bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              {config?.is_live || readinessState?.is_live ? (
+                <>
+                  <Zap className="h-4 w-4 text-emerald-400 animate-pulse shrink-0" />
+                  <span className="hidden sm:inline">Штаб работает 24/7</span>
+                </>
+              ) : (
+                <>
+                  <Rocket className="h-4 w-4 text-[#F5A623] shrink-0" />
+                  <span className="hidden sm:inline">ЗАПУСТИТЬ ШТАБ</span>
+                </>
+              )}
+            </button>
+
+            {/* Burger Menu Button */}
+            <button
+              onClick={() => setMenuOpen(true)}
+              className="relative shrink-0 p-2.5 rounded-xl bg-white/5 border border-white/10 hover:border-[#F5A623] hover:text-[#F5A623] text-white transition-all duration-300 cursor-pointer shadow-lg flex items-center justify-center"
+              title="Открыть меню"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Tabs Navigation */}
+      {/* Main Container */}
       <main className="max-w-7xl mx-auto w-full flex-1 space-y-6">
-        <div className="flex overflow-x-auto gap-2 border-b border-white/5 pb-2 scrollbar-none">
-          <button
-            onClick={() => setCurrentTab('planner')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'planner'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623] shadow-[0_0_15px_rgba(245,166,35,0.1)]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <Calendar className="h-4 w-4" />
-            <span>Квест-Планировщик</span>
-          </button>
+        {/* Mobile/Desktop Burger Drawer */}
+        {menuOpen && (
+          <>
+            {/* Overlay */}
+            <div
+              onClick={() => setMenuOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 animate-fade-in"
+            />
 
-          <button
-            onClick={() => setCurrentTab('simulator')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'simulator'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <MessageSquare className="h-4 w-4" />
-            <span>Каналы Связи</span>
-          </button>
+            {/* Drawer Panel */}
+            <div
+              className="fixed top-0 right-0 h-full w-[78%] max-w-xs bg-[#0E0E10]/95 border-l border-white/10 z-50 transition-transform duration-300 flex flex-col p-6 shadow-[0_0_30px_rgba(0,0,0,0.5)] backdrop-blur-md"
+            >
+              {/* Header inside drawer */}
+              <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/5">
+                <div className="flex items-center gap-2">
+                  <Bot className="h-5 w-5 text-[#F5A623]" />
+                  <span className="font-sans font-bold text-lg text-white">Меню</span>
+                </div>
+                <button
+                  onClick={() => setMenuOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
 
-          <button
-            onClick={() => setCurrentTab('moderation')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'moderation'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623] shadow-[0_0_15px_rgba(245,166,35,0.1)]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <Shield className="h-4 w-4" />
-            <span>Модерация</span>
-            {pendingCount > 0 && (
-              <span className="bg-[#F5A623] text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full select-none leading-none">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setCurrentTab('knowledge')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'knowledge'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <Database className="h-4 w-4" />
-            <span>База знаний (RAG)</span>
-          </button>
-
-          <button
-            onClick={() => setCurrentTab('analytics')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'analytics'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <TrendingUp className="h-4 w-4" />
-            <span>Аналитика штаба</span>
-          </button>
-
-          <button
-            onClick={() => setCurrentTab('billing')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'billing'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <CreditCard className="h-4 w-4" />
-            <span>Тарифы & Биллинг</span>
-          </button>
-
-          <button
-            onClick={() => setCurrentTab('faq')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'faq'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <HelpCircle className="h-4 w-4" />
-            <span>Инструкции & 152-ФЗ</span>
-          </button>
-
-          <button
-            onClick={() => setCurrentTab('settings')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition-all duration-300 ${
-              currentTab === 'settings'
-                ? 'bg-[#F5A623]/10 border border-[#F5A623] text-[#F5A623]'
-                : 'border border-transparent hover:bg-white/3 text-slate-400'
-            }`}
-          >
-            <Sliders className="h-4 w-4" />
-            <span>Настройки штаба</span>
-          </button>
-        </div>
+              {/* Navigation items */}
+              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                {menuTabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => {
+                      setCurrentTab(tab.id);
+                      setMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-all duration-300 cursor-pointer text-left ${
+                      currentTab === tab.id
+                        ? 'border-[#F5A623] bg-[#F5A623]/10 text-[#F5A623] shadow-[0_0_15px_rgba(245,166,35,0.08)]'
+                        : 'border-transparent hover:bg-white/5 text-slate-300'
+                    }`}
+                  >
+                    <div
+                      className="w-11 h-11 flex items-center justify-center shrink-0 transition-all duration-300"
+                      style={{
+                        clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)',
+                        backgroundColor: currentTab === tab.id ? '#F5A623' : 'rgba(245, 166, 35, 0.1)'
+                      }}
+                    >
+                      <tab.icon className={`h-5 w-5 ${currentTab === tab.id ? 'text-[#0A0A0B]' : 'text-[#F5A623]'}`} />
+                    </div>
+                    <div className="flex-1 flex items-center justify-between">
+                      <span className={`text-sm ${currentTab === tab.id ? 'text-[#F5A623] font-semibold' : 'text-white'}`}>
+                        {tab.label}
+                      </span>
+                      {tab.badge && tab.badge > 0 && (
+                        <span className="bg-[#F5A623] text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                          {tab.badge}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Dynamic Tab Render */}
         <div className="transition-all duration-300">
@@ -387,6 +389,8 @@ export default function App() {
               industry={config.industry}
               tone={config.tone}
               channels={config.channels}
+              onComplete={handleOnboardingComplete}
+              setCurrentTab={setCurrentTab}
             />
           )}
 

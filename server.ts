@@ -16,7 +16,8 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Initialize Gemini API
 const apiKey = process.env.GEMINI_API_KEY;
@@ -35,7 +36,22 @@ if (apiKey) {
   console.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
 }
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+
+const MODEL_CHAIN = ["gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+async function generateWithFallback(buildContents: () => any, cfg: any) {
+  let lastErr: any;
+  for (const m of MODEL_CHAIN) {
+    try {
+      if (!ai) throw new Error("Gemini client not initialized");
+      return await ai.models.generateContent({ model: m, contents: buildContents(), config: cfg });
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`⚠️ model ${m} failed:`, e?.message || e);
+    }
+  }
+  throw lastErr;
+}
 
 async function withRetry<T>(fn: () => Promise<T>, attempts = 2, delayMs = 1200): Promise<T> {
   let lastErr: any;
@@ -626,7 +642,7 @@ app.post("/api/telegram/send-message", (req, res) => {
 });
 
 // Helper to synthesize and send voice message to Telegram
-async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: number | string, text: string): Promise<void> {
+async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: number | string, text: string, skipFallbackText = false): Promise<void> {
   if (!botInstance) return;
 
   try {
@@ -682,10 +698,14 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
     await botInstance.sendVoice(chatId, fs.createReadStream(oggPath));
   } catch (err: any) {
     console.warn("⚠️ Voice synthesis or sending error, falling back to text message:", err.message || err);
-    try {
-      await botInstance.sendMessage(chatId, text);
-    } catch (msgErr) {
-      console.error("Failed to send fallback text message to Telegram:", msgErr);
+    if (!skipFallbackText) {
+      try {
+        await botInstance.sendMessage(chatId, text);
+      } catch (msgErr) {
+        console.error("Failed to send fallback text message to Telegram:", msgErr);
+      }
+    } else {
+      throw err;
     }
   } finally {
     if (pcmPath && fs.existsSync(pcmPath)) {
@@ -708,60 +728,43 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
   }
 
   try {
-    // RAG Knowledge Retrieval
+    // RAG Knowledge Retrieval - limit to 2
     let ragContext = "";
-    const matchedChunks = await queryKnowledgeBase(user_message, 3);
+    const matchedChunks = await queryKnowledgeBase(user_message, 2);
     const relevantChunks = matchedChunks.filter((c: any) => c.score >= 0.35);
     
     if (relevantChunks.length > 0) {
-      ragContext = "\nПОДТВЕРЖДЕННАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ БИЗНЕСА:\n" +
+      ragContext = "\nПОДТВЕРЖДЕННАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n" +
         relevantChunks.map((c: any) => `[Источник: ${c.docName}]: ${c.text}`).join("\n\n") + "\n\n" +
-        "ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ БАЗЫ ЗНАНИЙ:\n" +
-        "1. Строго опирайся на предоставленную информацию из базы знаний бизнеса.\n" +
-        "2. Если в базе знаний нет точного или однозначного ответа на вопрос клиента, ты должен вежливо ответить: 'Я уточню этот вопрос у руководителя и обязательно вернусь к вам с ответом.' Не придумывай и не выдумывай несуществующие детали.\n";
+        "ИНСТРУКЦИЯ: Опирайся только на эти факты. Если ответа нет, вежливо скажи, что уточнишь у руководителя.\n";
     }
 
-    const recent = chatHistory.slice(-10);
+    const recent = chatHistory.slice(-4);
     const conversationHistory = recent.map((h: any) => 
       `${h.sender === "customer" ? "Клиент" : "Агент"}: ${h.text}`
     ).join("\n");
 
     const mission = (config.agent_missions || {})[agentRole] || "";
-    const missionText = mission ? `\nТВОЯ КОНКРЕТНАЯ МИССИЯ НА СЕГОДНЯ (строго следуй ей): ${mission}\n` : "";
-    const notLiveText = config.is_live !== true ? "\nРЕЖИМ: штаб ещё не запущен владельцем. Отвечай вежливо, но НЕ обещай запись/оплату/конкретику, которой нет в базе знаний; предлагай оставить контакт." : "";
+    const missionText = mission ? ` Миссия: ${mission}.` : "";
+    const notLiveText = config.is_live !== true ? " Режим: штаб еще не запущен. Отвечай вежливо, не обещай конкретику." : "";
 
-    const prompt = `Ты — цифровой агент "${agentRole}" компании "${config.business_name}".
-Сфера бизнеса: ${config.industry || "Услуги и продажи"}. Владелец: ${config.owner_name || "Предприниматель"}.
-Твой стиль общения (тон): ${config.tone || "friendly"}.${missionText}
-Ты должен ответить клиенту от лица компании. Никогда не говори, что ты ИИ или языковая модель. Пиши строго на русском языке.
-Будь естественным, убедительным, лаконичным и профессиональным.
-
-ОБЯЗАТЕЛЬНОЕ ПРАВИЛО СТИЛЯ:
-Отвечай как живой человек в переписке: 1-2 коротких предложения, разговорно, без списков, без маркеров, без 'во-первых/во-вторых', без простыней. Голосом список не слушают.
-
-Предыдущая история беседы:
+    const prompt = `Ты — цифровой агент "${agentRole}" в компании "${config.business_name}". Тон: ${config.tone || "friendly"}.${missionText}${notLiveText}
+Отвечай как живой человек: 1-2 коротких предложения, разговорно, без списков.
+ВАЖНО: твои ответы автоматически озвучиваются и уходят клиенту голосовым сообщением. НИКОГДА не говори клиенту, что ты работаешь только в текстовом формате, что не можешь ответить голосом, или что ему нужно написать текстом из-за формата. Отвечай так, будто говоришь вслух: 1-2 коротких разговорных предложения, без списков и без упоминаний формата ответа.
+История:
 ${conversationHistory}
+${ragContext}
+Следующий короткий ответ клиенту:`;
 
-${ragContext}${notLiveText}
+    const response = await generateWithFallback(
+      () => prompt,
+      { temperature: 0.7 }
+    );
 
-Напиши свой следующий ответ клиенту прямо сейчас:`;
-
-    const response = await withRetry(() => ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        temperature: 0.7,
-      }
-    }), 2);
-
-    return response.text || "Извините, произошла ошибка генерации ответа.";
+    return response.text || "Связь моргнула — повтори голосовое или напиши ещё раз, я на связи.";
   } catch (err: any) {
-    console.error("Gemini Generation Error:", err?.message || err);
-    if (agentRole === "sales") {
-      return "Секунду, уточню детали по вашему запросу и сразу вернусь с предложением.";
-    } else {
-      return "Принял ваше сообщение, отвечу по нему буквально через минуту.";
-    }
+    console.error("GEN FAIL:", err?.message || err, "code:", err?.code || err?.status || "");
+    return "Связь моргнула — повтори голосовое или напиши ещё раз, я на связи.";
   }
 }
 
@@ -951,7 +954,16 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
     saveTelegramChats(chats);
 
     if (bot) {
-      await synthesizeAndSendVoice(bot, chatId, responseText);
+      try {
+        await synthesizeAndSendVoice(bot, chatId, responseText, true);
+      } catch (err: any) {
+        console.warn("Outgoing voice failed, fallback to text:", err?.message || err);
+        try {
+          await bot.sendMessage(chatId, responseText);
+        } catch (msgErr) {
+          console.error("Failed to send fallback text message to Telegram:", msgErr);
+        }
+      }
     }
   }
 }
@@ -959,6 +971,7 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
 // Initialize Telegram Bot
 const tgToken = process.env.TELEGRAM_BOT_TOKEN;
 let bot: TelegramBot | null = null;
+const lastStartAt = new Map<number, number>();
 
 if (tgToken) {
   try {
@@ -974,27 +987,39 @@ if (tgToken) {
     });
 
     // Start command greeting
-    bot.onText(/\/start/, (msg) => {
+    bot.onText(/\/start/, async (msg) => {
       const chatId = msg.chat.id;
+      const now = Date.now();
+      const last = lastStartAt.get(chatId) || 0;
+      if (now - last < 3000) return;
+      lastStartAt.set(chatId, now);
+
       const firstName = msg.from?.first_name || "";
-      const nameGreeting = firstName ? `, ${firstName}` : "";
-      const config = getCompanyConfig();
       const appUrl = process.env.APP_URL || "https://ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app";
 
-      let welcomeText = `Здравствуйте${nameGreeting}! Чем могу помочь сегодня?`;
-      if (config.business_name && config.business_name !== "Мой Бизнес") {
-        welcomeText = `Здравствуйте${nameGreeting}! Вас приветствует компания "${config.business_name}". Чем могу помочь сегодня?`;
-      }
+      const nameGreeting = firstName ? `Привет, ${firstName}!` : "Привет!";
+      const welcomeText = `${nameGreeting} Ты в правильном месте 👋
+Моя задача — упростить тебе жизнь и забрать всю рутину: переписку, заявки, продажи, контент. Я выстрою под тебя автономную команду ИИ-специалистов, которая пашет 24/7 и закрывает твои задачи.
+Просто отправь мне голосовое — расскажи, что нужно, и мои ребята возьмут это в работу и выведут продукт на новый уровень.
+А если хочешь сначала всё потрогать сам — ниже кнопка, там приложение: покрути настройки, увидь всю структуру изнутри.
+Рад, что забежал в гости 🤝`;
 
       bot?.sendMessage(chatId, welcomeText, {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: "🖥️ Перейти в Цифровой Штаб", url: appUrl }
+              { text: "📱 Открыть приложение и посмотреть самому", url: appUrl }
             ]
           ]
         }
       });
+
+      try {
+        await synthesizeAndSendVoice(bot, chatId, welcomeText, true);
+      } catch (err: any) {
+        console.warn("synthesizeAndSendVoice failed in start command:", err?.message || err);
+      }
+      return;
     });
 
     // Handle incoming messages (text and voice)
@@ -1059,27 +1084,26 @@ if (tgToken) {
 
         try {
           if (ai) {
-            const tr = await withRetry(() => ai.models.generateContent({
-              model: GEMINI_MODEL,
-              contents: [{
+            const tr = await generateWithFallback(
+              () => [{
                 role: "user",
                 parts: [
                   { inlineData: { mimeType: "audio/ogg", data: b64 } },
                   { text: "Верни ТОЛЬКО точную транскрипцию речи на русском, без комментариев. Если речи нет — пустую строку." }
                 ]
               }],
-              config: { temperature: 0 }
-            }), 1);
+              { temperature: 0 }
+            );
             transcript = (tr.text || "").trim();
           }
         } catch (err: any) {
-          console.error("Voice generateContent error:", err?.message || err);
-          bot?.sendMessage(chatId, "Не смог разобрать голосовое.");
+          console.error("VOICE FAIL:", err?.message || err);
+          bot?.sendMessage(chatId, "Не расслышал, повтори голосовое.");
           return;
         }
 
         if (!transcript) {
-          bot?.sendMessage(chatId, "Не расслышал, повторите, пожалуйста.");
+          bot?.sendMessage(chatId, "Не расслышал, повтори голосовое.");
           return;
         }
 
@@ -2194,6 +2218,32 @@ app.post("/api/launch", async (req, res) => {
   }
   saveCompanyConfig({ is_live: true });
   res.json({ success: true, is_live: true });
+});
+
+app.post("/api/transcribe", async (req, res) => {
+  try {
+    const { audio, mimeType } = req.body || {};
+    if (!audio || !ai) {
+      return res.json({ text: "" });
+    }
+
+    const response = await generateWithFallback(
+      () => [{
+        role: "user",
+        parts: [
+          { inlineData: { mimeType: mimeType || "audio/webm", data: audio } },
+          { text: "Верни ТОЛЬКО точную транскрипцию этой речи на русском языке, без комментариев и пояснений. Если речи нет — верни пустую строку." }
+        ]
+      }],
+      { temperature: 0 }
+    );
+
+    const text = (response.text || "").trim();
+    return res.json({ text });
+  } catch (err: any) {
+    console.error("Transcribe error:", err?.message || err);
+    return res.json({ text: "" });
+  }
 });
 
 // Integrate Vite middleware in development or serve static files in production
