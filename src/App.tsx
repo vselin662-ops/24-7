@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig, Agent } from './types';
 import { OnboardingFlow } from './components/OnboardingFlow';
+import { VoiceQuestFlow } from './components/VoiceQuestFlow';
 import { SMARTPlanner } from './components/SMARTPlanner';
 import { ChannelSimulator } from './components/ChannelSimulator';
 import { AnalyticsPanel } from './components/AnalyticsPanel';
@@ -41,6 +42,10 @@ const APP_TITLE = "Цифровой помощник";
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [questSteps, setQuestSteps] = useState<any[]>([]);
+  const urlParams = new URLSearchParams(window.location.search);
+  const mode = urlParams.get('mode');
+  const chatId = urlParams.get('chatId');
   const [agents, setAgents] = useState<Agent[]>([]);
   const [currentTab, setCurrentTab] = useState<'planner' | 'simulator' | 'knowledge' | 'analytics' | 'billing' | 'faq' | 'settings' | 'moderation'>('planner');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -48,7 +53,15 @@ export default function App() {
   const [logoError, setLogoError] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
-  const [readinessState, setReadinessState] = useState<{ is_live?: boolean; all_ready?: boolean; kb_ready?: boolean; channel_ready?: boolean; tone_ready?: boolean; missions_ready?: boolean } | null>(null);
+  interface ReadinessState {
+    is_live?: boolean;
+    all_ready?: boolean;
+    kb_ready?: boolean;
+    channel_ready?: boolean;
+    tone_ready?: boolean;
+    missions_ready?: boolean;
+  }
+  const [readinessState, setReadinessState] = useState<ReadinessState | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   interface MenuTabItem {
@@ -72,13 +85,36 @@ export default function App() {
   const fetchReadiness = () => {
     fetch('/api/readiness')
       .then(res => res.json())
-      .then(data => setReadinessState(data))
+      .then(data => {
+        if (data && typeof data === 'object') {
+          setReadinessState(data as ReadinessState);
+        }
+      })
       .catch(err => console.warn("Failed to fetch readiness status:", err));
   };
 
   useEffect(() => {
     fetchReadiness();
   }, []);
+
+  // Load Voice Quest steps if in voice-quest mode
+  useEffect(() => {
+    if (mode === 'voice-quest' && chatId) {
+      setIsSyncing(true);
+      fetch(`/api/get-voice-quest?chatId=${chatId}`)
+        .then(res => {
+          if (!res.ok) throw new Error("Voice quest not found or expired");
+          return res.json();
+        })
+        .then(data => {
+          if (data && data.steps) {
+            setQuestSteps(data.steps);
+          }
+        })
+        .catch(err => console.warn("Failed to load voice quest steps:", err))
+        .finally(() => setIsSyncing(false));
+    }
+  }, [mode, chatId]);
 
   // Poll pending moderation count
   useEffect(() => {
@@ -172,11 +208,33 @@ export default function App() {
   }, [config]);
 
   const handleOnboardingComplete = (newConfig: AppConfig, customizedAgents: Agent[]) => {
-    const configWithAgents = { ...newConfig, agents: customizedAgents };
-    setConfig(configWithAgents);
+    // Сохраняем расширенные поля из текущего конфига, если они есть
+    const preservedFields = {
+      preferences: (config as any)?.preferences,
+      schedule: (config as any)?.schedule,
+      proactive_scenarios: (config as any)?.proactive_scenarios,
+      tools_enabled: (config as any)?.tools_enabled,
+      contacts: (config as any)?.contacts,
+      tasks: (config as any)?.tasks,
+      notes: (config as any)?.notes,
+      metrics: (config as any)?.metrics
+    };
+    
+    const configWithAgents = { 
+      ...newConfig, 
+      ...preservedFields, // Восстанавливаем расширенные поля
+      agents: customizedAgents 
+    };
+    
+    setConfig(configWithAgents as any);
     setAgents(customizedAgents);
     localStorage.setItem('ai_staff_config', JSON.stringify(configWithAgents));
     localStorage.setItem('ai_staff_agents', JSON.stringify(customizedAgents));
+  };
+
+  const saveToDb = (newConfig: AppConfig, customizedAgents: Agent[]) => {
+    handleOnboardingComplete(newConfig, customizedAgents);
+    window.history.replaceState({}, document.title, window.location.pathname);
   };
 
   const handleWipeAllData = () => {
@@ -191,6 +249,33 @@ export default function App() {
     role: a.russianRole,
     prompt: a.systemPrompt
   }));
+
+  // If in voice quest mode, render the custom voice quest layout
+  if (mode === 'voice-quest' && chatId) {
+    return (
+      <div className="min-h-screen flex flex-col justify-between py-6 px-4 font-modern">
+        <header className="max-w-5xl mx-auto w-full flex justify-between items-center pb-6 border-b border-white/5 font-modern">
+          <div className="flex items-center gap-2">
+            <Bot className="h-6 w-6 text-[#FF6B00]" style={{ filter: 'drop-shadow(0 0 6px rgba(255,107,0,0.4))' }} />
+            <span className="font-semibold text-lg text-white tracking-wide">
+              Цифровой помощник
+            </span>
+          </div>
+          <div className="text-xxs text-slate-500">
+            Режим: Голосовой Квест | Лицензия Apache-2.0
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center">
+          <VoiceQuestFlow steps={questSteps} onComplete={saveToDb} />
+        </main>
+
+        <footer className="max-w-5xl mx-auto w-full pt-6 border-t border-white/5 text-center text-xxs text-slate-600 font-modern">
+          © 2026 Автономный цифровой помощник для малого бизнеса. Все права защищены. Соответствует 152-ФЗ РФ.
+        </footer>
+      </div>
+    );
+  }
 
   // If onboarding is not complete, show the elegant onboarding flow
   if (!config) {

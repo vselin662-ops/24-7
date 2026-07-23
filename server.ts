@@ -300,6 +300,124 @@ function saveCompanyConfig(config: any) {
   }
 }
 
+const questCache = new Map<string, { data: any, createdAt: number }>();
+
+async function getUserConfigByChatId(chatId: number | string): Promise<any> {
+  if (isFirestoreAvailable && db) {
+    try {
+      const doc = await db.collection("companies").doc(`tg_${chatId}`).get();
+      if (doc.exists) {
+        return doc.data();
+      }
+    } catch (err) {
+      console.error("Error in getUserConfigByChatId:", err);
+    }
+  }
+  const userConfigFile = path.join(process.cwd(), `company_config_tg_${chatId}.json`);
+  if (fs.existsSync(userConfigFile)) {
+    try {
+      return JSON.parse(fs.readFileSync(userConfigFile, "utf-8"));
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function saveUserConfigByChatId(chatId: number | string, config: any): Promise<void> {
+  if (isFirestoreAvailable && db) {
+    try {
+      await db.collection("companies").doc(`tg_${chatId}`).set(config);
+    } catch (err) {
+      console.error("Error in saveUserConfigByChatId:", err);
+    }
+  }
+  const userConfigFile = path.join(process.cwd(), `company_config_tg_${chatId}.json`);
+  try {
+    fs.writeFileSync(userConfigFile, JSON.stringify(config, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving user config locally:", err);
+  }
+}
+
+async function generateQuestFromVoice(transcript: string): Promise<any> {
+  const systemInstruction = `Ты — эксперт по автоматизации бизнеса и проектированию ИИ-агентов.
+Проанализируй запрос пользователя на автоматизацию его бизнеса: "${transcript}".
+Твоя задача — составить персонализированный интерактивный пошаговый квест по запуску его цифрового штаба.
+
+Верни ответ строго в формате JSON, содержащем:
+- business_name: Название бизнеса или компании (если не упомянуто, придумай логичное исходя из сути)
+- owner_name: Имя владельца (если не упомянуто, напиши "Предприниматель")
+- industry: Сфера деятельности (индустрия)
+- tone: Рекомендуемый тон общения ("friendly", "professional", "energetic", "elegant", "strict")
+- suggested_agents: Массив ролей ИИ-агентов, которые будут полезны для этого бизнеса (например: ["receiver", "sales", "operator"])
+- steps: Массив из 3-5 шагов квеста. Каждый шаг должен содержать:
+  - id: Уникальная строка, например, step1, step2...
+  - title: Короткое и понятное название шага на русском
+  - description: Описание, почему этот шаг важен для его бизнеса и что нужно настроить
+  - agent: Роль агента, с которым связан этот шаг (receiver, sales, content, analyst, operator, или general)
+  - completed: false
+
+Пример JSON-структуры:
+{
+  "business_name": "...",
+  "owner_name": "...",
+  "industry": "...",
+  "tone": "...",
+  "suggested_agents": [...],
+  "steps": [
+    { "id": "step1", "title": "...", "description": "...", "agent": "...", "completed": false }
+  ]
+}
+Верни ТОЛЬКО валидный JSON объект.`;
+
+  try {
+    const res = await generateWithFallback(
+      () => [{ role: "user", parts: [{ text: "Сгенерируй квест по запуску штаба на основе моего голосового сообщения." }] }],
+      {
+        temperature: 0.2,
+        systemInstruction,
+        responseMimeType: "application/json"
+      }
+    );
+    const jsonText = (res.text || "").trim();
+    return JSON.parse(jsonText);
+  } catch (err) {
+    console.error("Error in generateQuestFromVoice:", err);
+    // Return standard fallback
+    return {
+      business_name: "Цифровой Бизнес",
+      owner_name: "Владелец",
+      industry: "Услуги",
+      tone: "friendly",
+      suggested_agents: ["receiver", "sales", "operator"],
+      steps: [
+        {
+          id: "step1",
+          title: "Задать приветственное сообщение",
+          description: "Настройте первое сообщение, которое увидят ваши клиенты при старте диалога.",
+          agent: "receiver",
+          completed: false
+        },
+        {
+          id: "step2",
+          title: "Выбрать каналы связи",
+          description: "Активируйте Telegram, WhatsApp или VK для работы ваших ИИ-агентов.",
+          agent: "sales",
+          completed: false
+        },
+        {
+          id: "step3",
+          title: "Загрузить базу знаний",
+          description: "Добавьте информацию о ваших услугах или продуктах, чтобы агенты могли давать точные ответы.",
+          agent: "operator",
+          completed: false
+        }
+      ]
+    };
+  }
+}
+
 function getTelegramChats() {
   return cachedChats;
 }
@@ -477,18 +595,47 @@ async function queryKnowledgeBase(queryText: string, limit: number = 3): Promise
   return results.slice(0, limit);
 }
 
+// Endpoint to fetch voice quest structure
+app.get("/api/get-voice-quest", (req, res) => {
+  const chatId = req.query.chatId as string;
+  if (!chatId) {
+    return res.status(400).json({ error: "chatId query parameter is required." });
+  }
+  const cached = questCache.get(chatId);
+  if (!cached) {
+    return res.status(404).json({ error: "Voice quest not found or expired." });
+  }
+  if (Date.now() - cached.createdAt > 10 * 60 * 1000) {
+    questCache.delete(chatId);
+    return res.status(410).json({ error: "Voice quest expired." });
+  }
+  return res.json(cached.data);
+});
+
 // Endpoint to fetch company config
-app.get("/api/get-config", (req, res) => {
+app.get("/api/get-config", async (req, res) => {
+  const chatId = req.query.chatId;
+  if (chatId) {
+    const userConfig = await getUserConfigByChatId(chatId as string);
+    if (userConfig) {
+      return res.json({ config: userConfig });
+    }
+  }
   return res.json({ config: getCompanyConfig() });
 });
 
 // Endpoint to save company config from frontend
-app.post("/api/save-config", (req, res) => {
+app.post("/api/save-config", async (req, res) => {
   const config = req.body;
   if (!config || typeof config !== "object") {
     return res.status(400).json({ error: "Invalid configuration object." });
   }
-  saveCompanyConfig(config);
+  const chatId = req.query.chatId || config.chatId;
+  if (chatId) {
+    await saveUserConfigByChatId(chatId as string, config);
+  } else {
+    saveCompanyConfig(config);
+  }
   console.log("💾 Company config successfully persisted on the server:", config.business_name);
   return res.json({ success: true, config });
 });
@@ -1173,6 +1320,38 @@ if (tgToken) {
         }
 
         console.log(`🎙️ Transcribed voice from ${chatId}: ${transcript}`);
+
+        // Проверяем, есть ли уже конфиг (чтобы не создавать дубли)
+        const existingConfig = await getUserConfigByChatId(chatId);
+        
+        if (!existingConfig) {
+          // 2. Анализ задачи и генерация структуры квеста
+          const questStructure = await generateQuestFromVoice(transcript); 
+          // Сохраняем структуру во временное хранилище (Redis/Map) с TTL 10 мин
+          questCache.set(String(chatId), { data: questStructure, createdAt: Date.now() });
+          
+          // 3. Голосовой ответ + ссылка на Web App
+          const responseMsg = "Я понял вашу задачу. Персональный квест по настройке штаба готов. Нажмите кнопку ниже, чтобы начать.";
+          try {
+            await synthesizeAndSendVoice(bot, chatId, responseMsg, true);
+          } catch (err: any) {
+            console.warn("synthesizeAndSendVoice failed inside voice quest trigger:", err?.message || err);
+          }
+
+          const appUrl = process.env.APP_URL || `https://${process.env.CONTAINER_URL || "ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app"}`;
+          const webAppUrl = `${appUrl}?mode=voice-quest&chatId=${chatId}`;
+
+          await bot?.sendMessage(chatId, '👇 Ваш персональный квест разработан:', {
+            reply_markup: {
+              inline_keyboard: [[{ 
+                text: '🚀 ПРОЙТИ КВЕСТ В ШТАБЕ', 
+                web_app: { url: webAppUrl }
+              }]]
+            }
+          });
+          return;
+        }
+
         await handleIncomingText(chatId, clientName, transcript, "telegram", true);
         return;
       }
