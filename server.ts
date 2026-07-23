@@ -76,7 +76,9 @@ async function runWithTools(systemInstruction: string, contents: any[]): Promise
     { googleSearch: {} },
     { functionDeclarations: [
       { name: "calculate", description: "Посчитать арифметику: ROI, маржу, проценты, налог, рост цены/выручки. expression — строка, например '(750000-450000)/450000*100'.", parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING } }, required: ["expression"] } },
-      { name: "current_date", description: "Текущая дата, день недели и время (когда спрашивают про сегодня/дату/дедлайн).", parameters: { type: Type.OBJECT, properties: {} } }
+      { name: "current_date", description: "Текущая дата, день недели и время (когда спрашивают про сегодня/дату/дедлайн).", parameters: { type: Type.OBJECT, properties: {} } },
+      { name: "save_note", description: "Сохранить важную заметку или факт о бизнесе владельца (когда он говорит 'запомни', 'запиши', сообщает о клиенте, цене, договоренности).", parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING } }, required: ["text"] } },
+      { name: "add_task", description: "Добавить задачу или напоминание владельцу (когда просит напомнить, сделать, не забыть). due — срок словами, если назван.", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, due: { type: Type.STRING } }, required: ["title"] } }
     ] }
   ];
   let last: any = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction, tools });
@@ -186,46 +188,7 @@ async function initDataStore() {
 
   // Pre-populate default mock customers if empty
   if (!cachedChats || cachedChats.length === 0) {
-    cachedChats = [
-      {
-        id: 'cust_1',
-        name: 'Екатерина Смирнова',
-        channel: 'telegram',
-        avatar: '👩‍💼',
-        lastMessage: 'Добрый день! Подскажите стоимость услуг и свободные слоты на завтра?',
-        timestamp: '10:45',
-        history: [
-          { sender: 'customer', text: 'Добрый день! Подскажите стоимость услуг и свободные слоты на завтра?' }
-        ]
-      },
-      {
-        id: 'cust_2',
-        name: 'Алексей Петров',
-        channel: 'whatsapp',
-        avatar: '👨‍🔧',
-        lastMessage: 'Привет! Мне нужно коммерческое предложение на услуги вашей компании.',
-        timestamp: '11:15',
-        history: [
-          { sender: 'customer', text: 'Привет! Мне нужно коммерческое предложение на услуги вашей компании.' }
-        ]
-      },
-      {
-        id: 'cust_3',
-        name: 'Мария Иванова',
-        channel: 'vk',
-        avatar: '👩‍🎨',
-        lastMessage: 'Здравствуйте! Вы работаете по выходным? Хотела бы сделать заказ.',
-        timestamp: 'Вчера',
-        history: [
-          { sender: 'customer', text: 'Здравствуйте! Вы работаете по выходным? Хотела бы сделать заказ.' }
-        ]
-      }
-    ];
-    try {
-      fs.writeFileSync(CHATS_FILE, JSON.stringify(cachedChats, null, 2), "utf-8");
-    } catch (err) {
-      console.error("Failed to write initial mock chats:", err);
-    }
+    cachedChats = []; // Не создавать фейковых клиентов
   }
 
   if (db) {
@@ -813,7 +776,7 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
 - Сегодня/дата/дедлайн → current_date.
 - Ответ есть в базе знаний компании → отвечай по ней; данных нет → живо скажи, что уточнишь, НЕ выдумывай цифры.
 
-ПАМЯТЬ: опирайся на заметки и задачи владельца выше — он ждёт, что ты помнишь контекст. Если спрашивает «что у меня/что на сегодня/что я просил» — собери ответ из его задач и заметок.
+ПАМЯТЬ: опирайся на заметки и задачи владельца выше — он ждёт, что ты помнишь контекст. Если спрашивает «что у меня/что на сегодня/что я просил» — собери ответ из его задач и заметок. Используй информацию из блоков ЗАМЕТКИ О БИЗНЕСЕ ВЛАДЕЛЬЦА и АКТУАЛЬНЫЕ ЗАДАЧИ/НАПОМИНАНИЯ ВЛАДЕЛЬЦА выше. Если клиент спрашивает 'что у меня на сегодня', 'что я просил', 'напомни' — отвечай строго на основе этих данных. Не выдумывай задачи.
 
 КАК ГОВОРИТЬ: как живой человек, 1-3 коротких разговорных предложения, можно один эмодзи. Без списков, без «во-первых», без канцелярита. Текст автоматически озвучивается — пиши вслух. НИКОГДА не говори, что ты ИИ/бот, и НИКОГДА не говори, что отвечаешь только текстом или не можешь голосом.
 ЗАПРЕЩЕНЫ пустые отписки вместо сути: «чем могу помочь», «напишите ваш вопрос», «я зафиксировал ваш вопрос», «ответим в ближайшее время». Отвечай ПО СУТИ.

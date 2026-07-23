@@ -43,7 +43,7 @@ const ROLE_TEMPLATES: Record<string, { title: string; missionTemplate: (b: strin
   },
   operator: { 
     title: 'Координатор штаба', 
-    missionTemplate: (b, i, t) => `Управляет задачами всех agents "${b}". Формирует сводки для владельца и следит за качеством. Тон: ${t}.`, 
+    missionTemplate: (b, i, t) => `Управляет задачами всех агентов "${b}". Формирует сводки для владельца и следит за качеством. Тон: ${t}.`, 
     icon: 'CheckSquare' 
   }
 };
@@ -115,6 +115,11 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
             // 3. Парсинг конфига
             const parts = intData.text.split('[COMPLETE]');
+            if (parts.length < 2) {
+              setClarifyMessage("Не удалось разобрать ответ системы. Попробуйте еще раз.");
+              setProcessingStatus('clarifying');
+              return;
+            }
             let configData: any = {};
             try {
               const jsonText = parts[1].replace(/```json/g, '').replace(/```/g, '').trim();
@@ -153,12 +158,16 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
             } catch (e) { console.warn("Plan generation failed, using dynamic fallback", e); }
 
             // 5. Fallback: динамические агенты из detected_agents, если план не пришел
-            if (finalPlan.length === 0 && configData.detected_agents && configData.detected_agents.length > 0) {
+            if (finalPlan.length === 0) {
               const b = configData.business_name || businessName || 'Мой Бизнес';
               const ind = configData.industry || industry || 'Услуги';
               const t = configData.tone || tone || 'friendly';
               
-              finalPlan = configData.detected_agents.map((role: string) => {
+              const rolesToUse = (configData.detected_agents && configData.detected_agents.length > 0) 
+                ? configData.detected_agents 
+                : ['receiver', 'sales', 'operator']; // Дефолт, если модель не определила роли
+              
+              finalPlan = rolesToUse.map((role: string) => {
                 const template = ROLE_TEMPLATES[role] || ROLE_TEMPLATES['receiver'];
                 return {
                   agent: role,
