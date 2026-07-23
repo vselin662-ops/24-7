@@ -48,7 +48,7 @@ export default function App() {
   const [logoError, setLogoError] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
-  const [readinessState, setReadinessState] = useState<{ is_live?: boolean; all_ready?: boolean } | null>(null);
+  const [readinessState, setReadinessState] = useState<{ is_live?: boolean; all_ready?: boolean; kb_ready?: boolean; channel_ready?: boolean; tone_ready?: boolean; missions_ready?: boolean } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
   interface MenuTabItem {
@@ -233,11 +233,17 @@ export default function App() {
     statusTitle = 'Локальный кэш';
   }
 
+  const ownerInitial = (config?.owner_name || "В").trim().charAt(0).toUpperCase();
+  const staffLive = !!(config?.is_live || readinessState?.is_live);
+  const readyFlags = [readinessState?.kb_ready, readinessState?.channel_ready, readinessState?.tone_ready, readinessState?.missions_ready];
+  const readyCount = readyFlags.filter(Boolean).length;
+  const readyPercent = Math.round((readyCount / 4) * 100);
+
   return (
     <div className="min-h-screen flex flex-col justify-between py-6 px-4">
       {/* Header Panel */}
       <header className="max-w-7xl mx-auto w-full mb-6 relative">
-        <div className="premium-card p-4 rounded-2xl flex items-center justify-between gap-3">
+        <div className="premium-card p-4 rounded-2xl lux-shadow lux-hairline flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             {/* Logo container - replaced with Selin SVG */}
             <div className="w-12 h-12 shrink-0 bg-white rounded-2xl flex items-center justify-center overflow-hidden shadow-[0_2px_10px_rgba(0,0,0,0.3)]">
@@ -259,7 +265,7 @@ export default function App() {
             
             {/* Title & Dot */}
             <div className="flex items-center gap-3">
-              <h1 className="font-sans font-bold text-xl md:text-2xl text-white tracking-normal leading-none select-none">
+              <h1 className="font-lux text-2xl md:text-3xl text-white tracking-normal leading-none select-none">
                 {APP_TITLE}
               </h1>
               
@@ -323,58 +329,88 @@ export default function App() {
 
             {/* Drawer Panel */}
             <div
-              className="fixed top-0 right-0 h-full w-[78%] max-w-xs bg-[#0E0E10]/95 border-l border-white/10 z-50 transition-transform duration-300 flex flex-col p-6 shadow-[0_0_30px_rgba(0,0,0,0.5)] backdrop-blur-md"
+              className="fixed top-0 right-0 h-full w-[78%] max-w-xs bg-[#0B0A09]/97 border-l lux-hairline z-50 transition-transform duration-300 flex flex-col p-6 lux-shadow backdrop-blur-xl"
             >
-              {/* Header inside drawer */}
-              <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/5">
-                <div className="flex items-center gap-2">
-                  <Bot className="h-5 w-5 text-[#F5A623]" />
-                  <span className="font-sans font-bold text-lg text-white">Меню</span>
+              {/* Шапка: профиль владельца + статус + закрытие */}
+              <div className="flex items-center justify-between mb-5 pb-4 border-b lux-hairline">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 shrink-0 rounded-full bg-[#F5A623]/10 border lux-hairline flex items-center justify-center text-[#F5A623] font-lux text-xl">
+                    {ownerInitial}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xl font-lux text-white truncate leading-tight">{config?.owner_name || "Владелец"}</div>
+                    <div className={`text-[10px] flex items-center gap-1.5 mt-0.5 ${staffLive ? "text-emerald-400" : "text-slate-400"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${staffLive ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+                      {staffLive ? "Штаб работает 24/7" : "Штаб не запущен"}
+                    </div>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setMenuOpen(false)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors"
-                >
+                <button onClick={() => setMenuOpen(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer transition-colors shrink-0">
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              {/* Navigation items */}
-              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                {menuTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => {
-                      setCurrentTab(tab.id);
-                      setMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-all duration-300 cursor-pointer text-left ${
-                      currentTab === tab.id
-                        ? 'border-[#F5A623] bg-[#F5A623]/10 text-[#F5A623] shadow-[0_0_15px_rgba(245,166,35,0.08)]'
-                        : 'border-transparent hover:bg-white/5 text-slate-300'
-                    }`}
-                  >
-                    <div
-                      className="w-11 h-11 flex items-center justify-center shrink-0 transition-all duration-300"
-                      style={{
-                        clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)',
-                        backgroundColor: currentTab === tab.id ? '#F5A623' : 'rgba(245, 166, 35, 0.1)'
-                      }}
+              {/* Прогресс-бар готовности */}
+              <div className="mb-5">
+                <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1.5">
+                  <span>Готовность к запуску</span>
+                  <span className="text-[#F5A623] font-semibold">{readyCount}/4</span>
+                </div>
+                <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full bg-[#F5A623] rounded-full transition-all duration-500 shadow-[0_0_8px_rgba(245,166,35,0.3)]" style={{ width: `${readyPercent}%` }} />
+                </div>
+              </div>
+
+              {/* Список пунктов — стеклянные плитки */}
+              <div className="flex-1 overflow-y-auto space-y-0 pr-1">
+                {menuTabs.map((tab, idx) => {
+                  const active = currentTab === tab.id;
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => { setCurrentTab(tab.id); setMenuOpen(false); }}
+                      style={{ animationDelay: `${idx * 50}ms` }}
+                      className="relative w-full flex items-center gap-4 py-3 border-b lux-hairline transition-all duration-300 cursor-pointer text-left overflow-hidden animate-fade-in hover:bg-white/[0.02]"
                     >
-                      <tab.icon className={`h-5 w-5 ${currentTab === tab.id ? 'text-[#0A0A0B]' : 'text-[#F5A623]'}`} />
-                    </div>
-                    <div className="flex-1 flex items-center justify-between">
-                      <span className={`text-sm ${currentTab === tab.id ? 'text-[#F5A623] font-semibold' : 'text-white'}`}>
+                      {active && (
+                        <span className="absolute left-0 top-2 bottom-2 w-px bg-[#F5A623] shadow-[0_0_8px_rgba(245,166,35,0.6)]" />
+                      )}
+                      <div className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center border transition-all duration-300 ${
+                        active ? "bg-[#F5A623]/10 border-[#F5A623]/30" : "bg-white/5 border-white/[0.08]"
+                      }`}>
+                        <Icon className={`h-4.5 w-4.5 ${active ? "text-[#F5A623]" : "text-slate-400"}`} />
+                      </div>
+                      <span className={`flex-1 font-lux text-lg truncate ${active ? "text-[#F5A623]" : "text-white"}`}>
                         {tab.label}
                       </span>
-                      {tab.badge && tab.badge > 0 && (
-                        <span className="bg-[#F5A623] text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                      {tab.badge !== undefined && tab.badge > 0 && (
+                        <span className="bg-[#F5A623] text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none shrink-0">
                           {tab.badge}
                         </span>
                       )}
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Футер: быстрые действия */}
+              <div className="mt-5 pt-4 space-y-3">
+                <div className="lux-gold-line w-full opacity-40 mb-3" />
+                <button
+                  onClick={() => { setMenuOpen(false); setIsLaunchModalOpen(true); }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all duration-300 cursor-pointer bg-[#F5A623] text-black hover:bg-[#F5A623]/90 shadow-[0_0_15px_rgba(245,166,35,0.3)]"
+                >
+                  {staffLive ? <Zap className="h-4 w-4" /> : <Rocket className="h-4 w-4" />}
+                  {staffLive ? "Штаб работает 24/7" : "Запустить штаб"}
+                </button>
+                <button
+                  onClick={() => { if (window.confirm("Сбросить все настройки и данные штаба? Это действие необратимо.")) { setMenuOpen(false); handleWipeAllData(); } }}
+                  className="w-full text-center py-2 text-xs text-slate-500 hover:text-red-400 transition-colors cursor-pointer"
+                >
+                  Сбросить данные
+                </button>
+                <div className="text-center text-[9px] text-slate-600 pt-1">v1.0 · 152-ФЗ РФ</div>
               </div>
             </div>
           </>

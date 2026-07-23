@@ -135,13 +135,13 @@ export const ModerationPanel: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Overview Block */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/[0.08] pb-6">
         <div>
-          <h2 className="font-sans font-bold text-xl md:text-2xl text-white select-none flex items-center gap-2">
+          <h2 className="font-lux font-light text-xl md:text-2xl text-white select-none flex items-center gap-2">
             <Shield className="h-5 w-5 text-[#F5A623]" />
             Ручная модерация ответов
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-400 mt-1 leading-relaxed">
             Режим контроля позволяет просматривать, изменять и утверждать сообщения цифровых агентов перед их отправкой клиентам.
           </p>
         </div>

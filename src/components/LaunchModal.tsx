@@ -94,8 +94,8 @@ export const LaunchModal: React.FC<LaunchModalProps> = ({
             <Rocket className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-xl font-bold font-sans text-white">Готовность к запуску штаба</h2>
-            <p className="text-xs font-sans text-slate-400">Чеклист автономной работы цифровых сотрудников</p>
+            <h2 className="text-xl font-lux font-light text-white">Готовность к запуску штаба</h2>
+            <p className="text-xs text-slate-400">Чеклист автономной работы цифровых сотрудников</p>
           </div>
         </div>
 
@@ -109,7 +109,7 @@ export const LaunchModal: React.FC<LaunchModalProps> = ({
             <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 mx-auto animate-pulse">
               <Zap className="h-8 w-8" />
             </div>
-            <h3 className="text-2xl font-bold font-sans text-emerald-400">Штаб работает 24/7</h3>
+            <h3 className="text-2xl font-lux font-light text-emerald-400">Штаб работает 24/7</h3>
             <p className="text-sm font-sans text-slate-300 max-w-sm mx-auto">
               Все цифровые агенты активированы в боевом режиме с персональными миссиями и полной базой знаний.
             </p>

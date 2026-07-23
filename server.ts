@@ -36,9 +36,9 @@ if (apiKey) {
   console.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
 }
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-const MODEL_CHAIN = ["gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+const MODEL_CHAIN = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 async function generateWithFallback(buildContents: () => any, cfg: any) {
   let lastErr: any;
   for (const m of MODEL_CHAIN) {
@@ -51,6 +51,71 @@ async function generateWithFallback(buildContents: () => any, cfg: any) {
     }
   }
   throw lastErr;
+}
+
+async function execTool(name: string, args: any): Promise<any> {
+  try {
+    if (name === "calculate") {
+      const expr = String(args?.expression || "");
+      if (!/^[\d+\-*/().\s%]+$/.test(expr)) return { error: "недопустимое выражение" };
+      const result = Function('"use strict"; return (' + expr + ");")();
+      return { expression: expr, result };
+    }
+    if (name === "current_date") {
+      const d = new Date();
+      return { date: d.toLocaleDateString("ru-RU"), weekday: d.toLocaleDateString("ru-RU", { weekday: "long" }), time: d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) };
+    }
+    if (name === "save_note") {
+      const text = String(args?.text || "").trim();
+      if (!text) return { error: "пустая заметка" };
+      const cfg = getCompanyConfig();
+      cfg.notes = cfg.notes || [];
+      cfg.notes.unshift({ id: "n_" + Date.now(), text, at: new Date().toISOString() });
+      cfg.notes = cfg.notes.slice(0, 50);
+      saveCompanyConfig({ notes: cfg.notes });
+      return { saved: true, note: text };
+    }
+    if (name === "add_task") {
+      const title = String(args?.title || "").trim();
+      if (!title) return { error: "пустая задача" };
+      const cfg = getCompanyConfig();
+      cfg.tasks = cfg.tasks || [];
+      cfg.tasks.unshift({ id: "t_" + Date.now(), title, due: args?.due || "", done: false, at: new Date().toISOString() });
+      cfg.tasks = cfg.tasks.slice(0, 50);
+      saveCompanyConfig({ tasks: cfg.tasks });
+      return { saved: true, task: title, due: args?.due || "" };
+    }
+    return { error: "unknown tool" };
+  } catch (e: any) {
+    return { error: String(e?.message || e) };
+  }
+}
+
+async function runWithTools(systemInstruction: string, contents: any[]): Promise<any> {
+  const tools = [
+    { googleSearch: {} },
+    { functionDeclarations: [
+      { name: "calculate", description: "Посчитать арифметику: ROI, маржу, проценты, налог, рост цены/выручки. expression — строка, например '(750000-450000)/450000*100'.", parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING } }, required: ["expression"] } },
+      { name: "current_date", description: "Текущая дата, день недели и время (когда спрашивают про сегодня/дату/дедлайн).", parameters: { type: Type.OBJECT, properties: {} } },
+      { name: "save_note", description: "Сохранить важную заметку/факт о бизнесе владельца в его профиль (когда он говорит 'запомни', 'запиши', сообщает факт о клиенте/цене/договорённости).", parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING } }, required: ["text"] } },
+      { name: "add_task", description: "Добавить задачу/напоминание владельцу в профиль (когда просит напомнить/сделать/не забыть; due — срок словами, если назван).", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, due: { type: Type.STRING } }, required: ["title"] } }
+    ] }
+  ];
+  let last: any = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction, tools });
+  for (let i = 0; i < 4; i++) {
+    const parts = last?.candidates?.[0]?.content?.parts || [];
+    const fcPart = parts.find((p: any) => p.functionCall);
+    if (!fcPart) break;
+    const fc = fcPart.functionCall;
+    const result = await execTool(fc.name, fc.args || {});
+    contents = [
+      ...contents,
+      { role: "model", parts: [{ functionCall: fc }] },
+      { role: "user", parts: [{ functionResponse: { name: fc.name, response: result } }] }
+    ];
+    last = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction, tools });
+  }
+  return last;
 }
 
 async function withRetry<T>(fn: () => Promise<T>, attempts = 2, delayMs = 1200): Promise<T> {
@@ -95,7 +160,15 @@ let cachedConfig: any = {
   voice_id: "Kore",
   auto_synthesize: false,
   tts_voice: "Kore",
-  agents: []
+  agents: [],
+  preferences: { address_form: "вы", response_style: "коротко и по делу", reminder_time: "09:00", timezone: "Europe/Moscow" },
+  schedule: { work_start: "09:00", work_end: "18:00", daily_brief_time: "08:30" },
+  proactive_scenarios: [],
+  tools_enabled: ["web_search", "calculate", "memory"],
+  contacts: [],
+  tasks: [],
+  notes: [],
+  metrics: { track: [], targets: {} }
 };
 
 let cachedChats: any[] = [];
@@ -653,7 +726,7 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
 
   const config = getCompanyConfig();
   const voiceName = config.tts_voice || config.voice_id || 'Kore';
-  const TTS_MODEL_CHAIN = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview", "gemini-2.0-flash-preview-tts"];
+  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts", "gemini-2.0-flash-preview-tts"];
 
   let pcmPath: string | null = null;
   let oggPath: string | null = null;
@@ -733,48 +806,45 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
 // Helper to generate agent response (using RAG & Gemini or simulation fallback)
 async function generateAgentResponseHelper(user_message: string, agentRole: string, chatHistory: any[], config: any): Promise<string> {
   if (!ai) {
-    if (agentRole === "sales") {
-      return `Благодарим за интерес к "${config.business_name}"! Мы подготовим для вас персональное предложение в ближайшее время.`;
-    } else {
-      return `Здравствуйте! Спасибо за ваше сообщение. Я зафиксировал ваш вопрос: "${user_message}". Мы ответим вам в ближайшее время.`;
-    }
+    return agentRole === "sales"
+      ? `Спасибо за интерес к "${config.business_name}"! Подберу лучшее предложение.`
+      : `Принял ваш вопрос про "${user_message}". Уточню и вернусь с ответом.`;
   }
-
   try {
-    // RAG Knowledge Retrieval - limit to 2
     let ragContext = "";
     const matchedChunks = await queryKnowledgeBase(user_message, 2);
     const relevantChunks = matchedChunks.filter((c: any) => c.score >= 0.35);
-    
     if (relevantChunks.length > 0) {
-      ragContext = "\nПОДТВЕРЖДЕННАЯ ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ:\n" +
-        relevantChunks.map((c: any) => `[Источник: ${c.docName}]: ${c.text}`).join("\n\n") + "\n\n" +
-        "ИНСТРУКЦИЯ: Опирайся только на эти факты. Если ответа нет, вежливо скажи, что уточнишь у руководителя.\n";
+      ragContext = "\nФАКТЫ ИЗ БАЗЫ ЗНАНИЙ КОМПАНИИ (опирайся на них):\n" + relevantChunks.map((c: any) => `- [${c.docName}]: ${c.text}`).join("\n") + "\n";
     }
-
-    const recent = chatHistory.slice(-4);
-    const conversationHistory = recent.map((h: any) => 
-      `${h.sender === "customer" ? "Клиент" : "Агент"}: ${h.text}`
-    ).join("\n");
-
+    const prefs = config.preferences || {};
+    const address = prefs.address_form === "ты" ? "Обращайся на «ты»." : "Обращайся на «вы».";
+    const goals = (config.metrics && config.metrics.targets) ? JSON.stringify(config.metrics.targets) : "";
+    const notesBlock = (config.notes && config.notes.length) ? "\nЗАМЕТКИ О БИЗНЕСЕ ВЛАДЕЛЬЦА (помни их):\n" + config.notes.slice(0, 10).map((n: any) => "- " + n.text).join("\n") + "\n" : "";
+    const tasksBlock = (config.tasks && config.tasks.length) ? "\nАКТУАЛЬНЫЕ ЗАДАЧИ/НАПОМИНАНИЯ ВЛАДЕЛЬЦА:\n" + config.tasks.slice(0, 10).map((t: any) => "- " + t.title + (t.due ? " (срок: " + t.due + ")" : "")).join("\n") + "\n" : "";
+    const recent = chatHistory.slice(-12);
+    const contents = [
+      ...recent.map((h: any) => ({ role: (h.sender === "customer" ? "user" : "model"), parts: [{ text: h.text }] })),
+      { role: "user", parts: [{ text: user_message }] }
+    ];
     const mission = (config.agent_missions || {})[agentRole] || "";
-    const missionText = mission ? ` Миссия: ${mission}.` : "";
-    const notLiveText = config.is_live !== true ? " Режим: штаб еще не запущен. Отвечай вежливо, не обещай конкретику." : "";
+    const systemInstruction = `Ты — живой сотрудник цифрового штаба Selin, роль "${agentRole}", компания "${config.business_name}" (сфера: ${config.industry || "услуги"}). Владелец: ${config.owner_name || "предприниматель"}. Тон: ${config.tone || "friendly"}. ${address}${mission ? " Твоя миссия: " + mission + "." : ""}${goals ? " Цели владельца: " + goals + "." : ""}
 
-    const prompt = `Ты — цифровой агент "${agentRole}" в компании "${config.business_name}". Тон: ${config.tone || "friendly"}.${missionText}${notLiveText}
-Отвечай как живой человек: 1-2 коротких предложения, разговорно, без списков.
-ВАЖНО: твои ответы автоматически озвучиваются и уходят клиенту голосовым сообщением. НИКОГДА не говори клиенту, что ты работаешь только в текстовом формате, что не можешь ответить голосом, или что ему нужно написать текстом из-за формата. Отвечай так, будто говоришь вслух: 1-2 коротких разговорных предложения, без списков и без упоминаний формата ответа.
-История:
-${conversationHistory}
-${ragContext}
-Следующий короткий ответ клиенту:`;
+ТЫ УМЕЕШЬ ДЕЛАТЬ РЕАЛЬНЫЕ ВЕЩИ — пользуйся инструментами, когда уместно, вместо отписок:
+- Факт, цены, конкуренты, новости, курс, погода → поиск (googleSearch), ответь с цифрой/фактом.
+- Посчитать (ROI, маржа, процент, налог, «что если поднять цену», рост выручки) → calculate, назови результат числом, ход одной строкой.
+- Сегодня/дата/дедлайн → current_date.
+- Владелец говорит «запомни/запиши» или сообщает факт о клиенте, цене, договорённости → save_note.
+- Просит напомнить/сделать/не забыть → add_task (due — срок словами, если назван).
+- Ответ есть в базе знаний компании → отвечай по ней; данных нет → живо скажи, что уточнишь, НЕ выдумывай цифры.
 
-    const response = await generateWithFallback(
-      () => prompt,
-      { temperature: 0.7 }
-    );
+ПАМЯТЬ: опирайся на заметки и задачи владельца выше — он ждёт, что ты помнишь контекст. Если спрашивает «что у меня/что на сегодня/что я просил» — собери ответ из его задач и заметок.
 
-    return response.text || "Связь моргнула — повтори голосовое или напиши ещё раз, я на связи.";
+КАК ГОВОРИТЬ: как живой человек, 1-3 коротких разговорных предложения, можно один эмодзи. Без списков, без «во-первых», без канцелярита. Текст автоматически озвучивается — пиши вслух. НИКОГДА не говори, что ты ИИ/бот, и НИКОГДА не говори, что отвечаешь только текстом или не можешь голосом.
+ЗАПРЕЩЕНЫ пустые отписки вместо сути: «чем могу помочь», «напишите ваш вопрос», «я зафиксировал ваш вопрос», «ответим в ближайшее время». Отвечай ПО СУТИ.
+${notesBlock}${tasksBlock}${ragContext}`;
+    const response = await runWithTools(systemInstruction, contents);
+    return (response?.text || "").trim() || "Связь моргнула — повтори, пожалуйста, я на связи.";
   } catch (err: any) {
     console.error("GEN FAIL:", err?.message || err, "code:", err?.code || err?.status || "");
     return "Связь моргнула — повтори голосовое или напиши ещё раз, я на связи.";
@@ -1199,6 +1269,8 @@ app.post("/api/interview", async (req, res) => {
 3. Используемые каналы связи (Telegram, WhatsApp, VK, Email).
 4. Желаемый стиль общения (тон) агентов (например: дружелюбный, строгий, деловой, энергичный, элегантный).
 
+ПРАВИЛО РОЛЕЙ И ЗАВЕРШЕНИЯ: detected_agents в финальном JSON должен содержать ТОЛЬКО те роли, которые реально нужны под задачу пользователя (выбирай из receiver, sales, content, analyst, operator — от 1 до 5, не обязательно все пять; если бизнесу нужен только приём заявок — оставь только receiver и т.д.). И НЕ завершай интервью, НЕ выводи [COMPLETE], пока из переписки НЕ ясны ОБА факта: (а) сфера/ниша бизнеса и (б) конкретная задача/рутина, которую надо автоматизировать. Если пользователь отвечает невнятно, коротко, абстрактно или не по делу — задай ОДИН живой уточняющий вопрос на русском (пример: «пока не уловил суть — скажите парой слов, какой у вас бизнес и какую рутину забрать: переписку, записи, продажи, контент?»). Только когда есть и сфера, и задача — подытожь и выведи [COMPLETE] с JSON.
+
 Когда ты получишь достаточно ответов, заверши интервью. В финальном ответе кратко подытожь результаты, а затем на новой строке выведи маркер [COMPLETE] и строго на следующей строке выведи чистый JSON без разметки markdown, содержащий следующие поля:
 {
   "business_name": "Название компании",
@@ -1211,7 +1283,9 @@ app.post("/api/interview", async (req, res) => {
 }`;
 
     if (forceComplete) {
-      systemInstruction = `Ты — аналитический модуль системы "Автономный цифровой сотрудник".
+      systemInstruction = `ПРАВИЛО: сначала оцени, есть ли в переписке ОБА факта — сфера/ниша бизнеса И конкретная задача/рутина для автоматизации. Если хотя бы одного нет (ввод пустой, невнятный, абстрактный, не про дело) — НЕ выводи [COMPLETE] и НЕ выводи JSON; вместо этого выведи один короткий живой уточняющий вопрос на русском, который просит назвать сферу бизнеса и что именно автоматизировать. Выводи [COMPLETE] и JSON только когда оба факта извлекаются из переписки; для второстепенных полей ставь дефолты. Также detected_agents заполняй только реально нужными ролями под задачу (от 1 до 5), а не всегда всеми пятью.
+
+Ты — аналитический модуль системы "Автономный цифровой сотрудник".
 Интервью завершено или прервано пользователем. Твоя задача — внимательно проанализировать всю имеющуюся переписку и строго вывести чистый JSON-конфигурацию без разметки markdown, содержащий параметры для настройки бизнеса.
 Если какие-то данные не были явно названы, заполни их разумными дефолтами (например, если имя владельца неизвестно, напиши "Предприниматель", если название компании неизвестно - "Мой Бизнес", сфера деятельности - "Продажи и услуги", каналы связи - ["telegram"], тон - "friendly", уровень автономности - "full").
 
@@ -1227,14 +1301,13 @@ app.post("/api/interview", async (req, res) => {
 }`;
     }
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: formattedContents,
-      config: {
+    const response = await generateWithFallback(
+      () => formattedContents,
+      {
         systemInstruction,
         temperature: forceComplete ? 0.2 : 0.7,
       }
-    });
+    );
 
     res.json({ text: response.text || "" });
   } catch (error: any) {
@@ -1335,10 +1408,9 @@ app.post("/api/smart-plan", async (req, res) => {
       "  }\n" +
       "]";
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
+    const response = await generateWithFallback(
+      () => prompt,
+      {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -1360,7 +1432,7 @@ app.post("/api/smart-plan", async (req, res) => {
         },
         temperature: 0.2
       }
-    });
+    );
 
     const tasks = JSON.parse(response.text || "[]");
     res.json({ tasks });
@@ -1560,10 +1632,9 @@ app.post("/api/quest/generate-stations", async (req, res) => {
   ]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
+    const response = await generateWithFallback(
+      () => prompt,
+      {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -1598,7 +1669,7 @@ app.post("/api/quest/generate-stations", async (req, res) => {
         },
         temperature: 0.2
       }
-    });
+    );
 
     const parsed = JSON.parse(response.text || "{}");
     if (parsed.stations && Array.isArray(parsed.stations) && parsed.stations.length > 0) {
@@ -1700,10 +1771,9 @@ ${JSON.stringify(selectedChoices, null, 2)}
   ...
 ]`;
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
+    const response = await generateWithFallback(
+      () => prompt,
+      {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -1720,7 +1790,7 @@ ${JSON.stringify(selectedChoices, null, 2)}
         },
         temperature: 0.2
       }
-    });
+    );
 
     const plan = JSON.parse(response.text || "[]");
     const agent_missions: Record<string, string> = {};
@@ -1839,14 +1909,13 @@ app.post("/api/smart-interview/next", async (req, res) => {
 3. Избегай банальных, общих, водянистых вопросов. Говори как опытный, практичный бизнес-консультант.
 4. Тон: сдержанный, деловой, экспертный, уважительный, без лишней вежливости и "воды".`;
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: formattedContents,
-      config: {
+    const response = await generateWithFallback(
+      () => formattedContents,
+      {
         systemInstruction,
         temperature: 0.7,
       }
-    });
+    );
 
     res.json({ text: response.text || "Не удалось сформулировать следующий вопрос." });
   } catch (error: any) {
@@ -1899,10 +1968,9 @@ ${formattedHistory}
 3. Не придумывай нереалистичных деталей. Твой анализ должен выглядеть как отчет топового консалтингового агентства (McKinsey/BCG).
 4. Верни СТРОГО JSON-объект с указанными полями.`;
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
+    const response = await generateWithFallback(
+      () => prompt,
+      {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -1918,7 +1986,7 @@ ${formattedHistory}
         },
         temperature: 0.2
       }
-    });
+    );
 
     const profile = JSON.parse(response.text || "{}");
     res.json({ profile });
@@ -2041,12 +2109,11 @@ app.post("/api/smart-plan/generate-from-interview", async (req, res) => {
     "time_bound": "Срок (До XX:XX)",
     "priority": "high" или "medium" или "low"
   }
-]`;
+]`
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
+    const response = await generateWithFallback(
+      () => prompt,
+      {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -2068,7 +2135,7 @@ app.post("/api/smart-plan/generate-from-interview", async (req, res) => {
         },
         temperature: 0.2
       }
-    });
+    );
 
     const tasks = JSON.parse(response.text || "[]");
     const agent_missions: Record<string, string> = {};
@@ -2140,13 +2207,12 @@ app.post("/api/agent-respond", async (req, res) => {
       ragContext + "\n" +
       "Напиши свой ответ/результат:";
 
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
+    const response = await generateWithFallback(
+      () => prompt,
+      {
         temperature: 0.7,
       }
-    });
+    );
 
     res.json({ response: response.text || "" });
   } catch (error: any) {
@@ -2173,20 +2239,39 @@ app.post("/api/synthesize", async (req, res) => {
     const allowedVoices = ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"];
     const voiceName = allowedVoices.includes(voice) ? voice : "Kore";
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName }
-          }
-        }
-      }
-    });
+    const TTS_MODEL_CHAIN = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview", "gemini-2.0-flash-preview-tts"];
+    let base64Audio: string | undefined = undefined;
+    let lastTtsErr: any = null;
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    for (const m of TTS_MODEL_CHAIN) {
+      try {
+        const response = await ai.models.generateContent({
+          model: m,
+          contents: [{ parts: [{ text }] }],
+          config: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName }
+              }
+            }
+          }
+        });
+        const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (audio) {
+          base64Audio = audio;
+          console.log(`✅ TTS succeeded via model ${m}`);
+          break;
+        }
+      } catch (e: any) {
+        lastTtsErr = e;
+        console.warn(`⚠️ TTS model ${m} failed:`, e?.message || e);
+      }
+    }
+
+    if (!base64Audio) {
+      throw lastTtsErr || new Error("No TTS model produced audio.");
+    }
 
     if (base64Audio) {
       res.json({ audio: base64Audio });

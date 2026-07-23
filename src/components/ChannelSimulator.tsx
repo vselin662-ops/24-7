@@ -306,13 +306,13 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
   return (
     <div className="space-y-12 animate-fade-in py-6">
       {/* Short Hero-Block Header */}
-      <div className="relative text-left border-b border-white/5 pb-8">
+      <div className="relative text-left border-b border-white/[0.08] pb-6">
         <div className="absolute -top-12 left-0 text-8xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
           05
         </div>
-        <span className="text-[11px] font-bold text-accent uppercase tracking-[0.25em] block mb-2">модуль симуляции</span>
-        <h2 className="text-3xl md:text-4xl font-display font-black text-white uppercase tracking-tight">Симулятор каналов продаж</h2>
-        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light">
+        <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 block mb-2 uppercase">модуль симуляции</span>
+        <h2 className="text-3xl md:text-4xl font-lux font-light text-white leading-snug">Симулятор каналов продаж</h2>
+        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light leading-relaxed">
           Интерактивная песочница для тестирования ответов ИИ-сотрудников в мессенджерах, соцсетях и по email.
         </p>
       </div>
@@ -333,8 +333,8 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
                   }}
                   className={`flex items-center gap-3 p-3.5 rounded-xl border text-left transition-all duration-300 text-xs cursor-pointer ${
                     activeChannel === ch.id
-                      ? 'border-accent bg-accent/10 text-white shadow-[0_4px_15px_rgba(245,166,35,0.1)] font-semibold backdrop-blur-md'
-                      : 'border-white/10 bg-white/4 backdrop-blur-sm hover:bg-white/8 hover:border-white/15 text-slate-400'
+                      ? 'border-[#F5A623]/40 bg-[#F5A623]/10 text-white shadow-[0_4px_15px_rgba(245,166,35,0.05)] font-medium backdrop-blur-md'
+                      : 'border-white/[0.08] bg-white/[0.02] backdrop-blur-sm hover:bg-white/[0.04] text-slate-400'
                   }`}
                 >
                   <span className="text-base">{ch.icon}</span>
@@ -356,13 +356,13 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
               ) : (
                 currentCustomers.map(cust => (
                   <button
-                    key={cust.id}
-                    onClick={() => setSelectedCustomerId(cust.id)}
-                    className={`w-full flex items-start gap-3.5 p-4 rounded-xl border text-left transition-all duration-300 cursor-pointer ${
-                      selectedCustomerId === cust.id
-                        ? 'border-accent bg-accent/5 text-slate-200 shadow-[0_2px_10px_rgba(245,166,35,0.05)]'
-                        : 'border-white/5 bg-transparent hover:bg-white/[0.03] text-slate-400'
-                    }`}
+                     key={cust.id}
+                     onClick={() => setSelectedCustomerId(cust.id)}
+                     className={`w-full flex items-start gap-3.5 p-4 rounded-xl border text-left transition-all duration-300 cursor-pointer ${
+                       selectedCustomerId === cust.id
+                         ? 'border-[#F5A623]/40 bg-[#F5A623]/5 text-slate-200 shadow-[0_2px_10px_rgba(245,166,35,0.03)]'
+                         : 'border-white/[0.04] bg-transparent hover:bg-white/[0.02] text-slate-400'
+                     }`}
                   >
                     <div className="text-lg bg-white/5 p-2 rounded-xl">{cust.avatar}</div>
                     <div className="flex-1 min-w-0">

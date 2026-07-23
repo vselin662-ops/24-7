@@ -15,9 +15,9 @@ export const GlassPanel: React.FC<GlassPanelProps> = ({
 }) => {
   let glowClasses = '';
   if (glowColor === 'accent') {
-    glowClasses = 'shadow-[0_0_20px_rgba(245,166,35,0.15)] border-accent/20';
+    glowClasses = 'lux-shadow border-[#F5A623]/20';
   } else if (glowColor === 'red') {
-    glowClasses = 'shadow-[0_0_15px_rgba(239,68,68,0.15)] border-red-500/20';
+    glowClasses = 'shadow-[0_15px_50px_rgba(239,68,68,0.08)] border-red-500/10';
   }
 
   return (

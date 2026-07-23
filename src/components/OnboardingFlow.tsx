@@ -344,8 +344,8 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
         <div className="space-y-16 text-center max-w-4xl mx-auto py-16 px-4 animate-fade-in">
           <div className="space-y-6">
             <div className="flex items-center justify-center gap-2">
-              <span className="text-[11px] font-bold text-accent uppercase tracking-[0.25em] bg-accent/10 px-4.5 py-1.5 rounded-full border border-accent/20 inline-block">
-                PREMIUM AI STAFF • ВАШ ЦИФРОВОЙ ШТАБ
+              <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 inline-block uppercase">
+                Premium AI Staff • Ваш цифровой штаб
               </span>
             </div>
             
@@ -353,10 +353,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
               <div className="absolute -top-16 left-1/2 -translate-x-1/2 text-[120px] font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
                 01
               </div>
-              <h1 className="text-4xl md:text-6xl font-display font-black text-white tracking-tighter leading-tight uppercase">
+              <h1 className="text-4xl md:text-6xl font-lux font-light text-white leading-tight">
                 Ваш цифровой сотрудник. <br />
-                <span className="text-accent italic font-light font-sans tracking-normal lowercase">работает 24/7.</span>
+                <span className="text-accent italic font-light font-lux tracking-normal">работает 24/7.</span>
               </h1>
+              <div className="lux-gold-line w-16 mx-auto mt-6 opacity-60" />
             </div>
 
             <p className="text-base text-slate-400 max-w-2xl mx-auto leading-relaxed font-light">
@@ -368,40 +369,40 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
 
           {/* Core cards visualization */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left max-w-5xl mx-auto pt-4">
-            <div className="premium-card p-8 rounded-2xl space-y-4 relative overflow-hidden group">
+            <div className="premium-card p-8 rounded-2xl space-y-4 relative overflow-hidden group border-white/[0.08]">
               <div className="absolute top-4 right-4 text-white/[0.04] text-5xl font-bold select-none">
                 I
               </div>
-              <div className="bg-accent/10 text-accent p-3 rounded-xl w-12 h-12 flex items-center justify-center group-hover:bg-accent group-hover:text-dark-base transition-all duration-300">
+              <div className="bg-accent/5 border border-accent/20 text-accent p-3 rounded-xl w-12 h-12 flex items-center justify-center group-hover:bg-[#F5A623]/10 transition-all duration-300">
                 <Bot className="h-6 w-6" />
               </div>
-              <h4 className="text-lg font-bold text-white uppercase tracking-tight font-display">5 ИИ-Профессионалов</h4>
+              <h4 className="text-lg font-lux font-normal text-white">5 ИИ-Профессионалов</h4>
               <p className="text-xs text-slate-400 leading-relaxed font-light">
                 Операционист координирует приемщика, продажника, копирайтера и аналитика для бесперебойного достижения бизнес-целей.
               </p>
             </div>
 
-            <div className="premium-card p-8 rounded-2xl space-y-4 relative overflow-hidden group">
+            <div className="premium-card p-8 rounded-2xl space-y-4 relative overflow-hidden group border-white/[0.08]">
               <div className="absolute top-4 right-4 text-white/[0.04] text-5xl font-bold select-none">
                 II
               </div>
-              <div className="bg-accent/10 text-accent p-3 rounded-xl w-12 h-12 flex items-center justify-center group-hover:bg-accent group-hover:text-dark-base transition-all duration-300">
+              <div className="bg-accent/5 border border-accent/20 text-accent p-3 rounded-xl w-12 h-12 flex items-center justify-center group-hover:bg-[#F5A623]/10 transition-all duration-300">
                 <Volume2 className="h-6 w-6" />
               </div>
-              <h4 className="text-lg font-bold text-white uppercase tracking-tight font-display">Голосовой Клон</h4>
+              <h4 className="text-lg font-lux font-normal text-white">Голосовой Клон</h4>
               <p className="text-xs text-slate-400 leading-relaxed font-light">
                 Запишите 10 секунд вашей речи, извлеките шифрованный спектральный вектор и озвучивайте ответы вашим голосом.
               </p>
             </div>
 
-            <div className="premium-card p-8 rounded-2xl space-y-4 relative overflow-hidden group">
+            <div className="premium-card p-8 rounded-2xl space-y-4 relative overflow-hidden group border-white/[0.08]">
               <div className="absolute top-4 right-4 text-white/[0.04] text-5xl font-bold select-none">
                 III
               </div>
-              <div className="bg-accent/10 text-accent p-3 rounded-xl w-12 h-12 flex items-center justify-center group-hover:bg-accent group-hover:text-dark-base transition-all duration-300">
+              <div className="bg-accent/5 border border-accent/20 text-accent p-3 rounded-xl w-12 h-12 flex items-center justify-center group-hover:bg-[#F5A623]/10 transition-all duration-300">
                 <Sparkles className="h-6 w-6" />
               </div>
-              <h4 className="text-lg font-bold text-white uppercase tracking-tight font-display">SMART-Планер</h4>
+              <h4 className="text-lg font-lux font-normal text-white">SMART-Планер</h4>
               <p className="text-xs text-slate-400 leading-relaxed font-light">
                 Ежедневная автогенерация детальных SMART задач, автоматическая маршрутизация и сбор вечерней аналитической отчетности.
               </p>
@@ -409,7 +410,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
           </div>
 
           <div className="flex flex-col sm:flex-row justify-center items-center gap-6 pt-8">
-            <NeonButton variant="accent" onClick={() => setStep('interview')} className="px-10 py-4.5 text-xs font-semibold tracking-widest shadow-[0_12px_35px_rgba(245,166,35,0.25)] hover:scale-105 transition-all duration-300">
+            <NeonButton variant="accent" onClick={() => setStep('interview')} className="px-10 py-4.5 text-sm transition-all duration-300">
               Создать мой штаб сотрудников
             </NeonButton>
           </div>
@@ -419,12 +420,12 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
       {step === 'interview' && (
         <div className="space-y-12 animate-fade-in max-w-6xl mx-auto py-8">
           {/* Section Heading */}
-          <div className="relative text-center md:text-left">
+          <div className="relative text-center md:text-left pb-4 border-b lux-hairline">
             <div className="absolute -top-10 left-1/2 -translate-x-1/2 md:left-0 md:translate-x-0 text-7xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
               02
             </div>
-            <span className="text-[11px] font-bold text-accent uppercase tracking-[0.2em] block mb-2">Этап 2: Проектирование</span>
-            <h2 className="text-3xl font-display font-black text-white uppercase tracking-tight">AI Собеседование штаба</h2>
+            <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 block mb-2 uppercase">Этап 2: Проектирование</span>
+            <h2 className="text-3xl font-lux font-light text-white leading-snug">AI Собеседование штаба</h2>
             <p className="text-xs text-slate-400 mt-1 max-w-xl">
               Наш интервьюер проанализирует особенности вашей компании, чтобы настроить индивидуальные роли.
             </p>

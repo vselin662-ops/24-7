@@ -90,13 +90,13 @@ export const BillingPanel: React.FC = () => {
   return (
     <div className="space-y-12 animate-fade-in py-6 font-sans">
       {/* Short Hero-Block Header */}
-      <div className="relative text-left border-b border-white/5 pb-8">
+      <div className="relative text-left border-b border-white/[0.08] pb-6">
         <div className="absolute -top-12 left-0 text-8xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
           08
         </div>
-        <span className="text-[11px] font-bold text-accent uppercase tracking-[0.25em] block mb-2">модуль тарифов</span>
-        <h2 className="text-3xl md:text-4xl font-display font-black text-white uppercase tracking-tight">Подписка & Лимиты</h2>
-        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light">
+        <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 block mb-2 uppercase">модуль тарифов</span>
+        <h2 className="text-3xl md:text-4xl font-lux font-light text-white leading-snug">Подписка и лимиты</h2>
+        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light leading-relaxed">
           Выберите тарифный план для масштабирования вашего ИИ-штаба. Переключайтесь между тарифами в любое время.
         </p>
       </div>
@@ -141,8 +141,8 @@ export const BillingPanel: React.FC = () => {
             onClick={() => setSelectedPlan(p.id as any)}
             className={`p-6 rounded-2xl flex flex-col justify-between border cursor-pointer transition-all duration-300 relative ${
               selectedPlan === p.id
-                ? 'border-accent bg-accent/10 shadow-[0_4px_25px_rgba(245,166,35,0.08)] backdrop-blur-md'
-                : 'border-white/10 bg-white/4 backdrop-blur-sm hover:border-accent/30 hover:bg-white/6 hover:shadow-[0_0_20px_rgba(245,166,35,0.1)]'
+                ? 'border-[#F5A623]/40 bg-[#F5A623]/10 shadow-[0_4px_25px_rgba(245,166,35,0.05)] backdrop-blur-md'
+                : 'border-white/[0.08] bg-white/[0.02] backdrop-blur-sm hover:border-[#F5A623]/25 hover:bg-white/[0.04] hover:shadow-[0_0_20px_rgba(245,166,35,0.05)]'
             }`}
           >
             {p.glow && (

@@ -101,13 +101,13 @@ export const FAQPanel: React.FC<FAQPanelProps> = ({ onWipeData, systemPrompts })
   return (
     <div className="space-y-12 animate-fade-in py-6">
       {/* Short Hero-Block Header */}
-      <div className="relative text-left border-b border-white/5 pb-8">
+      <div className="relative text-left border-b border-white/[0.08] pb-6">
         <div className="absolute -top-12 left-0 text-8xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
           09
         </div>
-        <span className="text-[11px] font-bold text-accent uppercase tracking-[0.25em] block mb-2">справка & академия</span>
-        <h2 className="text-3xl md:text-4xl font-display font-black text-white uppercase tracking-tight">Документация & Инструкции</h2>
-        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light">
+        <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 block mb-2 uppercase">справка и академия</span>
+        <h2 className="text-3xl md:text-4xl font-lux font-light text-white leading-snug">Документация и инструкции</h2>
+        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light leading-relaxed">
           Полезные материалы по настройке Telegram-ботов, техническая отчетность и правовое соответствие 152-ФЗ.
         </p>
       </div>

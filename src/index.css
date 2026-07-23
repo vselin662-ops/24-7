@@ -1,5 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Playfair+Display:wght@400;500;600&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Manrope:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
+
+.font-lux { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; letter-spacing: -0.01em; font-weight: 400; }
+.lux-hairline { border-color: rgba(255,255,255,0.08); }
+.lux-shadow { box-shadow: 0 24px 70px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05); }
+.lux-gold-line { background: linear-gradient(90deg, transparent, #F5A623, transparent); height: 1px; }
 
 @theme {
   --font-sans: "Inter", "Manrope", ui-sans-serif, system-ui, sans-serif;
@@ -82,4 +88,12 @@
 .animate-wave {
   animation: wave 1.2s ease-in-out infinite;
 }
+
+@keyframes kenburns { 0%{transform:scale(1.08) translate(0,0)} 50%{transform:scale(1.16) translate(-1.5%, -1%)} 100%{transform:scale(1.08) translate(0,0)} }
+@keyframes fogDrift { 0%{transform:translateX(-6%)} 50%{transform:translateX(6%)} 100%{transform:translateX(-6%)} }
+@keyframes riverShimmer { 0%,100%{opacity:.5} 50%{opacity:.85} }
+@keyframes eagleFly { 0% { transform: translate(-20vw, 18vh) rotate(6deg) scale(.85); opacity:0 } 10% { opacity:1 } 50% { transform: translate(45vw, 12vh) rotate(0deg) scale(1) } 90% { opacity:1 } 100% { transform: translate(120vw, 22vh) rotate(-5deg) scale(.9); opacity:0 } }
+@keyframes flapL { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(-28deg)} }
+@keyframes flapR { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(28deg)} }
+@keyframes glassPulse { 0%,100%{box-shadow:0 0 0 0 rgba(245,166,35,0.0), inset 0 1px 0 rgba(255,255,255,0.18)} 50%{box-shadow:0 0 40px 4px rgba(245,166,35,0.18), inset 0 1px 0 rgba(255,255,255,0.25)} }
 

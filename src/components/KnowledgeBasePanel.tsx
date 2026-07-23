@@ -332,13 +332,13 @@ export function KnowledgeBasePanel() {
       )}
 
       {/* Short Hero-Block Header */}
-      <div className="relative text-left border-b border-white/5 pb-8">
+      <div className="relative text-left border-b border-white/[0.08] pb-6">
         <div className="absolute -top-12 left-0 text-8xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
           06
         </div>
-        <span className="text-[11px] font-bold text-accent uppercase tracking-[0.25em] block mb-2">модуль знаний</span>
-        <h2 className="text-3xl md:text-4xl font-display font-black text-white uppercase tracking-tight">База Знаний & Векторный Поиск</h2>
-        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light">
+        <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 block mb-2 uppercase">модуль знаний</span>
+        <h2 className="text-3xl md:text-4xl font-lux font-light text-white leading-snug">База знаний и векторный поиск</h2>
+        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light leading-relaxed">
           Загрузка и векторизация корпоративной информации. ИИ-агенты используют эти данные по технологии RAG для генерации точных ответов на вопросы клиентов.
         </p>
       </div>
@@ -352,7 +352,7 @@ export function KnowledgeBasePanel() {
           </div>
           <div>
             <div className="text-slate-400 text-[10px] uppercase tracking-widest">Всего документов</div>
-            <div className="text-3xl font-display font-black text-white mt-1">{stats.documentCount}</div>
+            <div className="text-3xl font-lux font-light text-white mt-1">{stats.documentCount}</div>
           </div>
         </div>
 
@@ -363,7 +363,7 @@ export function KnowledgeBasePanel() {
           </div>
           <div>
             <div className="text-slate-400 text-[10px] uppercase tracking-widest">Векторных чанков</div>
-            <div className="text-3xl font-display font-black text-white mt-1">{stats.chunkCount}</div>
+            <div className="text-3xl font-lux font-light text-white mt-1">{stats.chunkCount}</div>
           </div>
         </div>
 

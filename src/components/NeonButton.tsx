@@ -18,20 +18,20 @@ export const NeonButton: React.FC<NeonButtonProps> = ({
   disabled,
   ...props
 }) => {
-  let baseStyle = 'relative px-6 py-3 rounded-xl font-bold tracking-wide transition-all duration-300 flex items-center justify-center gap-2.5 text-sm uppercase text-xs font-sans';
+  let baseStyle = 'relative px-6 py-3 rounded-xl transition-all duration-300 flex items-center justify-center gap-2.5 text-sm font-medium';
   let variantStyle = '';
 
-  // map 'accent' to premium amber styling with soft diffuse halo
+  // map 'accent' to premium gold outline/translucent luxury style
   if (variant === 'accent') {
-    variantStyle = `bg-accent text-[#0A0A0B] border border-accent hover:bg-transparent hover:text-accent cursor-pointer ${
-      glow ? 'shadow-[0_4px_20px_rgba(245,166,35,0.18)] hover:shadow-[0_8px_30px_rgba(245,166,35,0.35)]' : ''
+    variantStyle = `bg-[#F5A623]/5 text-[#F5A623] border border-[#F5A623]/40 hover:bg-[#F5A623]/10 hover:border-[#F5A623]/60 cursor-pointer ${
+      glow ? 'shadow-[0_4px_20px_rgba(245,166,35,0.06)]' : ''
     }`;
   } else if (variant === 'red') {
-    variantStyle = `bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white cursor-pointer ${
-      glow ? 'shadow-[0_4px_20px_rgba(239,68,68,0.12)] hover:shadow-[0_8px_30px_rgba(239,68,68,0.25)]' : ''
+    variantStyle = `bg-red-500/5 border border-red-500/20 text-red-400 hover:bg-red-500/10 hover:border-red-500/35 cursor-pointer ${
+      glow ? 'shadow-[0_4px_20px_rgba(239,68,68,0.04)]' : ''
     }`;
   } else {
-    variantStyle = 'bg-white/4 border border-white/10 text-white hover:bg-white/10 hover:border-white/20 cursor-pointer backdrop-blur-md';
+    variantStyle = 'bg-white/[0.02] border border-white/[0.08] text-white hover:bg-white/[0.06] hover:border-white/20 cursor-pointer backdrop-blur-md';
   }
 
   const isDisabled = disabled || loading;
