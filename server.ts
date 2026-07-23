@@ -1096,26 +1096,30 @@ if (tgToken) {
       const appUrl = process.env.APP_URL || "https://ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app";
 
       const nameGreeting = firstName ? `Привет, ${firstName}!` : "Привет!";
-      const welcomeText = `${nameGreeting} Ты в правильном месте 👋
-Моя задача — упростить тебе жизнь и забрать всю рутину: переписку, заявки, продажи, контент. Я выстрою под тебя автономную команду ИИ-специалистов, которая пашет 24/7 и закрывает твои задачи.
+      const welcomeText = `${nameGreeting} Ты в правильном месте.
+Моя задача — упростить тебе жизнь и забрать всю рутину: переписку, заявки, продажи, контент. Я выстрою под тебя автономную команду ИИ-специалистов, которая работает двадцать четыре на семь и закрывает твои задачи.
 Просто отправь мне голосовое — расскажи, что нужно, и мои ребята возьмут это в работу и выведут продукт на новый уровень.
 А если хочешь сначала всё потрогать сам — ниже кнопка, там приложение: покрути настройки, увидь всю структуру изнутри.
-Рад, что забежал в гости 🤝`;
-
-      bot?.sendMessage(chatId, welcomeText, {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "📱 Открыть приложение и посмотреть самому", url: appUrl }
-            ]
-          ]
-        }
-      });
+Рад, что забежал в гости.`;
 
       try {
         await synthesizeAndSendVoice(bot, chatId, welcomeText, true);
       } catch (err: any) {
         console.warn("synthesizeAndSendVoice failed in start command:", err?.message || err);
+      }
+
+      try {
+        await bot?.sendMessage(chatId, "📱 Приложение для настройки штаба:", {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "📱 Открыть приложение", url: appUrl }
+              ]
+            ]
+          }
+        });
+      } catch (e) {
+        console.warn("Failed to send app button", e);
       }
       return;
     });
