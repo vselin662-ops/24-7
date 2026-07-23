@@ -65,26 +65,6 @@ async function execTool(name: string, args: any): Promise<any> {
       const d = new Date();
       return { date: d.toLocaleDateString("ru-RU"), weekday: d.toLocaleDateString("ru-RU", { weekday: "long" }), time: d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) };
     }
-    if (name === "save_note") {
-      const text = String(args?.text || "").trim();
-      if (!text) return { error: "пустая заметка" };
-      const cfg = getCompanyConfig();
-      cfg.notes = cfg.notes || [];
-      cfg.notes.unshift({ id: "n_" + Date.now(), text, at: new Date().toISOString() });
-      cfg.notes = cfg.notes.slice(0, 50);
-      saveCompanyConfig({ notes: cfg.notes });
-      return { saved: true, note: text };
-    }
-    if (name === "add_task") {
-      const title = String(args?.title || "").trim();
-      if (!title) return { error: "пустая задача" };
-      const cfg = getCompanyConfig();
-      cfg.tasks = cfg.tasks || [];
-      cfg.tasks.unshift({ id: "t_" + Date.now(), title, due: args?.due || "", done: false, at: new Date().toISOString() });
-      cfg.tasks = cfg.tasks.slice(0, 50);
-      saveCompanyConfig({ tasks: cfg.tasks });
-      return { saved: true, task: title, due: args?.due || "" };
-    }
     return { error: "unknown tool" };
   } catch (e: any) {
     return { error: String(e?.message || e) };
@@ -96,9 +76,7 @@ async function runWithTools(systemInstruction: string, contents: any[]): Promise
     { googleSearch: {} },
     { functionDeclarations: [
       { name: "calculate", description: "Посчитать арифметику: ROI, маржу, проценты, налог, рост цены/выручки. expression — строка, например '(750000-450000)/450000*100'.", parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING } }, required: ["expression"] } },
-      { name: "current_date", description: "Текущая дата, день недели и время (когда спрашивают про сегодня/дату/дедлайн).", parameters: { type: Type.OBJECT, properties: {} } },
-      { name: "save_note", description: "Сохранить важную заметку/факт о бизнесе владельца в его профиль (когда он говорит 'запомни', 'запиши', сообщает факт о клиенте/цене/договорённости).", parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING } }, required: ["text"] } },
-      { name: "add_task", description: "Добавить задачу/напоминание владельцу в профиль (когда просит напомнить/сделать/не забыть; due — срок словами, если назван).", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, due: { type: Type.STRING } }, required: ["title"] } }
+      { name: "current_date", description: "Текущая дата, день недели и время (когда спрашивают про сегодня/дату/дедлайн).", parameters: { type: Type.OBJECT, properties: {} } }
     ] }
   ];
   let last: any = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction, tools });
@@ -160,7 +138,6 @@ let cachedConfig: any = {
   voice_id: "Kore",
   auto_synthesize: false,
   tts_voice: "Kore",
-  agents: [],
   preferences: { address_form: "вы", response_style: "коротко и по делу", reminder_time: "09:00", timezone: "Europe/Moscow" },
   schedule: { work_start: "09:00", work_end: "18:00", daily_brief_time: "08:30" },
   proactive_scenarios: [],
@@ -807,7 +784,7 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
 async function generateAgentResponseHelper(user_message: string, agentRole: string, chatHistory: any[], config: any): Promise<string> {
   if (!ai) {
     return agentRole === "sales"
-      ? `Спасибо за интерес к "${config.business_name}"! Подберу лучшее предложение.`
+      ? `Спасибо за интерес к "${config.business_name}"! Подберу для вас лучшее предложение.`
       : `Принял ваш вопрос про "${user_message}". Уточню и вернусь с ответом.`;
   }
   try {
@@ -834,8 +811,6 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
 - Факт, цены, конкуренты, новости, курс, погода → поиск (googleSearch), ответь с цифрой/фактом.
 - Посчитать (ROI, маржа, процент, налог, «что если поднять цену», рост выручки) → calculate, назови результат числом, ход одной строкой.
 - Сегодня/дата/дедлайн → current_date.
-- Владелец говорит «запомни/запиши» или сообщает факт о клиенте, цене, договорённости → save_note.
-- Просит напомнить/сделать/не забыть → add_task (due — срок словами, если назван).
 - Ответ есть в базе знаний компании → отвечай по ней; данных нет → живо скажи, что уточнишь, НЕ выдумывай цифры.
 
 ПАМЯТЬ: опирайся на заметки и задачи владельца выше — он ждёт, что ты помнишь контекст. Если спрашивает «что у меня/что на сегодня/что я просил» — собери ответ из его задач и заметок.
@@ -898,13 +873,53 @@ app.post("/api/chats/message", async (req, res) => {
 
     return res.json({ moderation_required: true, proposedResponse: responseText });
   } else {
-    // Append agent message immediately
-    chats[chatIndex].history.push({ sender: "agent", text: responseText });
-    chats[chatIndex].lastMessage = responseText;
-    chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    saveTelegramChats(chats);
-
-    return res.json({ response: responseText });
+    const needsClarification = responseText.toLowerCase().includes("не понял") ||
+                               responseText.toLowerCase().includes("уточните") ||
+                               responseText.toLowerCase().includes("расскажите подробнее") ||
+                               responseText.toLowerCase().includes("что имеется в виду") ||
+                               responseText.toLowerCase().includes("не уверен") ||
+                               responseText.toLowerCase().includes("нужно уточнить");
+    if (config.autonomy_level === "full" && needsClarification) {
+      const newItem = {
+        id: "mod_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
+        chatId: chatId,
+        clientName: chats[chatIndex].name,
+        channel: chats[chatIndex].channel || "telegram",
+        userMessage: text,
+        proposedResponse: responseText,
+        agentRole: agentRole,
+        timestamp: new Date().toISOString(),
+        status: "need_clarification"
+      };
+      cachedModerationQueue.push(newItem);
+      saveModerationQueue();
+      // Вернуть клиенту уточняющий вопрос вместо ответа агента
+      const clarificationText = "Пока не уловил суть — скажите парой слов, чем вы занимаетесь и что именно хотите автоматизировать?";
+      chats[chatIndex].history.push({ sender: "agent", text: clarificationText });
+      chats[chatIndex].lastMessage = clarificationText;
+      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      saveTelegramChats(chats);
+      return res.json({ response: clarificationText });
+    } else {
+      // старый код: append agent message and send voice
+      chats[chatIndex].history.push({ sender: "agent", text: responseText });
+      chats[chatIndex].lastMessage = responseText;
+      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      saveTelegramChats(chats);
+      if (bot) {
+        try {
+          await synthesizeAndSendVoice(bot, chatId, responseText, true);
+        } catch (err: any) {
+          console.warn("Outgoing voice failed, fallback to text:", err?.message || err);
+          try {
+            await bot.sendMessage(chatId, responseText);
+          } catch (msgErr) {
+            console.error("Failed to send fallback text message to Telegram:", msgErr);
+          }
+        }
+      }
+      return res.json({ response: responseText });
+    }
   }
 });
 
@@ -1245,7 +1260,6 @@ app.post("/api/interview", async (req, res) => {
         business_name: "Мой Бизнес",
         owner_name: "Предприниматель",
         industry: "Продажи и услуги",
-        detected_agents: ["receiver", "content", "sales", "analyst", "operator"],
         channels: ["telegram", "whatsapp"],
         tone: "friendly",
         autonomy_level: "full"
@@ -1269,21 +1283,20 @@ app.post("/api/interview", async (req, res) => {
 3. Используемые каналы связи (Telegram, WhatsApp, VK, Email).
 4. Желаемый стиль общения (тон) агентов (например: дружелюбный, строгий, деловой, энергичный, элегантный).
 
-ПРАВИЛО РОЛЕЙ И ЗАВЕРШЕНИЯ: detected_agents в финальном JSON должен содержать ТОЛЬКО те роли, которые реально нужны под задачу пользователя (выбирай из receiver, sales, content, analyst, operator — от 1 до 5, не обязательно все пять; если бизнесу нужен только приём заявок — оставь только receiver и т.д.). И НЕ завершай интервью, НЕ выводи [COMPLETE], пока из переписки НЕ ясны ОБА факта: (а) сфера/ниша бизнеса и (б) конкретная задача/рутина, которую надо автоматизировать. Если пользователь отвечает невнятно, коротко, абстрактно или не по делу — задай ОДИН живой уточняющий вопрос на русском (пример: «пока не уловил суть — скажите парой слов, какой у вас бизнес и какую рутину забрать: переписку, записи, продажи, контент?»). Только когда есть и сфера, и задача — подытожь и выведи [COMPLETE] с JSON.
+ПРАВИЛО ЗАВЕРШЕНИЯ: НЕ завершай интервью и НЕ выводи [COMPLETE], пока из переписки НЕ удаётся уверенно понять ОБА пункта: (а) сферу/ниша бизнеса и (б) конкретную задачу или потребность, которую надо автоматизировать. Если пользователь отвечает невнятно, коротко, абстрактно или не по делу — задай ОДИН живой уточняющий вопрос на русском: попроси назвать, чем именно он занимается и что конкретно хочет делегировать (пример: «пока не уловил суть — скажите парой слов, какой у вас бизнес и какую рутину забрать: переписку, записи, продажи, контент?»). Только когда есть и сфера, и задача — подытожь и выведи [COMPLETE] с JSON.
 
 Когда ты получишь достаточно ответов, заверши интервью. В финальном ответе кратко подытожь результаты, а затем на новой строке выведи маркер [COMPLETE] и строго на следующей строке выведи чистый JSON без разметки markdown, содержащий следующие поля:
 {
   "business_name": "Название компании",
   "owner_name": "Имя владельца",
   "industry": "Сфера бизнеса",
-  "detected_agents": ["receiver", "content", "sales", "analyst", "operator"],
   "channels": ["telegram", "whatsapp", "vk", "email"] (список только из выбранных),
   "tone": "friendly" или "professional" или "energetic" или "elegant" или "strict",
   "autonomy_level": "full" или "human-supervised"
 }`;
 
     if (forceComplete) {
-      systemInstruction = `ПРАВИЛО: сначала оцени, есть ли в переписке ОБА факта — сфера/ниша бизнеса И конкретная задача/рутина для автоматизации. Если хотя бы одного нет (ввод пустой, невнятный, абстрактный, не про дело) — НЕ выводи [COMPLETE] и НЕ выводи JSON; вместо этого выведи один короткий живой уточняющий вопрос на русском, который просит назвать сферу бизнеса и что именно автоматизировать. Выводи [COMPLETE] и JSON только когда оба факта извлекаются из переписки; для второстепенных полей ставь дефолты. Также detected_agents заполняй только реально нужными ролями под задачу (от 1 до 5), а не всегда всеми пятью.
+      systemInstruction = `ПРАВИЛО: сначала оцени, есть ли в переписке ОБА факта — сфера/ниша бизнеса И конкретная задача/потребность для автоматизации. Если хотя бы одного нет (ввод пустой, невнятный, абстрактный, не про дело) — НЕ выводи [COMPLETE] и НЕ выводи JSON; вместо этого выведи один короткий живой уточняющий вопрос на русском, который просит назвать сферу бизнеса и что именно автоматизировать. Выводи [COMPLETE] и JSON только когда оба факта извлекаются из переписки.
 
 Ты — аналитический модуль системы "Автономный цифровой сотрудник".
 Интервью завершено или прервано пользователем. Твоя задача — внимательно проанализировать всю имеющуюся переписку и строго вывести чистый JSON-конфигурацию без разметки markdown, содержащий параметры для настройки бизнеса.
@@ -1294,7 +1307,6 @@ app.post("/api/interview", async (req, res) => {
   "business_name": "Название компании",
   "owner_name": "Имя владельца",
   "industry": "Сфера бизнеса",
-  "detected_agents": ["receiver", "content", "sales", "analyst", "operator"],
   "channels": ["telegram", "whatsapp", "vk", "email"] (массив из упомянутых или дефолт ["telegram"]),
   "tone": "friendly" или "professional" или "energetic" или "elegant" или "strict",
   "autonomy_level": "full" или "human-supervised"
