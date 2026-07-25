@@ -1129,6 +1129,77 @@ app.post("/api/moderation/action", async (req, res) => {
   return res.json({ success: true });
 });
 
+// Helper to detect escalation keywords in message
+function detectEscalation(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const keywords = ["возврат", "жалоба", "претензия", "компенсация", "суд", "юрист", "брак", "недоволен", "ужасно", "скандал", "ошибка", "проблема", "расторжение", "отмена", "деньги назад"];
+  return keywords.some(kw => lower.includes(kw));
+}
+
+function isComplexQuery(text: string): boolean {
+  if (!text) return false;
+  return detectEscalation(text) || text.length > 120;
+}
+
+type DebateSide = { name: string; stance: string; expertise: string; args: string[] };
+
+async function debateSpeak(side: DebateSide, topic: string, roundNum: number, opponentLast: string, businessContext: string): Promise<string> {
+  const sys = `Ты — ${side.name}, ${side.expertise}. Ты отстаиваешь позицию: ${side.stance}. Давай убедительные аргументы по делу, опирайся на контекст бизнеса. Отвечай на последний аргумент оппонента, если он есть. Не более 120 слов. Раунд ${roundNum}.`;
+  const user = opponentLast
+    ? `Тема запроса клиента: ${topic}\nКонтекст бизнеса: ${businessContext}\n\nОппонент только что сказал: "${opponentLast}"\n\nОтветь и продвинь свою позицию:`
+    : `Тема запроса клиента: ${topic}\nКонтекст бизнеса: ${businessContext}\n\nВыскажи стартовый аргумент за позицию ${side.stance}:`;
+  try {
+    const r = await generateWithFallback(() => [{ role: 'user', parts: [{ text: user }] }], { temperature: 0.6, systemInstruction: sys });
+    const text = (r?.text || '').trim() || '(аргумент не сформирован)';
+    side.args.push(text);
+    return text;
+  } catch (e) { const t = '(аргумент не сформирован)'; side.args.push(t); return t; }
+}
+
+async function runDebate(topic: string, businessContext: string, rounds: number = 2): Promise<{ verdict: string; log: string[]; scores: string }> {
+  const pro: DebateSide = { name: 'Представитель клиента', stance: 'ЗА интересы клиента (максимум выгоды и уступок клиенту)', expertise: 'специалист по работе с клиентами и защите прав потребителя', args: [] };
+  const con: DebateSide = { name: 'Ревизор', stance: 'ЗА интересы бизнеса (маржа, правила, риски компании)', expertise: 'контролёр рисков и финансов компании', args: [] };
+  const log: string[] = [];
+  let lastPro = '', lastCon = '';
+  const R = Math.max(1, Math.min(3, rounds));
+  for (let i = 1; i <= R; i++) {
+    const proArg = await debateSpeak(pro, topic, i, lastCon, businessContext);
+    log.push(`[R${i} Клиент]: ${proArg}`);
+    const conArg = await debateSpeak(con, topic, i, proArg, businessContext);
+    log.push(`[R${i} Ревизор]: ${conArg}`);
+    lastPro = proArg; lastCon = conArg;
+  }
+  const proAll = pro.args.map((a, i) => `Раунд ${i+1}: ${a}`).join('\n');
+  const conAll = con.args.map((a, i) => `Раунд ${i+1}: ${a}`).join('\n');
+  const judgeSys = `Ты беспристрастный арбитр спора внутри компании. Оцени обе стороны честно. Верни ответ СТРОГО в формате с маркерами, без лишнего текста:
+[SCORES]
+Клиент: X/10
+Ревизор: Y/10
+[/SCORES]
+[VERDICT]
+(здесь ОДИН готовый вежливый ответ клиенту — компромисс, честный с клиентом и безопасный для бизнеса, без воды, без упоминания спора внутри)
+[/VERDICT]
+[INSIGHT]
+(коротко: сильнейший аргумент каждой стороны и главный вывод для команды — 1-2 строки)
+[/INSIGHT]`;
+  const judgeUser = `Тема запроса клиента: "${topic}"\n\nПозиция ЗА клиента (${pro.name}):\n${proAll}\n\nПозиция ЗА бизнес (${con.name}):\n${conAll}\n\nВынеси вердикт:`;
+  let verdict = '', scores = '', insight = '';
+  try {
+    const jr = await generateWithFallback(() => [{ role: 'user', parts: [{ text: judgeUser }] }], { temperature: 0.1, systemInstruction: judgeSys });
+    const jt = (jr?.text || '').trim();
+    const vM = jt.match(/\[VERDICT\]([\s\S]*?)\[\/VERDICT\]/);
+    const sM = jt.match(/\[SCORES\]([\s\S]*?)\[\/SCORES\]/);
+    const iM = jt.match(/\[INSIGHT\]([\s\S]*?)\[\/INSIGHT\]/);
+    verdict = (vM ? vM[1] : jt).trim();
+    scores = (sM ? sM[1] : '').trim();
+    insight = (iM ? iM[1] : '').trim();
+  } catch (e) { verdict = 'Мне нужно уточнить детали у специалиста — вернусь к вам через пару часов с точным ответом.'; }
+  if (insight) log.push(`[ИТОГ]: ${insight}`);
+  if (scores) log.push(`[СЧЁТ]: ${scores}`);
+  return { verdict, log, scores };
+}
+
 // Helper to handle incoming text from Telegram client
 async function handleIncomingText(chatId: number, clientName: string, text: string, channel: string = "telegram", isVoice: boolean = false) {
   const config = getCompanyConfig();
@@ -1169,8 +1240,39 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
     agentRole = "sales";
   }
 
-  // Generate response text
-  const responseText = await generateAgentResponseHelper(text, agentRole, chats[chatIndex].history, config);
+  const crisisText = text;
+  const isComplex = isComplexQuery(crisisText);
+
+  let responseText = "";
+
+  if (isComplex) {
+    // а) СРАЗУ отправить голосом короткую заглушку
+    if (bot) {
+      try {
+        await synthesizeAndSendVoice(bot, chatId, "Приняла. Это важный вопрос — я совещаюсь с командой, это займёт около минуты, и вернусь с точным ответом.", true);
+      } catch (e) {
+        try { await bot?.sendMessage(chatId, "Приняла, совещаюсь с командой — вернусь через минуту."); } catch(err){}
+      }
+    }
+
+    // б) const businessContext = JSON.stringify(userConfig || {}).slice(0, 1000);
+    const userConfig = (await getUserConfigByChatId(chatId)) || config;
+    const businessContext = JSON.stringify(userConfig || {}).slice(0, 1000);
+
+    // в) const { verdict, log, scores } = await runDebate(crisisText, businessContext, 2);
+    const debateRes = await runDebate(crisisText, businessContext, 2);
+    responseText = debateRes.verdict;
+
+    // д) прокинуть в ленту
+    if (typeof logFeedEvent === "function") {
+      try {
+        logFeedEvent('coordinator', 'debate', 'Рой вынес вердикт после спора (' + (debateRes.scores||'').replace(/\n/g,' ') + ')', debateRes.log.join(' || ').slice(0,400), 'done');
+      } catch(e){}
+    }
+  } else {
+    // Для ПРОСТЫХ запросов (коротких и не кризисных) оставить текущий быстрый generateAgentResponseHelper БЕЗ дебатов
+    responseText = await generateAgentResponseHelper(text, agentRole, chats[chatIndex].history, config);
+  }
 
   if (config.autonomy_level === "human-supervised") {
     // Enqueue for manual approval (voice will not be sent until approved)
@@ -1194,7 +1296,9 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
     chats[chatIndex].lastMessage = responseText;
     chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     saveTelegramChats(chats);
-    logFeedEvent(agentRole, 'reply', `Ответил клиенту (${channel})`, responseText.slice(0, 120), 'done');
+    if (!isComplex) {
+      logFeedEvent(agentRole, 'reply', `Ответил клиенту (${channel})`, responseText.slice(0, 120), 'done');
+    }
 
     if (bot) {
       try {
