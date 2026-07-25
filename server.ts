@@ -154,6 +154,7 @@ let cachedChats: any[] = [];
 let cachedKnowledgeBase: { documents: any[]; chunks: any[] } = { documents: [], chunks: [] };
 let cachedModerationQueue: any[] = [];
 let cachedModerationLog: any[] = [];
+let cachedFeed: any[] = [];
 
 // File Storage paths for local persistence
 const CONFIG_FILE = path.join(process.cwd(), "company_config.json");
@@ -161,6 +162,14 @@ const CHATS_FILE = path.join(process.cwd(), "telegram_chats.json");
 const KNOWLEDGE_FILE = path.join(process.cwd(), "knowledge_base.json");
 const MODERATION_QUEUE_FILE = path.join(process.cwd(), "moderation_queue.json");
 const MODERATION_LOG_FILE = path.join(process.cwd(), "moderation_log.json");
+const FEED_FILE = path.join(process.cwd(), "staff_feed.json");
+
+function logFeedEvent(role: string, type: string, title: string, detail: string, status: 'done' | 'pending' | 'info' = 'done') {
+  const ev = { id: 'ev_' + Date.now() + '_' + Math.floor(Math.random()*1000), role, type, title, detail, status, ts: new Date().toISOString() };
+  cachedFeed.unshift(ev);
+  if (cachedFeed.length > 200) cachedFeed = cachedFeed.slice(0, 200);
+  try { fs.writeFileSync(FEED_FILE, JSON.stringify(cachedFeed, null, 2), 'utf-8'); } catch(e){}
+}
 
 // Helper function to test Firestore write and load initial states
 async function initDataStore() {
@@ -180,6 +189,9 @@ async function initDataStore() {
     }
     if (fs.existsSync(MODERATION_LOG_FILE)) {
       cachedModerationLog = JSON.parse(fs.readFileSync(MODERATION_LOG_FILE, "utf-8"));
+    }
+    if (fs.existsSync(FEED_FILE)) {
+      cachedFeed = JSON.parse(fs.readFileSync(FEED_FILE, "utf-8"));
     }
     console.log("📁 Loaded initial data from local JSON cache files.");
   } catch (err) {
@@ -636,8 +648,15 @@ app.post("/api/save-config", async (req, res) => {
   } else {
     saveCompanyConfig(config);
   }
+  if (config.agents) {
+    logFeedEvent('operator', 'setup', 'Настройки штаба обновлены', config.business_name || '', 'info');
+  }
   console.log("💾 Company config successfully persisted on the server:", config.business_name);
   return res.json({ success: true, config });
+});
+
+app.get("/api/feed", (req, res) => {
+  return res.json({ feed: cachedFeed });
 });
 
 // Endpoint to fetch knowledge base status/stats
@@ -708,6 +727,7 @@ app.post("/api/knowledge/upload", async (req, res) => {
     kb.documents.push(newDoc);
     kb.chunks.push(...chunkObjects);
     saveKnowledgeBase(kb);
+    logFeedEvent('operator', 'kb', 'Добавлен документ в базу знаний', newDoc.name, 'done');
 
     // Sync to Firestore if active
     if (isFirestoreAvailable && db) {
@@ -873,7 +893,7 @@ async function synthesizeAndSendVoice(botInstance: TelegramBot | null, chatId: n
     console.warn("⚠️ Voice synthesis failed on all TTS models, falling back to text:", err.message || err);
     if (!skipFallbackText) {
       try {
-        await botInstance.sendMessage(chatId, text);
+        await botInstance.sendMessage(chatId, "Голосом сейчас не вышло — напишите задачу текстом, я отвечу.");
       } catch (msgErr) {
         console.error("Failed to send fallback text message to Telegram:", msgErr);
       }
@@ -928,11 +948,17 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
 КАК ГОВОРИТЬ: как живой человек, 1-3 коротких разговорных предложения, можно один эмодзи. Без списков, без «во-первых», без канцелярита. Текст автоматически озвучивается — пиши вслух. НИКОГДА не говори, что ты ИИ/бот, и НИКОГДА не говори, что отвечаешь только текстом или не можешь голосом.
 ЗАПРЕЩЕНЫ пустые отписки вместо сути: «чем могу помочь», «напишите ваш вопрос», «я зафиксировал ваш вопрос», «ответим в ближайшее время». Отвечай ПО СУТИ.
 ${notesBlock}${tasksBlock}${ragContext}`;
-    const response = await runWithTools(systemInstruction, contents);
-    return (response?.text || "").trim() || "Связь моргнула — повтори, пожалуйста, я на связи.";
+    let response: any;
+    try {
+      response = await runWithTools(systemInstruction, contents);
+    } catch (toolErr: any) {
+      console.warn("runWithTools failed, retrying without tools:", toolErr?.message || toolErr);
+      response = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction });
+    }
+    return (response?.text || "").trim() || "Ой, мысль потерялась на секунду — повтори, пожалуйста, я слушаю.";
   } catch (err: any) {
     console.error("GEN FAIL:", err?.message || err, "code:", err?.code || err?.status || "");
-    return "Связь моргнула — повтори голосовое или напиши ещё раз, я на связи.";
+    return "Что-то я задумалась и не успела ответить — скажи ещё раз, я тут.";
   }
 }
 
@@ -980,6 +1006,7 @@ app.post("/api/chats/message", async (req, res) => {
     };
     cachedModerationQueue.push(newItem);
     saveModerationQueue();
+    logFeedEvent(agentRole, 'review', 'Ждёт твоего решения', text.slice(0, 80), 'pending');
 
     return res.json({ moderation_required: true, proposedResponse: responseText });
   } else {
@@ -1003,6 +1030,7 @@ app.post("/api/chats/message", async (req, res) => {
       };
       cachedModerationQueue.push(newItem);
       saveModerationQueue();
+      logFeedEvent(agentRole, 'review', 'Ждёт твоего решения', text.slice(0, 80), 'pending');
       // Вернуть клиенту уточняющий вопрос вместо ответа агента
       const clarificationText = "Пока не уловил суть — скажите парой слов, чем вы занимаетесь и что именно хотите автоматизировать?";
       chats[chatIndex].history.push({ sender: "agent", text: clarificationText });
@@ -1011,11 +1039,13 @@ app.post("/api/chats/message", async (req, res) => {
       saveTelegramChats(chats);
       return res.json({ response: clarificationText });
     } else {
-      // старый код: append agent message and send voice
+      // append agent message and send voice
       chats[chatIndex].history.push({ sender: "agent", text: responseText });
       chats[chatIndex].lastMessage = responseText;
       chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
       saveTelegramChats(chats);
+      const chName = chats[chatIndex].channel || "telegram";
+      logFeedEvent(agentRole, 'reply', `Ответил клиенту (${chName})`, responseText.slice(0, 120), 'done');
       if (bot) {
         try {
           await synthesizeAndSendVoice(bot, chatId, responseText, true);
@@ -1073,6 +1103,7 @@ app.post("/api/moderation/action", async (req, res) => {
   saveModerationLog(logEntry);
 
   if (action !== 'reject') {
+    logFeedEvent(item.agentRole || 'receiver', 'approved', 'Ты утвердил ответ', (item.userMessage || '').slice(0, 80), 'done');
     const chats = getTelegramChats();
     const chatIndex = chats.findIndex(c => c.id === item.chatId);
     if (chatIndex !== -1) {
@@ -1091,6 +1122,8 @@ app.post("/api/moderation/action", async (req, res) => {
         console.error("Failed to send approved voice message to telegram:", err);
       }
     }
+  } else {
+    logFeedEvent(item.agentRole || 'receiver', 'rejected', 'Ответ отклонён', (item.userMessage || '').slice(0, 80), 'info');
   }
 
   return res.json({ success: true });
@@ -1153,6 +1186,7 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
     };
     cachedModerationQueue.push(newItem);
     saveModerationQueue();
+    logFeedEvent(agentRole, 'review', 'Ждёт твоего решения', text.slice(0, 80), 'pending');
     console.log(`📥 Enqueued message from ${clientName} for manual moderation.`);
   } else {
     // Fully autonomous: append reply to chat history and send as voice
@@ -1160,6 +1194,7 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
     chats[chatIndex].lastMessage = responseText;
     chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     saveTelegramChats(chats);
+    logFeedEvent(agentRole, 'reply', `Ответил клиенту (${channel})`, responseText.slice(0, 120), 'done');
 
     if (bot) {
       try {
@@ -1180,6 +1215,33 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
 const tgToken = process.env.TELEGRAM_BOT_TOKEN;
 let bot: TelegramBot | null = null;
 const lastStartAt = new Map<number, number>();
+
+const userStates = new Map<number, { questSent: boolean; questNag: number; state: 'NEW' | 'QUESTING' | 'ACTIVE' }>();
+function getState(chatId: number) {
+  if (!userStates.has(chatId)) userStates.set(chatId, { questSent: false, questNag: 0, state: 'NEW' });
+  return userStates.get(chatId)!;
+}
+function setState(chatId: number, patch: Partial<{ questSent: boolean; questNag: number; state: 'NEW' | 'QUESTING' | 'ACTIVE' }>) {
+  const cur = getState(chatId);
+  userStates.set(chatId, { ...cur, ...patch });
+}
+
+const RESPONSES = {
+  greeting: ["Здравствуйте. Я на связи — расскажите, что нужно сделать.", "Приветствую. Какая задача на сегодня?", "Я тут. Говорите или пишите — разберусь."],
+  confusion: ["Подсказать? Я отвечаю клиентам вместо вас и веду заявки 24/7. Скажите, чем занимаетесь — покажу на вашем примере.", "Я на месте. Просто напишите или надиктуйте, что нужно: ответить клиенту, посчитать, составить пост.", "Давайте по делу: какая у вас боль сейчас — много переписки, теряются заявки, нет контента?"],
+  already_questing: ["Чтобы я заработал в полную силу, нужна одна короткая настройка — это минута. Кнопка с приложением выше.", "Я пока в режиме настройки. Пройдите быстрый квест по кнопке выше — и дальше буду отвечать по делу голосом."]
+};
+function pick(arr: string[]) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function classifyIntent(text: string | undefined): string {
+  if (!text) return 'UNKNOWN';
+  const t = text.toLowerCase().trim();
+  if (!t) return 'UNKNOWN';
+  if (['привет','здравствуй','хай','hello','добрый'].some(w => t.includes(w))) return 'GREETING';
+  if (['квест','настрой','штаб','начать','запустить'].some(w => t.includes(w))) return 'QUEST';
+  if (t.length <= 3 || t === '?' || t === '??' || t === '???') return 'CONFUSION';
+  return 'TASK';
+}
 
 if (tgToken) {
   try {
@@ -1206,11 +1268,7 @@ if (tgToken) {
       const appUrl = process.env.APP_URL || "https://ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app";
 
       const nameGreeting = firstName ? `Привет, ${firstName}!` : "Привет!";
-      const welcomeText = `${nameGreeting} Ты в правильном месте.
-Моя задача — упростить тебе жизнь и забрать всю рутину: переписку, заявки, продажи, контент. Я выстрою под тебя автономную команду ИИ-специалистов, которая работает двадцать четыре на семь и закрывает твои задачи.
-Просто отправь мне голосовое — расскажи, что нужно, и мои ребята возьмут это в работу и выведут продукт на новый уровень.
-А если хочешь сначала всё потрогать сам — ниже кнопка, там приложение: покрути настройки, увидь всю структуру изнутри.
-Рад, что забежал в гости.`;
+      const welcomeText = `${nameGreeting} Я отвечаю вашим клиентам голосом и веду заявки вместо вас — круглые сутки, без выходных. Скажите мне голосом, чем занимаетесь, и за минуту соберу под вас команду.`;
 
       try {
         await synthesizeAndSendVoice(bot, chatId, welcomeText, true);
@@ -1223,7 +1281,7 @@ if (tgToken) {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: "📱 Открыть приложение", url: appUrl }
+                { text: "📱 Заглянуть внутрь приложения (необязательно)", url: appUrl }
               ]
             ]
           }
@@ -1231,6 +1289,7 @@ if (tgToken) {
       } catch (e) {
         console.warn("Failed to send app button", e);
       }
+      setState(chatId, { state: 'NEW', questSent: false, questNag: 0 });
       return;
     });
 
@@ -1241,6 +1300,27 @@ if (tgToken) {
       const lastName = msg.from?.last_name || "";
       const username = msg.from?.username ? `@${msg.from.username}` : "";
       const clientName = `${firstName} ${lastName}`.trim() || username || `Клиент #${chatId}`;
+
+      const st = getState(chatId);
+      const incomingText = msg.text || "";
+      const intent = classifyIntent(incomingText);
+
+      // Если квест уже отправляли и пришло короткое/приветственное/пустое сообщение — НЕ спамим квестом, отвечаем живо
+      if (st.questSent && !msg.voice && (intent === 'GREETING' || intent === 'CONFUSION' || intent === 'UNKNOWN')) {
+        const reply = intent === 'GREETING' ? pick(RESPONSES.greeting) : pick(RESPONSES.confusion);
+        try { await synthesizeAndSendVoice(bot, chatId, reply, true); } catch (e) { await bot?.sendMessage(chatId, reply); }
+        return;
+      }
+      // Если пользователь в процессе квеста и пишет текст (не голос с описанием) — просим дойти до конца в приложении
+      if (st.state === 'QUESTING' && !msg.voice && intent !== 'QUEST') {
+        if ((st.questNag || 0) >= 1) {
+          return;
+        }
+        const reply = pick(RESPONSES.already_questing);
+        try { await synthesizeAndSendVoice(bot, chatId, reply, true); } catch (e) { await bot?.sendMessage(chatId, reply); }
+        setState(chatId, { questNag: (st.questNag || 0) + 1 });
+        return;
+      }
 
       // Voice message handling
       if (msg.voice) {
@@ -1325,30 +1405,36 @@ if (tgToken) {
         const existingConfig = await getUserConfigByChatId(chatId);
         
         if (!existingConfig) {
-          // 2. Анализ задачи и генерация структуры квеста
-          const questStructure = await generateQuestFromVoice(transcript); 
-          // Сохраняем структуру во временное хранилище (Redis/Map) с TTL 10 мин
-          questCache.set(String(chatId), { data: questStructure, createdAt: Date.now() });
-          
-          // 3. Голосовой ответ + ссылка на Web App
-          const responseMsg = "Я понял вашу задачу. Персональный квест по настройке штаба готов. Нажмите кнопку ниже, чтобы начать.";
-          try {
-            await synthesizeAndSendVoice(bot, chatId, responseMsg, true);
-          } catch (err: any) {
-            console.warn("synthesizeAndSendVoice failed inside voice quest trigger:", err?.message || err);
-          }
-
-          const appUrl = process.env.APP_URL || `https://${process.env.CONTAINER_URL || "ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app"}`;
-          const webAppUrl = `${appUrl}?mode=voice-quest&chatId=${chatId}`;
-
-          await bot?.sendMessage(chatId, '👇 Ваш персональный квест разработан:', {
-            reply_markup: {
-              inline_keyboard: [[{ 
-                text: '🚀 ПРОЙТИ КВЕСТ В ШТАБЕ', 
-                web_app: { url: webAppUrl }
-              }]]
+          if (!st.questSent) {
+            // 2. Анализ задачи и генерация структуры квеста
+            const questStructure = await generateQuestFromVoice(transcript); 
+            // Сохраняем структуру во временное хранилище (Redis/Map) с TTL 10 мин
+            questCache.set(String(chatId), { data: questStructure, createdAt: Date.now() });
+            
+            // 3. Голосовой ответ + ссылка на Web App
+            const responseMsg = "Я понял вашу задачу. Персональный квест по настройке штаба готов. Нажмите кнопку ниже, чтобы начать.";
+            try {
+              await synthesizeAndSendVoice(bot, chatId, responseMsg, true);
+            } catch (err: any) {
+              console.warn("synthesizeAndSendVoice failed inside voice quest trigger:", err?.message || err);
             }
-          });
+
+            const appUrl = process.env.APP_URL || `https://${process.env.CONTAINER_URL || "ais-pre-fzpjlzo5denvk4xxawb3rd-163629687200.us-west1.run.app"}`;
+            const webAppUrl = `${appUrl}?mode=voice-quest&chatId=${chatId}`;
+
+            await bot?.sendMessage(chatId, '👇 Ваш персональный квест разработан:', {
+              reply_markup: {
+                inline_keyboard: [[{ 
+                  text: '🚀 ПРОЙТИ КВЕСТ В ШТАБЕ', 
+                  web_app: { url: webAppUrl }
+                }]]
+              }
+            });
+            setState(chatId, { questSent: true, state: 'QUESTING' });
+          } else {
+            const reply = pick(RESPONSES.already_questing);
+            try { await synthesizeAndSendVoice(bot, chatId, reply, true); } catch(e){ await bot?.sendMessage(chatId, reply); }
+          }
           return;
         }
 
@@ -2394,7 +2480,7 @@ app.post("/api/synthesize", async (req, res) => {
 
   try {
     // Map of voice configs
-    const allowedVoices = ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"];
+    const allowedVoices = ["Aoede", "Leda", "Kore", "Zephyr", "Puck", "Charon", "Fenrir"];
     const voiceName = allowedVoices.includes(voice) ? voice : "Kore";
 
     const TTS_MODEL_CHAIN = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview", "gemini-2.0-flash-preview-tts"];

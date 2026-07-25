@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import { AppConfig, Agent } from '../types';
 
@@ -51,6 +51,10 @@ const ROLE_TEMPLATES: Record<string, { title: string; missionTemplate: (b: strin
 export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
   businessName, ownerName, industry, tone, channels, onComplete, setCurrentTab
 }) => {
+  const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+  const tgMode = urlParams.get('mode'); // 'onboarding' | 'dashboard' | null
+  const isTelegram = typeof window !== 'undefined' && !!(window as any).Telegram?.WebApp;
+
   const EAGLE_BG = ""; // Вставь путь к картинке орла, если есть
   const [questStep, setQuestStep] = useState<'intro' | 'plan' | 'needs_clarification'>('intro');
   const [plan, setPlan] = useState<AgentPlan[]>([]);
@@ -61,6 +65,21 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    if (isTelegram) {
+      try {
+        const tg = (window as any).Telegram?.WebApp;
+        if (tg) {
+          tg.expand?.();
+          tg.setHeaderColor?.('#050505');
+          tg.setBackgroundColor?.('#050505');
+        }
+      } catch (e) {
+        console.warn("Telegram WebApp expand error:", e);
+      }
+    }
+  }, [isTelegram]);
 
   const toggleRecording = async () => {
     if (isRecording) {
@@ -238,34 +257,131 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
     >
       {/* INTRO SCREEN */}
       {questStep === 'intro' && processingStatus !== 'clarifying' && (
-        <section className="relative w-full min-h-[70vh] overflow-hidden rounded-2xl flex flex-col items-center justify-center px-6 py-16">
-          {/* Content Overlay */}
-          <div className="relative z-10 flex flex-col items-center text-center pointer-events-none">
-            <p className="font-modern text-[10px] uppercase tracking-[0.2em] text-[#A0A0A0] mb-8">Selin · автономный штаб</p>
-            <h1 className="font-modern font-bold text-4xl md:text-6xl text-white leading-tight tracking-tight text-center">Расскажите задачу —<br />штаб соберётся сам</h1>
-            <p className="font-modern text-base text-[#A0A0A0] mt-6 max-w-lg text-center leading-relaxed">Нажмите на микрофон и опишите бизнес голосом. Я пойму суть и подберу команду под неё.</p>
+        <section className="relative w-full min-h-[520px] rounded-2xl p-6 sm:p-8 md:p-12 text-left overflow-hidden border border-white/10 bg-gradient-to-b from-[#0c0a08] to-[#050505]">
+          {/* Thin Grid Background */}
+          <div 
+            className="absolute inset-0 pointer-events-none opacity-40"
+            style={{
+              backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px)`,
+              backgroundSize: '48px 48px',
+              maskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)',
+              WebkitMaskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)'
+            }}
+          />
+          {/* Soft warm light top right */}
+          <div 
+            className="absolute top-0 right-0 w-[400px] h-[400px] pointer-events-none rounded-full"
+            style={{
+              background: 'radial-gradient(circle at top right, rgba(255,107,0,0.07) 0%, transparent 70%)'
+            }}
+          />
 
-            <button
-              type="button" disabled={processingStatus !== 'idle'} onClick={toggleRecording}
-              className={`pointer-events-auto relative w-24 h-24 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 active:scale-95 mt-10 z-10 disabled:opacity-50 ${
-                isRecording ? 'bg-red-500/10 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.6)]' : 'animate-pulse-slow bg-[rgba(255,107,0,0.05)]'
-              }`}
-              style={{
-                border: isRecording ? '1px solid #ef4444' : '1px solid #FF6B00',
-                boxShadow: isRecording 
-                  ? '0 0 30px rgba(239,68,68,0.5), inset 0 0 20px rgba(239,68,68,0.2)' 
-                  : undefined
-              }}
-            >
-              {isRecording ? <Icons.StopCircle className="h-8 w-8 text-red-500" /> : <Icons.Mic className="h-8 w-8 text-[#FF6B00]" style={{ filter: 'drop-shadow(0 0 8px #FF6B00)' }} />}
-            </button>
+          <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
+            {/* Left Column (Text & Mic) */}
+            <div className="space-y-6 text-left">
+              {/* Micro-label */}
+              <div className="flex items-center gap-2 text-[11px] text-[#8a8a8a] font-normal">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#FF6B00] shrink-0" />
+                <span>Selin — автономный штаб</span>
+              </div>
 
-            <div className="min-h-[24px] mt-6 pointer-events-auto font-modern text-xs text-[#A0A0A0] uppercase tracking-wider text-center">
-              {isRecording ? <span className="text-red-400 font-medium animate-pulse">Слушаю… нажмите, чтобы закончить</span>
-               : processingStatus === 'transcribing' ? <div className="flex items-center gap-2 justify-center"><Icons.Loader2 className="h-4 w-4 text-[#FF6B00] animate-spin" /><span>Распознаю речь…</span></div>
-               : processingStatus === 'assembling' ? <div className="flex items-center gap-2 justify-center"><Icons.Loader2 className="h-4 w-4 text-[#FF6B00] animate-spin" /><span>Собираю штаб…</span></div>
-               : processingStatus === 'error' ? <span className="text-red-400">Не расслышал, попробуйте ещё раз</span>
-               : <span>говорите свободно, 10–30 секунд</span>}
+              {/* Headline */}
+              <h1 className="font-modern font-bold text-4xl sm:text-5xl md:text-6xl text-white leading-[1.05] tracking-tight">
+                Отвечает клиентам<br />
+                вместо вас.
+              </h1>
+
+              {/* Subtitle */}
+              <p className="text-lg md:text-xl font-normal text-[#cfcfcf]">
+                Голосом. Круглые сутки.
+              </p>
+
+              {/* Paragraph */}
+              <p className="text-sm md:text-base text-[#8a8a8a] max-w-md font-light leading-relaxed">
+                Опишите бизнес голосом — за минуту соберу команду под вашу задачу и выведу её на линию.
+              </p>
+
+              {/* Recording Block */}
+              <div className="pt-2 flex flex-col sm:flex-row sm:items-center gap-4">
+                <button
+                  type="button"
+                  disabled={processingStatus !== 'idle'}
+                  onClick={toggleRecording}
+                  className={`w-22 h-22 md:w-24 md:h-24 rounded-full flex items-center justify-center cursor-pointer transition-all duration-200 border bg-white/[0.02] hover:bg-white/[0.05] disabled:opacity-50 shrink-0 ${
+                    isRecording
+                      ? 'border-red-500 text-red-500'
+                      : 'border-white/14 text-[#FF6B00] hover:border-white/30'
+                  }`}
+                >
+                  {isRecording ? (
+                    <Icons.StopCircle className="w-6 h-6 text-red-500" />
+                  ) : (
+                    <Icons.Mic className="w-6 h-6 text-[#FF6B00]" />
+                  )}
+                </button>
+
+                <div className="text-xs text-[#8a8a8a] font-normal leading-relaxed">
+                  {isRecording ? (
+                    <span className="text-red-400 font-medium">слушаю — нажмите ещё раз, чтобы остановить</span>
+                  ) : processingStatus === 'transcribing' ? (
+                    <div className="flex items-center gap-2 text-slate-300">
+                      <Icons.Loader2 className="w-4 h-4 text-[#FF6B00] animate-spin" />
+                      <span>Распознаю речь…</span>
+                    </div>
+                  ) : processingStatus === 'assembling' ? (
+                    <div className="flex items-center gap-2 text-slate-300">
+                      <Icons.Loader2 className="w-4 h-4 text-[#FF6B00] animate-spin" />
+                      <span>Собираю штаб…</span>
+                    </div>
+                  ) : processingStatus === 'error' ? (
+                    <span className="text-red-400">не расслышал — повторите</span>
+                  ) : (
+                    <span>нажмите и говорите 10–30 сек</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Vertical Divider for md screens */}
+            <div className="hidden md:block absolute left-1/2 top-10 bottom-10 w-[1px] bg-white/[0.08] -translate-x-1/2 pointer-events-none" />
+
+            {/* Right Column (Staff Registry) */}
+            <div className="md:pl-6 space-y-4 text-left">
+              <div className="text-[11px] text-[#8a8a8a] font-normal">
+                Команда под вашу задачу
+              </div>
+
+              <div className="rounded-xl border border-white/[0.08] bg-black/20 divide-y divide-white/[0.06] overflow-hidden">
+                {[
+                  { role: 'receiver', title: 'Приём обращений', icon: Icons.MessageSquare },
+                  { role: 'sales', title: 'Продажи', icon: Icons.DollarSign },
+                  { role: 'content', title: 'Контент', icon: Icons.PenTool },
+                  { role: 'analyst', title: 'Аналитика', icon: Icons.BarChart3 },
+                  { role: 'operator', title: 'Координация', icon: Icons.CheckSquare },
+                ].map((item, idx) => {
+                  const IconComp = item.icon;
+                  return (
+                    <div
+                      key={item.role}
+                      className="flex items-center justify-between p-3.5 px-4 transition-all duration-300 hover:bg-white/[0.02]"
+                      style={{
+                        animation: `fadeIn 0.3s ease-out ${idx * 0.06}s both`
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
+                        <IconComp className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span className="text-sm font-medium text-white">{item.title}</span>
+                      </div>
+                      <span className="text-xs text-slate-500 font-mono">{item.role}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="text-[11px] text-[#8a8a8a] font-normal">
+                Состав уточнится после вашего описания.
+              </p>
             </div>
           </div>
         </section>
@@ -303,7 +419,19 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
           <div className="pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-6">
             <button onClick={() => { setQuestStep('intro'); setPlan([]); }} className="text-xs uppercase tracking-widest text-[#A0A0A0] hover:text-white transition-colors cursor-pointer font-semibold">Пройти заново</button>
-            <button onClick={() => setIsSuccessModalOpen(true)} className="w-full sm:w-auto bg-[#FF6B00] hover:bg-[#E05E00] text-white text-xs font-bold py-4 px-10 rounded-xl transition-all duration-300 cursor-pointer tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_4px_20px_rgba(255,107,0,0.3)]">
+            <button 
+              onClick={() => {
+                setIsSuccessModalOpen(true);
+                if (isTelegram) {
+                  try {
+                    (window as any).Telegram?.WebApp?.close?.();
+                  } catch (e) {
+                    console.warn("Telegram WebApp close error:", e);
+                  }
+                }
+              }} 
+              className="w-full sm:w-auto bg-[#FF6B00] hover:bg-[#E05E00] text-white text-xs font-bold py-4 px-10 rounded-xl transition-all duration-300 cursor-pointer tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_4px_20px_rgba(255,107,0,0.3)]"
+            >
               <Icons.Zap className="h-4 w-4 fill-current text-white" /> Запустить штаб в работу
             </button>
           </div>

@@ -4,6 +4,7 @@ import { OnboardingFlow } from './components/OnboardingFlow';
 import { VoiceQuestFlow } from './components/VoiceQuestFlow';
 import { SMARTPlanner } from './components/SMARTPlanner';
 import { ChannelSimulator } from './components/ChannelSimulator';
+import { StaffFeed } from './components/StaffFeed';
 import { AnalyticsPanel } from './components/AnalyticsPanel';
 import { BillingPanel } from './components/BillingPanel';
 import { FAQPanel } from './components/FAQPanel';
@@ -47,7 +48,7 @@ export default function App() {
   const mode = urlParams.get('mode');
   const chatId = urlParams.get('chatId');
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [currentTab, setCurrentTab] = useState<'planner' | 'simulator' | 'knowledge' | 'analytics' | 'billing' | 'faq' | 'settings' | 'moderation'>('planner');
+  const [currentTab, setCurrentTab] = useState<'planner' | 'simulator' | 'feed' | 'knowledge' | 'analytics' | 'billing' | 'faq' | 'settings' | 'moderation'>('planner');
   const [isSyncing, setIsSyncing] = useState(false);
   const [dbStatus, setDbStatus] = useState<{ connected: boolean; mode: string } | null>(null);
   const [logoError, setLogoError] = useState(false);
@@ -65,7 +66,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   interface MenuTabItem {
-    id: 'planner' | 'simulator' | 'knowledge' | 'analytics' | 'billing' | 'faq' | 'settings' | 'moderation';
+    id: 'planner' | 'simulator' | 'feed' | 'knowledge' | 'analytics' | 'billing' | 'faq' | 'settings' | 'moderation';
     label: string;
     icon: React.ComponentType<any>;
     badge?: number;
@@ -74,6 +75,7 @@ export default function App() {
   const menuTabs: MenuTabItem[] = [
     { id: 'planner', label: 'Квест-Планировщик', icon: Compass },
     { id: 'simulator', label: 'Каналы Связи', icon: MessageSquare },
+    { id: 'feed', label: 'Лента штаба', icon: Activity },
     { id: 'moderation', label: 'Модерация', icon: Shield, badge: pendingCount },
     { id: 'knowledge', label: 'База знаний (RAG)', icon: Database },
     { id: 'analytics', label: 'Аналитика штаба', icon: BarChart3 },
@@ -516,6 +518,8 @@ export default function App() {
               ttsVoice={config.tts_voice}
             />
           )}
+
+          {currentTab === 'feed' && <StaffFeed />}
 
           {currentTab === 'moderation' && <ModerationPanel />}
 
