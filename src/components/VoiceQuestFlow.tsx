@@ -155,7 +155,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
   return (
     <div className="w-full max-w-2xl mx-auto px-4 py-8 font-modern">
       <div className="text-center mb-8">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/20 text-[#FF6B00] mb-3 text-xs font-semibold">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/20 text-white mb-3 text-xs font-semibold shadow-[0_0_10px_rgba(255,255,255,0.1)]">
           <Compass className="h-4 w-4" />
           <span>Ваш Персональный Голосовой Квест</span>
         </div>
@@ -171,9 +171,9 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
           <span>Прогресс настройки</span>
           <span className="font-semibold text-white">{progressPercent}%</span>
         </div>
-        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/5">
           <div 
-            className="h-full bg-gradient-to-r from-orange-500 to-amber-500 transition-all duration-500"
+            className="h-full bg-white transition-all duration-500 shadow-[0_0_10px_rgba(255,255,255,0.5)]"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -189,7 +189,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
               key={s.id} 
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs whitespace-nowrap transition-all duration-300 ${
                 isActive 
-                  ? 'bg-orange-500/20 border-orange-500/40 text-white font-medium' 
+                  ? 'bg-white/20 border-white/40 text-white font-medium shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
                   : isDone 
                     ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
                     : 'bg-white/5 border-white/5 text-slate-400'
@@ -209,7 +209,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
           </div>
 
           <div className="flex items-start gap-4 mb-6">
-            <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/20 text-[#FF6B00]">
+            <div className="p-3 rounded-xl bg-white/10 border border-white/20 text-white">
               <Sparkles className="h-6 w-6" />
             </div>
             <div>
@@ -233,7 +233,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                       value={businessName} 
                       onChange={(e) => setBusinessName(e.target.value)} 
                       placeholder="Например, ProЦветы" 
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/50"
                     />
                   </div>
                   <div>
@@ -243,7 +243,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                       value={industry} 
                       onChange={(e) => setIndustry(e.target.value)} 
                       placeholder="Например, доставка цветов" 
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/50"
                     />
                   </div>
                 </div>
@@ -254,7 +254,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                     value={ownerName} 
                     onChange={(e) => setOwnerName(e.target.value)} 
                     placeholder="Ваше имя" 
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/50"
                   />
                 </div>
               </div>
@@ -269,7 +269,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                   value={welcomeText} 
                   onChange={(e) => setWelcomeText(e.target.value)} 
                   rows={3}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-white/50"
                   placeholder="Введите текст приветствия..."
                 />
                 <span className="text-xxs text-slate-500 block">
@@ -300,7 +300,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                           }}
                           className={`px-3 py-1.5 rounded-lg border text-xs capitalize font-medium transition-all duration-200 ${
                             isSelected 
-                              ? 'bg-orange-500/20 border-orange-500/50 text-white' 
+                              ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
                               : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
                           }`}
                         >
@@ -323,7 +323,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                         onClick={() => setSelectedTone(t)}
                         className={`px-2 py-1.5 rounded-lg border text-center text-xs font-medium transition-all duration-200 ${
                           selectedTone === t 
-                            ? 'bg-orange-500/20 border-orange-500/50 text-white' 
+                            ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
                             : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
                         }`}
                       >
@@ -349,11 +349,11 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                     onClick={() => setAutonomyLevel('full')}
                     className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all duration-200 ${
                       autonomyLevel === 'full' 
-                        ? 'bg-orange-500/20 border-orange-500/50 text-white' 
+                        ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
                         : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
                     }`}
                   >
-                    <Radio className="h-4 w-4 text-[#FF6B00] mt-0.5 shrink-0" />
+                    <Radio className="h-4 w-4 text-white mt-0.5 shrink-0" />
                     <div>
                       <span className="text-xs font-bold block text-white">Полная автономия</span>
                       <span className="text-xxs text-slate-400 mt-1 block">Агенты отвечают клиентам автоматически 24/7.</span>
@@ -365,11 +365,11 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                     onClick={() => setAutonomyLevel('human-supervised')}
                     className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all duration-200 ${
                       autonomyLevel === 'human-supervised' 
-                        ? 'bg-orange-500/20 border-orange-500/50 text-white' 
+                        ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
                         : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
                     }`}
                   >
-                    <Sliders className="h-4 w-4 text-[#FF6B00] mt-0.5 shrink-0" />
+                    <Sliders className="h-4 w-4 text-white mt-0.5 shrink-0" />
                     <div>
                       <span className="text-xs font-bold block text-white">С подтверждением</span>
                       <span className="text-xxs text-slate-400 mt-1 block">Ответы отправляются в очередь модерации на проверку.</span>

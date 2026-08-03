@@ -15,15 +15,15 @@ export const GlassPanel: React.FC<GlassPanelProps> = ({
 }) => {
   let glowClasses = '';
   if (glowColor === 'accent') {
-    glowClasses = 'lux-shadow border-[#F5A623]/20';
+    glowClasses = 'lux-shadow border-white/25';
   } else if (glowColor === 'red') {
-    glowClasses = 'shadow-[0_15px_50px_rgba(239,68,68,0.08)] border-red-500/10';
+    glowClasses = 'shadow-[0_15px_50px_rgba(239,68,68,0.12)] border-red-500/20';
   }
 
   return (
     <div
       id={id}
-      className={`premium-card rounded-2xl p-8 ${glowClasses} ${className}`}
+      className={`glass-panel glass-panel-hover rounded-2xl p-6 sm:p-8 ${glowClasses} ${className}`}
       {...props}
     >
       {children}

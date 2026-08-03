@@ -90,7 +90,7 @@ export const LaunchModal: React.FC<LaunchModalProps> = ({
         </button>
 
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-[#F5A623]/20 border border-[#F5A623]/40 flex items-center justify-center text-[#F5A623]">
+          <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white shadow-[0_0_12px_rgba(255,255,255,0.1)]">
             <Rocket className="h-5 w-5" />
           </div>
           <div>
@@ -101,7 +101,7 @@ export const LaunchModal: React.FC<LaunchModalProps> = ({
 
         {loading ? (
           <div className="py-12 flex flex-col items-center justify-center gap-3">
-            <RefreshCw className="h-8 w-8 text-[#F5A623] animate-spin" />
+            <RefreshCw className="h-8 w-8 text-white animate-spin" />
             <span className="text-sm font-sans text-slate-300">Проверка готовности компонентов...</span>
           </div>
         ) : isLiveSuccess || readiness?.is_live ? (
@@ -200,7 +200,7 @@ export const LaunchModal: React.FC<LaunchModalProps> = ({
                 onClick={handleLaunch}
                 className={`flex-1 py-3 px-6 rounded-xl font-sans font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer ${
                   readiness?.all_ready
-                    ? 'bg-[#F5A623] text-black hover:bg-[#F5A623]/90 shadow-[0_0_20px_rgba(245,166,35,0.3)]'
+                    ? 'bg-white text-black hover:bg-slate-200 shadow-[0_0_20px_rgba(255,255,255,0.3)]'
                     : 'bg-white/5 text-slate-500 border border-white/5 opacity-60 cursor-not-allowed'
                 }`}
               >

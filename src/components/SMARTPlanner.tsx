@@ -247,17 +247,17 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
   const renderIcon = (iconName: string) => {
     const IconComponent = (Icons as any)[iconName] || Icons.HelpCircle;
-    return <IconComponent className="h-8 w-8 text-[#FF6B00] shrink-0" style={{ filter: 'drop-shadow(0 0 8px rgba(255,107,0,0.4))' }} />;
+    return <IconComponent className="h-8 w-8 text-white shrink-0" style={{ filter: 'drop-shadow(0 0 10px rgba(255,255,255,0.4))' }} />;
   };
 
   return (
     <div 
-      className="w-full min-h-[600px] text-white rounded-3xl border border-white/[0.08] p-8 md:p-12 font-modern relative overflow-hidden transition-all duration-300 shadow-[0_24px_70px_rgba(0,0,0,0.8)]"
-      style={{ background: 'radial-gradient(circle at top center, #1a0f00 0%, #050505 60%)' }}
+      className="w-full min-h-[600px] text-white rounded-3xl border border-white/10 p-8 md:p-12 font-modern relative overflow-hidden transition-all duration-300 shadow-[0_24px_70px_rgba(0,0,0,0.85)]"
+      style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.04) 0%, rgba(8, 8, 12, 0.95) 75%)' }}
     >
       {/* INTRO SCREEN */}
       {questStep === 'intro' && processingStatus !== 'clarifying' && (
-        <section className="relative w-full min-h-[520px] rounded-2xl p-6 sm:p-8 md:p-12 text-left overflow-hidden border border-white/10 bg-gradient-to-b from-[#0c0a08] to-[#050505]">
+        <section className="relative w-full min-h-[520px] rounded-2xl p-6 sm:p-8 md:p-12 text-left overflow-hidden border border-white/10 bg-gradient-to-b from-[#0e0e12] to-[#050507]">
           {/* Thin Grid Background */}
           <div 
             className="absolute inset-0 pointer-events-none opacity-40"
@@ -268,11 +268,11 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
               WebkitMaskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)'
             }}
           />
-          {/* Soft warm light top right */}
+          {/* Soft ambient white light top right */}
           <div 
             className="absolute top-0 right-0 w-[400px] h-[400px] pointer-events-none rounded-full"
             style={{
-              background: 'radial-gradient(circle at top right, rgba(255,107,0,0.07) 0%, transparent 70%)'
+              background: 'radial-gradient(circle at top right, rgba(255,255,255,0.04) 0%, transparent 70%)'
             }}
           />
 
@@ -280,57 +280,62 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
             {/* Left Column (Text & Mic) */}
             <div className="space-y-6 text-left">
               {/* Micro-label */}
-              <div className="flex items-center gap-2 text-[11px] text-[#8a8a8a] font-normal">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#FF6B00] shrink-0" />
+              <div className="flex items-center gap-2 text-[11px] text-[#94A3B8] font-normal">
+                <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_#FFFFFF] shrink-0" />
                 <span>Selin — автономный штаб</span>
               </div>
 
               {/* Headline */}
-              <h1 className="font-modern font-bold text-4xl sm:text-5xl md:text-6xl text-white leading-[1.05] tracking-tight">
+              <h1 className="font-display font-bold text-4xl sm:text-5xl md:text-6xl text-white leading-[1.05] tracking-tight">
                 Отвечает клиентам<br />
                 вместо вас.
               </h1>
 
               {/* Subtitle */}
-              <p className="text-lg md:text-xl font-normal text-[#cfcfcf]">
+              <p className="text-lg md:text-xl font-normal text-[#e2e8f0] font-display">
                 Голосом. Круглые сутки.
               </p>
 
               {/* Paragraph */}
-              <p className="text-sm md:text-base text-[#8a8a8a] max-w-md font-light leading-relaxed">
+              <p className="text-sm md:text-base text-[#94A3B8] max-w-md font-light leading-relaxed">
                 Опишите бизнес голосом — за минуту соберу команду под вашу задачу и выведу её на линию.
               </p>
 
               {/* Recording Block */}
               <div className="pt-2 flex flex-col sm:flex-row sm:items-center gap-4">
-                <button
-                  type="button"
-                  disabled={processingStatus !== 'idle'}
-                  onClick={toggleRecording}
-                  className={`w-22 h-22 md:w-24 md:h-24 rounded-full flex items-center justify-center cursor-pointer transition-all duration-200 border bg-white/[0.02] hover:bg-white/[0.05] disabled:opacity-50 shrink-0 ${
-                    isRecording
-                      ? 'border-red-500 text-red-500'
-                      : 'border-white/14 text-[#FF6B00] hover:border-white/30'
-                  }`}
-                >
-                  {isRecording ? (
-                    <Icons.StopCircle className="w-6 h-6 text-red-500" />
-                  ) : (
-                    <Icons.Mic className="w-6 h-6 text-[#FF6B00]" />
+                <div className="relative flex items-center justify-center shrink-0">
+                  {isRecording && (
+                    <span className="absolute inset-0 rounded-full bg-red-500/30 animate-ping pointer-events-none" />
                   )}
-                </button>
+                  <button
+                    type="button"
+                    disabled={processingStatus !== 'idle'}
+                    onClick={toggleRecording}
+                    className={`w-22 h-22 md:w-24 md:h-24 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 border relative z-10 ${
+                      isRecording
+                        ? 'border-red-500 text-red-500 bg-red-500/10 shadow-[0_0_35px_rgba(239,68,68,0.4)] scale-105'
+                        : 'border-white/20 text-white bg-white/5 hover:bg-white/10 hover:border-white/50 shadow-[0_0_25px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95'
+                    }`}
+                  >
+                    {isRecording ? (
+                      <Icons.StopCircle className="w-7 h-7 text-red-500" />
+                    ) : (
+                      <Icons.Mic className="w-7 h-7 text-white" />
+                    )}
+                  </button>
+                </div>
 
-                <div className="text-xs text-[#8a8a8a] font-normal leading-relaxed">
+                <div className="text-xs text-[#94A3B8] font-normal leading-relaxed">
                   {isRecording ? (
                     <span className="text-red-400 font-medium">слушаю — нажмите ещё раз, чтобы остановить</span>
                   ) : processingStatus === 'transcribing' ? (
                     <div className="flex items-center gap-2 text-slate-300">
-                      <Icons.Loader2 className="w-4 h-4 text-[#FF6B00] animate-spin" />
+                      <Icons.Loader2 className="w-4 h-4 text-white animate-spin" />
                       <span>Распознаю речь…</span>
                     </div>
                   ) : processingStatus === 'assembling' ? (
                     <div className="flex items-center gap-2 text-slate-300">
-                      <Icons.Loader2 className="w-4 h-4 text-[#FF6B00] animate-spin" />
+                      <Icons.Loader2 className="w-4 h-4 text-white animate-spin" />
                       <span>Собираю штаб…</span>
                     </div>
                   ) : processingStatus === 'error' ? (
@@ -347,11 +352,11 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
             {/* Right Column (Staff Registry) */}
             <div className="md:pl-6 space-y-4 text-left">
-              <div className="text-[11px] text-[#8a8a8a] font-normal">
+              <div className="text-[11px] text-[#94A3B8] font-normal">
                 Команда под вашу задачу
               </div>
 
-              <div className="rounded-xl border border-white/[0.08] bg-black/20 divide-y divide-white/[0.06] overflow-hidden">
+              <div className="rounded-xl border border-white/[0.08] bg-black/30 divide-y divide-white/[0.06] overflow-hidden">
                 {[
                   { role: 'receiver', title: 'Приём обращений', icon: Icons.MessageSquare },
                   { role: 'sales', title: 'Продажи', icon: Icons.DollarSign },
@@ -363,25 +368,92 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
                   return (
                     <div
                       key={item.role}
-                      className="flex items-center justify-between p-3.5 px-4 transition-all duration-300 hover:bg-white/[0.02]"
+                      className="flex items-center justify-between p-3.5 px-4 transition-all duration-300 hover:bg-white/[0.03]"
                       style={{
                         animation: `fadeIn 0.3s ease-out ${idx * 0.06}s both`
                       }}
                     >
                       <div className="flex items-center gap-3">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
-                        <IconComp className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                        <IconComp className="w-4 h-4 text-slate-300 shrink-0" />
                         <span className="text-sm font-medium text-white">{item.title}</span>
                       </div>
-                      <span className="text-xs text-slate-500 font-mono">{item.role}</span>
+                      <span className="text-xs text-slate-400 font-mono">{item.role}</span>
                     </div>
                   );
                 })}
               </div>
 
-              <p className="text-[11px] text-[#8a8a8a] font-normal">
+              <p className="text-[11px] text-[#94A3B8] font-normal">
                 Состав уточнится после вашего описания.
               </p>
+            </div>
+          </div>
+
+          {/* BALANCE CARD & ACTION GRID matching requested design */}
+          <div className="pt-8 space-y-6 relative z-10">
+            {/* Balance Card */}
+            <div className="balance-card">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="balance-label">Баланс Обработок ИИ-Штаба</div>
+                  <div className="balance-main">3,420,000 ₽</div>
+                  <div className="balance-sub">
+                    <Icons.TrendingUp className="w-5 h-5 text-[#00D4FF]" />
+                    <span>+128 автономных обращений сегодня</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="status-badge">24/7 ONLINE</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Grid */}
+            <div className="action-grid">
+              <button
+                type="button"
+                onClick={toggleRecording}
+                className="action-btn cursor-pointer"
+              >
+                <div className="btn-icon">
+                  <Icons.Mic className="w-5 h-5" />
+                </div>
+                <span className="btn-label">Голосовой Приём</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('simulator')}
+                className="action-btn cursor-pointer"
+              >
+                <div className="btn-icon">
+                  <Icons.MessageSquare className="w-5 h-5" />
+                </div>
+                <span className="btn-label">Каналы Связи</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('feed')}
+                className="action-btn cursor-pointer"
+              >
+                <div className="btn-icon">
+                  <Icons.Activity className="w-5 h-5" />
+                </div>
+                <span className="btn-label">Лента Штаба</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTab('billing')}
+                className="action-btn cursor-pointer"
+              >
+                <div className="btn-icon">
+                  <Icons.CreditCard className="w-5 h-5" />
+                </div>
+                <span className="btn-label">Баланс & Тарифы</span>
+              </button>
             </div>
           </div>
         </section>
@@ -391,26 +463,26 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
       {questStep === 'plan' && plan.length > 0 && (
         <div className="space-y-10 animate-fade-in text-left font-modern">
           <div className="space-y-3 pb-4 border-b border-white/10">
-            <span className="text-[10px] tracking-[0.2em] text-[#FF6B00] uppercase block font-semibold">задачи распределены по ролям</span>
+            <span className="text-[10px] tracking-[0.2em] text-white/80 uppercase block font-semibold">задачи распределены по ролям</span>
             <h2 className="text-3xl md:text-4xl font-bold text-white leading-snug">Что будет делать ваш штаб</h2>
-            <p className="text-sm text-[#A0A0A0] leading-relaxed max-w-2xl font-light">
+            <p className="text-sm text-[#94A3B8] leading-relaxed max-w-2xl font-light">
               Я подобрал {plan.length} специалистов именно под ваши задачи. Каждый знает свою роль и готов работать.
             </p>
           </div>
 
           <div className="space-y-6">
             {plan.map((agent, idx) => (
-              <div key={idx} className="glass-panel p-6 md:p-8 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition-all duration-300 hover:border-[#FF6B00]/40 hover:bg-white/[0.03]">
+              <div key={idx} className="glass-panel p-6 md:p-8 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition-all duration-300 hover:border-white/30 hover:bg-white/[0.04]">
                 <div className="flex items-start md:items-center gap-6">
-                  <div className="h-16 w-16 rounded-2xl bg-white/[0.02] border border-white/10 flex items-center justify-center shrink-0">
+                  <div className="h-16 w-16 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(255,255,255,0.05)]">
                     {renderIcon(agent.icon)}
                   </div>
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-3">
                       <h3 className="font-bold text-xl text-white tracking-tight">{agent.title}</h3>
-                      <span className="text-[10px] text-[#FF6B00] uppercase tracking-wider border border-[#FF6B00]/30 bg-[#FF6B00]/10 px-2.5 py-0.5 rounded-full font-semibold font-modern">Активен</span>
+                      <span className="text-[10px] text-white uppercase tracking-wider border border-white/30 bg-white/10 px-2.5 py-0.5 rounded-full font-semibold font-modern shadow-[0_0_8px_rgba(255,255,255,0.1)]">Активен</span>
                     </div>
-                    <p className="text-sm text-[#A0A0A0] leading-relaxed max-w-3xl font-light">{agent.mission}</p>
+                    <p className="text-sm text-[#94A3B8] leading-relaxed max-w-3xl font-light">{agent.mission}</p>
                   </div>
                 </div>
               </div>
@@ -418,7 +490,7 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
           </div>
 
           <div className="pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-6">
-            <button onClick={() => { setQuestStep('intro'); setPlan([]); }} className="text-xs uppercase tracking-widest text-[#A0A0A0] hover:text-white transition-colors cursor-pointer font-semibold">Пройти заново</button>
+            <button onClick={() => { setQuestStep('intro'); setPlan([]); }} className="text-xs uppercase tracking-widest text-[#94A3B8] hover:text-white transition-colors cursor-pointer font-semibold">Пройти заново</button>
             <button 
               onClick={() => {
                 setIsSuccessModalOpen(true);
@@ -430,23 +502,23 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
                   }
                 }
               }} 
-              className="w-full sm:w-auto bg-[#FF6B00] hover:bg-[#E05E00] text-white text-xs font-bold py-4 px-10 rounded-xl transition-all duration-300 cursor-pointer tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_4px_20px_rgba(255,107,0,0.3)]"
+              className="w-full sm:w-auto bg-white hover:bg-slate-200 text-black text-xs font-bold py-4 px-10 rounded-xl transition-all duration-300 cursor-pointer tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_4px_25px_rgba(255,255,255,0.25)]"
             >
-              <Icons.Zap className="h-4 w-4 fill-current text-white" /> Запустить штаб в работу
+              <Icons.Zap className="h-4 w-4 fill-current text-black" /> Запустить штаб в работу
             </button>
           </div>
         </div>
       )}
 
-      {/* CLARIFICATION SCREEN (Instead of fake 5 agents) */}
+      {/* CLARIFICATION SCREEN */}
       {processingStatus === 'clarifying' && (
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-6 animate-fade-in font-modern">
-          <div className="h-20 w-20 rounded-full bg-[#FF6B00]/10 border border-[#FF6B00]/20 flex items-center justify-center">
-            <Icons.HelpCircle className="h-10 w-10 text-[#FF6B00]" />
+          <div className="h-20 w-20 rounded-full bg-white/10 border border-white/20 flex items-center justify-center shadow-[0_0_25px_rgba(255,255,255,0.1)]">
+            <Icons.HelpCircle className="h-10 w-10 text-white" />
           </div>
           <h2 className="text-2xl font-bold text-white">Нужно немного уточнить</h2>
-          <p className="text-sm text-[#A0A0A0] max-w-md leading-relaxed font-light">{clarifyMessage}</p>
-          <button onClick={() => setProcessingStatus('idle')} className="mt-4 bg-[#FF6B00] hover:bg-[#E05E00] text-white font-bold px-8 py-3 rounded-xl transition-all cursor-pointer text-xs uppercase tracking-widest shadow-[0_4px_20px_rgba(255,107,0,0.2)]">
+          <p className="text-sm text-[#94A3B8] max-w-md leading-relaxed font-light">{clarifyMessage}</p>
+          <button onClick={() => setProcessingStatus('idle')} className="mt-4 bg-white hover:bg-slate-200 text-black font-bold px-8 py-3 rounded-xl transition-all cursor-pointer text-xs uppercase tracking-widest shadow-[0_4px_20px_rgba(255,255,255,0.2)]">
             Попробовать ещё раз
           </button>
         </div>
@@ -455,17 +527,17 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
       {/* Success Modal */}
       {isSuccessModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in font-modern">
-          <div className="bg-[#0A0A0A] border border-white/10 rounded-2xl p-8 md:p-12 max-w-lg w-full text-center space-y-6 shadow-[0_24px_70px_rgba(0,0,0,0.8)]">
-            <div className="h-16 w-16 rounded-2xl bg-[#FF6B00]/10 border border-[#FF6B00]/20 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(255,107,0,0.2)]">
-              <Icons.Sparkles className="h-8 w-8 text-[#FF6B00]" />
+          <div className="bg-[#0A0A0E] border border-white/15 rounded-2xl p-8 md:p-12 max-w-lg w-full text-center space-y-6 shadow-[0_24px_70px_rgba(0,0,0,0.9)]">
+            <div className="h-16 w-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(255,255,255,0.2)]">
+              <Icons.Sparkles className="h-8 w-8 text-white" />
             </div>
             <div className="space-y-3">
               <h3 className="text-2xl md:text-3xl font-bold text-white tracking-tight">Штаб успешно запущен!</h3>
-              <p className="text-sm text-[#A0A0A0] leading-relaxed font-light">
+              <p className="text-sm text-[#94A3B8] leading-relaxed font-light">
                 {plan.length} ИИ-сотрудников активированы и настроены на алгоритмы вашего бизнеса "{businessName}". Проверьте вкладку "Каналы связи"!
               </p>
             </div>
-            <button onClick={() => { setIsSuccessModalOpen(false); setCurrentTab?.('simulator'); }} className="w-full bg-[#FF6B00] hover:bg-[#E05E00] text-white text-xs font-bold py-4 rounded-xl transition-all duration-300 cursor-pointer uppercase tracking-widest shadow-[0_4px_20px_rgba(255,107,0,0.3)]">
+            <button onClick={() => { setIsSuccessModalOpen(false); setCurrentTab?.('simulator'); }} className="w-full bg-white hover:bg-slate-200 text-black text-xs font-bold py-4 rounded-xl transition-all duration-300 cursor-pointer uppercase tracking-widest shadow-[0_4px_20px_rgba(255,255,255,0.25)]">
               Отлично, к симулятору!
             </button>
           </div>

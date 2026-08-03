@@ -113,7 +113,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onCloned }) => {
   return (
     <GlassPanel id="voice-cloner" className="relative overflow-hidden border-accent/20 shadow-lg">
       <div className="flex items-center gap-3 mb-5">
-        <div className="bg-[#F5A623]/10 p-2 rounded-lg text-[#F5A623]">
+        <div className="bg-white/10 p-2 rounded-lg text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]">
           <Volume2 className="h-5 w-5" />
         </div>
         <div>
@@ -135,7 +135,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onCloned }) => {
                   onClick={() => setSelectedBaseVoice(v.id)}
                   className={`text-left p-3 rounded-xl border text-sm transition-all duration-300 ${
                     selectedBaseVoice === v.id
-                      ? 'border-[#F5A623]/40 bg-[#F5A623]/10 text-white'
+                      ? 'border-white/40 bg-white/10 text-white shadow-[0_0_12px_rgba(255,255,255,0.08)]'
                       : 'border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04] text-slate-300'
                   }`}
                 >

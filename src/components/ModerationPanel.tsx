@@ -97,7 +97,7 @@ export const ModerationPanel: React.FC = () => {
       case 'telegram': return 'bg-[#229ED9]/10 border-[#229ED9]/20 text-[#229ED9]';
       case 'whatsapp': return 'bg-[#25D366]/10 border-[#25D366]/20 text-[#25D366]';
       case 'vk': return 'bg-[#4C75A3]/10 border-[#4C75A3]/20 text-[#4C75A3]';
-      case 'email': return 'bg-[#F5A623]/10 border-[#F5A623]/20 text-[#F5A623]';
+      case 'email': return 'bg-white/10 border-white/20 text-white';
       default: return 'bg-white/5 border-white/10 text-slate-400';
     }
   };
@@ -138,15 +138,15 @@ export const ModerationPanel: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/[0.08] pb-6">
         <div>
           <h2 className="font-lux font-light text-xl md:text-2xl text-white select-none flex items-center gap-2">
-            <Shield className="h-5 w-5 text-[#F5A623]" />
+            <Shield className="h-5 w-5 text-white" />
             Ручная модерация ответов
           </h2>
           <p className="text-xs text-slate-400 mt-1 leading-relaxed">
             Режим контроля позволяет просматривать, изменять и утверждать сообщения цифровых агентов перед их отправкой клиентам.
           </p>
         </div>
-        <div className="bg-[#F5A623]/10 border border-[#F5A623]/20 rounded-xl px-4 py-2.5 flex items-center gap-3">
-          <Clock className="h-4 w-4 text-[#F5A623] animate-pulse" />
+        <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-2.5 flex items-center gap-3 shadow-[0_0_12px_rgba(255,255,255,0.05)]">
+          <Clock className="h-4 w-4 text-white animate-pulse" />
           <div className="text-right">
             <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Ожидают проверки</div>
             <div className="text-sm font-bold text-white">{queue.length} шт.</div>
@@ -159,14 +159,14 @@ export const ModerationPanel: React.FC = () => {
         <div className="lg:col-span-2 space-y-4">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider font-sans select-none flex items-center gap-2">
             <span>Очередь сообщений</span>
-            <span className="bg-[#F5A623] text-black text-xs font-bold px-2 py-0.5 rounded-full leading-none">
+            <span className="bg-white text-black text-xs font-bold px-2 py-0.5 rounded-full leading-none shadow-[0_0_8px_rgba(255,255,255,0.3)]">
               {queue.length}
             </span>
           </h3>
 
           {loading ? (
             <div className="premium-card p-10 text-center text-slate-400">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#F5A623] mx-auto mb-4" />
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-4" />
               <span>Загрузка очереди модерации...</span>
             </div>
           ) : queue.length === 0 ? (
@@ -183,7 +183,7 @@ export const ModerationPanel: React.FC = () => {
                 {/* Header info */}
                 <div className="flex flex-wrap justify-between items-center gap-3 border-b border-white/5 pb-3.5 mb-4">
                   <div className="flex items-center gap-2.5">
-                    <span className="w-8 h-8 rounded-full bg-[#F5A623]/10 flex items-center justify-center text-xs font-bold text-white">
+                    <span className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs font-bold text-white border border-white/20">
                       {item.clientName ? item.clientName.charAt(0) : 'K'}
                     </span>
                     <div>
@@ -199,7 +199,7 @@ export const ModerationPanel: React.FC = () => {
                   </div>
 
                   <span className="bg-white/5 border border-white/10 text-slate-300 text-[10px] font-semibold px-2.5 py-1 rounded-full uppercase">
-                    Агент: <span className="text-[#F5A623]">{getAgentRoleName(item.agentRole)}</span>
+                    Агент: <span className="text-white font-bold">{getAgentRoleName(item.agentRole)}</span>
                   </span>
                 </div>
 
@@ -207,8 +207,8 @@ export const ModerationPanel: React.FC = () => {
                 <div className="space-y-4">
                   {/* Customer Question */}
                   <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                    <div className="text-[10px] text-[#F5A623] uppercase tracking-wider font-bold mb-1 flex items-center gap-1.5">
-                      <User className="h-3 w-3" />
+                    <div className="text-[10px] text-white/90 uppercase tracking-wider font-bold mb-1 flex items-center gap-1.5">
+                      <User className="h-3 w-3 text-white" />
                       Запрос от клиента:
                     </div>
                     <p className="text-xs text-slate-200 font-light leading-relaxed">
@@ -229,7 +229,7 @@ export const ModerationPanel: React.FC = () => {
                     <textarea
                       value={editableResponses[item.id] || ''}
                       onChange={(e) => setEditableResponses({ ...editableResponses, [item.id]: e.target.value })}
-                      className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#F5A623] focus:bg-black/80 transition-all font-light leading-relaxed min-h-[100px]"
+                      className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-white/40 focus:bg-black/80 transition-all font-light leading-relaxed min-h-[100px]"
                       placeholder="Напишите или отредактируйте ответ..."
                     />
                   </div>
@@ -249,7 +249,7 @@ export const ModerationPanel: React.FC = () => {
                       <button
                         onClick={() => handleAction(item.id, 'edit')}
                         disabled={submittingId !== null}
-                        className="px-5 py-2.5 rounded-xl border border-[#F5A623] bg-[#F5A623]/10 hover:bg-[#F5A623]/25 text-[#F5A623] text-xs font-semibold cursor-pointer transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(245,166,35,0.1)]"
+                        className="px-5 py-2.5 rounded-xl border border-white/30 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold cursor-pointer transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(255,255,255,0.1)]"
                       >
                         <Edit3 className="h-4 w-4" />
                         <span>Изменить и Отправить</span>
@@ -305,8 +305,8 @@ export const ModerationPanel: React.FC = () => {
                     )}
 
                     {entry.action === 'edit' && (
-                      <span className="px-1.5 py-0.5 rounded-[4px] text-[8px] uppercase font-bold border border-[#F5A623]/20 bg-[#F5A623]/10 text-[#F5A623] flex items-center gap-1">
-                        <Edit3 className="h-2 w-2" /> Изменено
+                      <span className="px-1.5 py-0.5 rounded-[4px] text-[8px] uppercase font-bold border border-white/20 bg-white/10 text-white flex items-center gap-1">
+                        <Edit3 className="h-2 w-2 text-white" /> Изменено
                       </span>
                     )}
 
