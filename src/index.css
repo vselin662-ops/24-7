@@ -410,32 +410,43 @@
   position: fixed;
   bottom: 0; left: 0;
   width: 100%;
-  background: rgba(24, 20, 18, 0.92);
+  background: rgba(20, 16, 14, 0.94);
   backdrop-filter: blur(28px) saturate(180%);
-  border-top: 1px solid rgba(220, 214, 205, 0.2);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-top: 1px solid rgba(220, 214, 205, 0.15);
   display: flex;
+  align-items: center;
   justify-content: space-around;
-  padding: 10px 8px calc(10px + var(--safe-area-bottom));
+  padding: 6px 4px calc(8px + var(--safe-area-bottom));
   z-index: 1000;
-  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.85);
+  overflow-x: auto;
 }
 
 .nav-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   color: #8C847A;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 500;
   text-decoration: none;
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 14px;
+  padding: 5px 8px;
+  border-radius: 12px;
   position: relative;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.nav-item span {
+  font-size: 0.65rem;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
 }
 
 .nav-item:hover {

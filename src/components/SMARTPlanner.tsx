@@ -267,26 +267,33 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
             }}
           />
 
-          <div className="relative z-10 max-w-xl mx-auto space-y-8 flex flex-col items-center">
+          <div className="relative z-10 max-w-xl mx-auto space-y-6 flex flex-col items-center">
             
-            {/* Organic Pebble Nature Frame - Clean Image */}
-            <div className="relative mx-auto w-full max-w-sm sm:max-w-md h-64 sm:h-72 overflow-hidden geos-pebble-1 border border-[#DCD6CD]/20 shadow-[0_25px_60px_rgba(0,0,0,0.85)] group transition-transform duration-700 hover:scale-[1.02]">
-              <img 
-                src={bgCathedral} 
-                alt="ИИ-Штаб SELIN" 
-                className="w-full h-full object-cover filter contrast-105 brightness-95 transition-transform duration-1000 group-hover:scale-110"
-                referrerPolicy="no-referrer"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10" />
-              <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between text-[11px] font-serif-geos text-[#C5A059] bg-[#181412]/80 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-[#DCD6CD]/20">
-                <span>SELIN CORE</span>
-                <span className="text-[#30d158] font-bold">● ONLINE 24/7</span>
+            {/* Elegant Luxury Frame - Clean Image & Status Badge */}
+            <div className="relative mx-auto w-full max-w-sm sm:max-w-md p-1.5 rounded-[32px] sm:rounded-[36px] border border-[#C5A059]/35 bg-[#181412]/90 shadow-[0_25px_60px_rgba(0,0,0,0.9),0_0_35px_rgba(197,160,89,0.12)] transition-transform duration-700 hover:scale-[1.01]">
+              <div className="relative w-full h-60 sm:h-72 rounded-[26px] sm:rounded-[30px] overflow-hidden flex flex-col justify-end p-3">
+                <img 
+                  src={bgCathedral} 
+                  alt="ИИ-Штаб SELIN" 
+                  className="absolute inset-0 w-full h-full object-cover filter contrast-105 brightness-95 transition-transform duration-1000 hover:scale-105"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/10" />
+                
+                {/* Status Bar inside the image card with proper margins so text is NEVER clipped */}
+                <div className="relative z-10 flex items-center justify-between text-xs font-serif-geos text-[#EAE6DF] bg-[#14100E]/90 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-[#C5A059]/30 shadow-lg">
+                  <span className="tracking-widest text-[#C5A059] font-medium uppercase">SELIN CORE</span>
+                  <span className="text-[#30d158] font-bold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#30d158] animate-pulse" />
+                    ONLINE 24/7
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* Glass Voice Recording Action Button */}
-            <div className="w-full flex flex-col items-center justify-center gap-4 pt-2">
-              <div className="relative flex items-center justify-center">
+            <div className="w-full flex flex-col items-center justify-center gap-3 pt-1">
+              <div className="relative flex items-center justify-center w-full max-w-md">
                 {isRecording && (
                   <span className="absolute inset-0 rounded-full bg-red-500/30 animate-ping pointer-events-none" />
                 )}
@@ -294,20 +301,20 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
                   type="button"
                   disabled={processingStatus !== 'idle'}
                   onClick={toggleRecording}
-                  className={`px-8 py-4 rounded-full font-serif-geos text-base font-semibold tracking-wide transition-all duration-300 border flex items-center gap-3 cursor-pointer relative z-10 ${
+                  className={`w-full py-4 px-6 sm:px-8 rounded-full font-serif-geos text-sm sm:text-base font-bold tracking-widest transition-all duration-300 border flex items-center justify-center gap-3 cursor-pointer relative z-10 uppercase ${
                     isRecording
-                      ? 'border-red-500 text-red-400 bg-red-500/15 shadow-[0_0_35px_rgba(239,68,68,0.5)] scale-105'
-                      : 'border-[#C5A059]/40 text-[#1A1614] bg-[#DCD6CD] hover:bg-[#EAE6DF] hover:scale-105 active:scale-95 shadow-[0_10px_30px_rgba(0,0,0,0.6)]'
+                      ? 'border-red-500 text-red-400 bg-red-500/20 shadow-[0_0_35px_rgba(239,68,68,0.5)] scale-105'
+                      : 'border-[#C5A059]/50 text-[#14100E] bg-gradient-to-r from-[#C5A059] via-[#E8C580] to-[#C5A059] hover:brightness-110 hover:scale-[1.02] active:scale-95 shadow-[0_12px_35px_rgba(197,160,89,0.35)]'
                   }`}
                 >
                   {isRecording ? (
                     <>
-                      <Icons.StopCircle className="w-6 h-6 text-red-500 animate-pulse" />
+                      <Icons.StopCircle className="w-5 h-5 sm:w-6 sm:h-6 text-red-500 animate-pulse" />
                       <span>Остановить запись</span>
                     </>
                   ) : (
                     <>
-                      <Icons.Mic className="w-6 h-6 text-[#1A1614]" />
+                      <Icons.Mic className="w-5 h-5 sm:w-6 sm:h-6 text-[#14100E]" />
                       <span>ЗАПУСТИТЬ ГОЛОСОВОЙ ВВОД</span>
                     </>
                   )}
@@ -333,13 +340,13 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
             </div>
 
             {/* Quick Modules Row */}
-            <div className="pt-8 border-t border-[#DCD6CD]/10 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="pt-6 border-t border-[#DCD6CD]/10 grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 w-full">
               <button
                 type="button"
                 onClick={toggleRecording}
-                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
+                className="p-3.5 sm:p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#C5A059]/40 text-left transition-all duration-300 cursor-pointer group hover:bg-[#2A231F]"
               >
-                <Icons.Mic className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <Icons.Mic className="w-5 h-5 text-[#C5A059] mb-1.5 group-hover:scale-110 transition-transform" />
                 <div className="text-xs font-semibold text-[#EAE6DF]">Голосовой Инженер</div>
                 <div className="text-[10px] text-[#8E847A]">Живой диалог</div>
               </button>
@@ -347,9 +354,9 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
               <button
                 type="button"
                 onClick={() => setCurrentTab('simulator')}
-                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
+                className="p-3.5 sm:p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#C5A059]/40 text-left transition-all duration-300 cursor-pointer group hover:bg-[#2A231F]"
               >
-                <Icons.MessageSquare className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <Icons.MessageSquare className="w-5 h-5 text-[#C5A059] mb-1.5 group-hover:scale-110 transition-transform" />
                 <div className="text-xs font-semibold text-[#EAE6DF]">Каналы Связи</div>
                 <div className="text-[10px] text-[#8E847A]">WhatsApp / TG</div>
               </button>
@@ -357,9 +364,9 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
               <button
                 type="button"
                 onClick={() => setCurrentTab('feed')}
-                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
+                className="p-3.5 sm:p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#C5A059]/40 text-left transition-all duration-300 cursor-pointer group hover:bg-[#2A231F]"
               >
-                <Icons.Activity className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <Icons.Activity className="w-5 h-5 text-[#C5A059] mb-1.5 group-hover:scale-110 transition-transform" />
                 <div className="text-xs font-semibold text-[#EAE6DF]">Лента Штаба</div>
                 <div className="text-[10px] text-[#8E847A]">Отчеты 24/7</div>
               </button>
@@ -367,9 +374,9 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
               <button
                 type="button"
                 onClick={() => setCurrentTab('billing')}
-                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
+                className="p-3.5 sm:p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#C5A059]/40 text-left transition-all duration-300 cursor-pointer group hover:bg-[#2A231F]"
               >
-                <Icons.CreditCard className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <Icons.CreditCard className="w-5 h-5 text-[#C5A059] mb-1.5 group-hover:scale-110 transition-transform" />
                 <div className="text-xs font-semibold text-[#EAE6DF]">Баланс & Тарифы</div>
                 <div className="text-[10px] text-[#8E847A]">Управление</div>
               </button>

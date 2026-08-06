@@ -70,6 +70,28 @@ async function execTool(name: string, args: any): Promise<any> {
       const d = new Date();
       return { date: d.toLocaleDateString("ru-RU"), weekday: d.toLocaleDateString("ru-RU", { weekday: "long" }), time: d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) };
     }
+    if (name === "order_pizza") {
+      return {
+        status: "confirmed",
+        service: "Додо Пицца / Yandex Delivery",
+        orderId: `PZ-${Math.floor(100000 + Math.random() * 900000)}`,
+        items: args.items || ["Пицца Пепперони 30см"],
+        address: args.address || "Указанный адрес",
+        deliveryTime: "30-40 минут",
+        totalRub: args.totalRub || 890
+      };
+    }
+    if (name === "order_groceries") {
+      return {
+        status: "confirmed",
+        service: "Самокат / Яндекс Лавка",
+        orderId: `GR-${Math.floor(100000 + Math.random() * 900000)}`,
+        items: args.items || ["Молоко", "Хлеб", "Яйца"],
+        address: args.address || "Указанный адрес",
+        deliveryTime: "15-25 минут (Экспресс-доставка)",
+        totalRub: args.totalRub || 1250
+      };
+    }
     return { error: "unknown tool" };
   } catch (e: any) {
     return { error: String(e?.message || e) };
@@ -83,7 +105,9 @@ async function runWithTools(systemInstruction: string, contents: any[]): Promise
       { name: "calculate", description: "Посчитать арифметику: ROI, маржу, проценты, налог, рост цены/выручки. expression — строка, например '(750000-450000)/450000*100'.", parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING } }, required: ["expression"] } },
       { name: "current_date", description: "Текущая дата, день недели и время (когда спрашивают про сегодня/дату/дедлайн).", parameters: { type: Type.OBJECT, properties: {} } },
       { name: "save_note", description: "Сохранить важную заметку или факт о бизнесе владельца (когда он говорит 'запомни', 'запиши', сообщает о клиенте, цене, договоренности).", parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING } }, required: ["text"] } },
-      { name: "add_task", description: "Добавить задачу или напоминание владельцу (когда просит напомнить, сделать, не забыть). due — срок словами, если назван.", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, due: { type: Type.STRING } }, required: ["title"] } }
+      { name: "add_task", description: "Добавить задачу или напоминание владельцу (когда просит напомнить, сделать, не забыть). due — срок словами, если назван.", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, due: { type: Type.STRING } }, required: ["title"] } },
+      { name: "order_pizza", description: "Оформить заказ пиццы в службе доставки. Запрашивать перед вызовом явное подтверждение пользователя, размер, тесто, начинку и адрес доставки.", parameters: { type: Type.OBJECT, properties: { items: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Список пицц и предметов" }, address: { type: Type.STRING, description: "Адрес доставки" }, totalRub: { type: Type.NUMBER, description: "Итоговая стоимость в рублях" } }, required: ["items", "address"] } },
+      { name: "order_groceries", description: "Оформить заказ и доставку продуктов питания онлайн (Самокат/Яндекс Лавка). Требует явное согласие пользователя, состав корзины и адрес.", parameters: { type: Type.OBJECT, properties: { items: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Список продуктов" }, address: { type: Type.STRING, description: "Адрес доставки" }, totalRub: { type: Type.NUMBER, description: "Итоговая сумма корзины в рублях" } }, required: ["items", "address"] } }
     ] }
   ];
   let last: any = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction, tools });
@@ -1280,18 +1304,39 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
       { role: "user", parts: [{ text: user_message }] }
     ];
     const mission = (config.agent_missions || {})[agentRole] || "";
-    const systemInstruction = `Ты — живой сотрудник цифрового штаба Selin, роль "${agentRole}", компания "${config.business_name}" (сфера: ${config.industry || "услуги"}). Владелец: ${config.owner_name || "предприниматель"}. Тон: ${config.tone || "friendly"}. ${address}${mission ? " Твоя миссия: " + mission + "." : ""}${goals ? " Цели владельца: " + goals + "." : ""}
+    const systemInstruction = `Ты — персональный умный ассистент цифрового штаба SELIN (роль "${agentRole}", компания "${config.business_name}" (сфера: ${config.industry || "услуги"})). Владелец: ${config.owner_name || "предприниматель"}. Тон: ${config.tone || "friendly"}. ${address}${mission ? " Твоя миссия: " + mission + "." : ""}${goals ? " Цели владельца: " + goals + "." : ""}
 
-ТЫ УМЕЕШЬ ДЕЛАТЬ РЕАЛЬНЫЕ ВЕЩИ — пользуйся инструментами, когда уместно, вместо отписок:
+РОЛЬ И КЛЮЧЕВЫЕ НАВЫКИ:
+Ты — персональный умный ассистент, который помогает пользователю не только отвечать на вопросы, но и решать повседневные бытовые задачи: заказывать пиццу, покупать продукты онлайн и оформлять доставку.
+
+1. Заказ пиццы:
+   - Уточняй у пользователя предпочтения: размер пиццы, тип теста, любимые ингредиенты/начинку, наличие аллергий и количество.
+   - Предлагай популярные позиции или акционные сеты.
+   - Перед оформлением заказа (инструмент order_pizza) всегда запрашивай подтверждение: адрес доставки, итоговый состав заказа и примерную стоимость.
+
+2. Покупка продуктов онлайн:
+   - Помогай составлять список покупок на основе рецептов или предпочтений пользователя.
+   - Уточняй нужные бренды, ценовую категорию и количество товаров.
+   - Группируй товары по категориям (молочные продукты, овощи, бакалея и т.д.).
+   - Формируй итоговую корзину и запрашивай финальное подтверждение (инструмент order_groceries) перед оплатой и оформлением.
+
+ПРАВИЛА ВЗАИМОДЕЙСТВИЯ:
+- Будь вежливым, заботливым и внимательным к деталям.
+- НИКОГДА не списывай средства и не совершай финальный заказ без явного согласия пользователя («Да, заказывай» / «Все верно»).
+- Если какой-то товар или позиция отсутствуют, вежливо предложи адекватную замену.
+- Всегда уточняй адрес доставки и желаемое время, если они не были указаны ранее.
+
+ИНСТРУМЕНТЫ:
 - Факт, цены, конкуренты, новости, курс, погода → поиск (googleSearch), ответь с цифрой/фактом.
-- Посчитать (ROI, маржа, процент, налог, «что если поднять цену», рост выручки) → calculate, назови результат числом, ход одной строкой.
+- Посчитать (ROI, маржа, процент, налог, «что если поднять цену», рост выручки) → calculate.
 - Сегодня/дата/дедлайн → current_date.
-- Ответ есть в базе знаний компании → отвечай по ней; данных нет → живо скажи, что уточнишь, НЕ выдумывай цифры.
+- Заказ пиццы → order_pizza (только после явного согласия пользователя!).
+- Заказ продуктов → order_groceries (только после явного согласия пользователя!).
 
-ПАМЯТЬ: опирайся на заметки и задачи владельца выше — он ждёт, что ты помнишь контекст. Если спрашивает «что у меня/что на сегодня/что я просил» — собери ответ из его задач и заметок. Используй информацию из блоков ЗАМЕТКИ О БИЗНЕСЕ ВЛАДЕЛЬЦА и АКТУАЛЬНЫЕ ЗАДАЧИ/НАПОМИНАНИЯ ВЛАДЕЛЬЦА выше. Если клиент спрашивает 'что у меня на сегодня', 'что я просил', 'напомни' — отвечай строго на основе этих данных. Не выдумывай задачи.
+ПАМЯТЬ: опирайся на заметки и задачи владельца выше — он ждёт, что ты помнишь контекст. Если спрашивает «что у меня/что на сегодня/что я просил» — собери ответ из его задач и заметок.
 
-КАК ГОВОРИТЬ: как живой человек, 1-3 коротких разговорных предложения, можно один эмодзи. Без списков, без «во-первых», без канцелярита. Текст автоматически озвучивается — пиши вслух. НИКОГДА не говори, что ты ИИ/бот, и НИКОГДА не говори, что отвечаешь только текстом или не можешь голосом.
-ЗАПРЕЩЕНЫ пустые отписки вместо сути: «чем могу помочь», «напишите ваш вопрос», «я зафиксировал ваш вопрос», «ответим в ближайшее время». Отвечай ПО СУТИ.
+КАК ГОВОРИТЬ: как живой человек, 1-3 коротких разговорных предложения, можно один эмодзи. Без списков, без «во-первых», без канцелярита. Текст автоматически озвучивается — пиши вслух. НИКОГДА не говори, что ты ИИ/бот.
+ЗАПРЕЩЕНЫ пустые отписки вместо сути.
 ${notesBlock}${tasksBlock}${ragContext}`;
     let response: any;
     try {
@@ -1693,6 +1738,7 @@ const tgToken = process.env.TELEGRAM_BOT_TOKEN;
 let bot: TelegramBot | null = null;
 const lastStartAt = new Map<number, number>();
 
+// State management for chat user sessions
 const userStates = new Map<number, { questSent: boolean; questNag: number; state: 'NEW' | 'QUESTING' | 'ACTIVE' }>();
 function getState(chatId: number) {
   if (!userStates.has(chatId)) userStates.set(chatId, { questSent: false, questNag: 0, state: 'NEW' });
@@ -1701,23 +1747,6 @@ function getState(chatId: number) {
 function setState(chatId: number, patch: Partial<{ questSent: boolean; questNag: number; state: 'NEW' | 'QUESTING' | 'ACTIVE' }>) {
   const cur = getState(chatId);
   userStates.set(chatId, { ...cur, ...patch });
-}
-
-const RESPONSES = {
-  greeting: ["Здравствуйте. Я на связи — расскажите, что нужно сделать.", "Приветствую. Какая задача на сегодня?", "Я тут. Говорите или пишите — разберусь."],
-  confusion: ["Подсказать? Я отвечаю клиентам вместо вас и веду заявки 24/7. Скажите, чем занимаетесь — покажу на вашем примере.", "Я на месте. Просто напишите или надиктуйте, что нужно: ответить клиенту, посчитать, составить пост.", "Давайте по делу: какая у вас боль сейчас — много переписки, теряются заявки, нет контента?"],
-  already_questing: ["Чтобы я заработал в полную силу, нужна одна короткая настройка — это минута. Кнопка с приложением выше.", "Я пока в режиме настройки. Пройдите быстрый квест по кнопке выше — и дальше буду отвечать по делу голосом."]
-};
-function pick(arr: string[]) { return arr[Math.floor(Math.random() * arr.length)]; }
-
-function classifyIntent(text: string | undefined): string {
-  if (!text) return 'UNKNOWN';
-  const t = text.toLowerCase().trim();
-  if (!t) return 'UNKNOWN';
-  if (['привет','здравствуй','хай','hello','добрый'].some(w => t.includes(w))) return 'GREETING';
-  if (['квест','настрой','штаб','начать','запустить'].some(w => t.includes(w))) return 'QUEST';
-  if (t.length <= 3 || t === '?' || t === '??' || t === '???') return 'CONFUSION';
-  return 'TASK';
 }
 
 if (tgToken) {
@@ -3317,6 +3346,28 @@ const mcpToolsRegistry: Record<string, Function> = {
   },
   create_smart_task: async (args: any) => {
     return { id: `TASK-${Date.now().toString().slice(-4)}`, title: args.title, date: args.date, category: args.category || "travel" };
+  },
+  order_pizza: async (args: any) => {
+    return {
+      status: "confirmed",
+      service: "Додо Пицца / Яндекс Еда",
+      orderId: `PZ-${Math.floor(100000 + Math.random() * 900000)}`,
+      items: args.items || ["Пепперони 30см на традиционном тесте"],
+      address: args.address || "Указанный адрес",
+      deliveryTime: "30-40 минут",
+      totalRub: args.totalRub || 890
+    };
+  },
+  order_groceries: async (args: any) => {
+    return {
+      status: "confirmed",
+      service: "Самокат / Яндекс Лавка",
+      orderId: `GR-${Math.floor(100000 + Math.random() * 900000)}`,
+      items: args.items || ["Молоко 3.2%", "Хлеб зерновой", "Яйца С0"],
+      address: args.address || "Указанный адрес",
+      deliveryTime: "15-25 минут (Экспресс)",
+      totalRub: args.totalRub || 1250
+    };
   }
 };
 
@@ -3330,7 +3381,9 @@ app.get("/api/mcp/tools", (_, res) => {
       { name: "verify_client_booking", description: "Проверка бронирования по телефону", category: "CRM" },
       { name: "search_flights", description: "Поиск авиабилетов и цен", category: "Travel" },
       { name: "send_messenger_notification", description: "Отправка в Telegram/WhatsApp/SMS", category: "Messaging" },
-      { name: "create_smart_task", description: "Создание задач в смарт-планере", category: "Planner" }
+      { name: "create_smart_task", description: "Создание задач в смарт-планере", category: "Planner" },
+      { name: "order_pizza", description: "Заказ и доставка пиццы", category: "Delivery" },
+      { name: "order_groceries", description: "Покупка и доставка продуктов онлайн", category: "Delivery" }
     ]
   });
 });

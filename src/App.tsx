@@ -388,32 +388,32 @@ export default function App() {
 
       {/* Header Panel - SELIN GEOS Luxury Style */}
       <header className="max-w-7xl mx-auto w-full mb-6 relative z-10">
-        <div className="bg-[#181412]/80 backdrop-blur-2xl border border-[#DCD6CD]/20 rounded-[28px] p-3.5 px-5 flex items-center justify-between gap-4 shadow-[0_12px_40px_rgba(0,0,0,0.7)]">
-          {/* Phone Call Icon / System Gateway */}
-          <div className="flex items-center gap-2">
+        <div className="bg-[#181412]/85 backdrop-blur-2xl border border-[#DCD6CD]/20 rounded-[24px] sm:rounded-[28px] p-2.5 sm:p-3.5 px-3 sm:px-5 flex items-center justify-between gap-2 sm:gap-4 shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden">
+          {/* Phone Call Icon / System Gateway & Camera upload */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <a 
               href="tel:+78000000000" 
-              className="p-2.5 rounded-full bg-[#28221F] border border-[#DCD6CD]/20 text-[#DCD6CD] hover:text-white hover:border-[#DCD6CD] transition-all duration-300"
+              className="p-2 sm:p-2.5 rounded-full bg-[#28221F] border border-[#DCD6CD]/20 text-[#DCD6CD] hover:text-white hover:border-[#DCD6CD] transition-all duration-300"
               title="Шлюз прямой связи"
             >
-              <PhoneCall className="w-4 h-4 text-[#DCD6CD]" />
+              <PhoneCall className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#DCD6CD]" />
             </a>
 
             {/* Direct Upload Photo Button */}
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-2 rounded-full bg-[#28221F] border border-[#C5A059]/40 text-[#C5A059] hover:bg-[#322B27] hover:border-[#C5A059] transition-all duration-300 flex items-center gap-1.5 text-xs font-serif-geos cursor-pointer"
+              className="p-2 sm:px-3 sm:py-2 rounded-full bg-[#28221F] border border-[#C5A059]/40 text-[#C5A059] hover:bg-[#322B27] hover:border-[#C5A059] transition-all duration-300 flex items-center gap-1.5 text-xs font-serif-geos cursor-pointer"
               title="Загрузить вашу оригинальную фотографию с устройства"
             >
-              <Camera className="w-4 h-4 text-[#C5A059]" />
+              <Camera className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#C5A059]" />
               <span className="hidden sm:inline text-[#EAE6DF]">Моё фото</span>
             </button>
           </div>
             
           {/* Clean Brand Title with SELIN Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 shrink-0 bg-[#28221F] rounded-[14px] border border-[#C5A059]/40 flex items-center justify-center overflow-hidden shadow-md">
-              <svg viewBox="0 0 100 100" className="w-full h-full p-1.5" xmlns="http://www.w3.org/2000/svg">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
+            <div className="w-7 h-7 sm:w-9 sm:h-9 shrink-0 bg-[#28221F] rounded-[10px] sm:rounded-[14px] border border-[#C5A059]/40 flex items-center justify-center overflow-hidden shadow-md">
+              <svg viewBox="0 0 100 100" className="w-full h-full p-1 sm:p-1.5" xmlns="http://www.w3.org/2000/svg">
                 <g fill="#DCD6CD">
                   <rect x="44" y="6"  width="12" height="12" transform="rotate(45 50 12)" />
                   <rect x="71" y="17" width="12" height="12" transform="rotate(45 77 23)" />
@@ -427,19 +427,19 @@ export default function App() {
                 <text x="50" y="53" textAnchor="middle" fontFamily="serif" fontWeight="normal" fontSize="13" fill="#DCD6CD">SELIN</text>
               </svg>
             </div>
-            <span className="font-serif-geos text-lg md:text-xl text-[#EAE6DF] tracking-wider font-semibold">
-              SELIN · ГЕОС
+            <span className="font-serif-geos text-sm sm:text-lg md:text-xl text-[#EAE6DF] tracking-wider font-semibold whitespace-nowrap">
+              SELIN
             </span>
-            <span className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-0.5 rounded-full bg-[#30d158]/10 text-[#30d158] border border-[#30d158]/20 hidden sm:inline-block">
+            <span className="text-[9px] sm:text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-[#30d158]/10 text-[#30d158] border border-[#30d158]/20 hidden md:inline-block">
               ONLINE
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Live Voice Agent Button */}
             <button
               onClick={() => setShowVoiceOrganism(true)}
-              className="px-3.5 py-2 rounded-full font-serif-geos text-xs font-semibold tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0 bg-[#DCD6CD] text-[#1A1614] hover:bg-[#EAE6DF] shadow-md"
+              className="p-2 sm:px-3.5 sm:py-2 rounded-full font-serif-geos text-xs font-semibold tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0 bg-[#DCD6CD] text-[#1A1614] hover:bg-[#EAE6DF] shadow-md"
               title="Запустить голосовой модуль"
             >
               <Volume2 className="h-4 w-4 text-[#1A1614] shrink-0 animate-pulse" />
@@ -449,7 +449,7 @@ export default function App() {
             {/* Launch Headquarters Button */}
             <button
               onClick={() => setIsLaunchModalOpen(true)}
-              className={`px-3.5 py-2 rounded-full font-serif-geos text-xs font-semibold tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0 ${
+              className={`p-2 sm:px-3.5 sm:py-2 rounded-full font-serif-geos text-xs font-semibold tracking-wider transition-all duration-300 flex items-center gap-2 cursor-pointer shrink-0 ${
                 config?.is_live || readinessState?.is_live
                   ? 'bg-[#28221F] border border-[#DCD6CD]/30 text-[#EAE6DF] hover:bg-[#342C28]'
                   : 'bg-[#C5A059] text-[#1A1614] hover:bg-[#D8B46E] shadow-md'
@@ -471,10 +471,10 @@ export default function App() {
             {/* Burger Menu Button */}
             <button
               onClick={() => setMenuOpen(true)}
-              className="relative shrink-0 p-2.5 rounded-full bg-[#28221F] border border-[#DCD6CD]/20 hover:border-[#DCD6CD] text-[#EAE6DF] transition-all duration-300 cursor-pointer flex items-center justify-center shadow-md"
+              className="relative shrink-0 p-2 sm:p-2.5 rounded-full bg-[#28221F] border border-[#DCD6CD]/20 hover:border-[#DCD6CD] text-[#EAE6DF] transition-all duration-300 cursor-pointer flex items-center justify-center shadow-md"
               title="Открыть меню управления"
             >
-              <Menu className="h-5 w-5" />
+              <Menu className="h-4 w-4 sm:h-5 sm:w-5" />
             </button>
           </div>
         </div>
