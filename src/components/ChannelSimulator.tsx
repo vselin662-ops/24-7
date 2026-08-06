@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { SimulatedCustomer, Message } from '../types';
 import { Send, MessageCircle, Globe, Mail, Volume2, MessageSquare, Shield } from 'lucide-react';
+// @ts-ignore
+import archGeos from '../assets/images/arch_geos_1785822482173.jpg';
 
 interface ChannelSimulatorProps {
   businessName: string;
@@ -174,7 +176,15 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
       if (data.response) {
         const finalHistory = [
           ...updatedHistory,
-          { sender: 'agent' as const, text: data.response }
+          {
+            sender: 'agent' as const,
+            text: data.response,
+            mediaType: data.mediaType,
+            mediaUrl: data.mediaUrl,
+            codeDetails: data.codeDetails,
+            isQuotaDegraded: data.isQuotaDegraded,
+            audioBase64: data.audio
+          }
         ];
         updateCustomerHistory(selectedCustomer.id, finalHistory);
       }
@@ -288,20 +298,45 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
   };
 
   return (
-    <div className="space-y-8 animate-fade-in py-4">
+    <div className="w-full bg-[#14100E]/50 backdrop-blur-xl border border-[#DCD6CD]/20 rounded-3xl p-6 md:p-8 space-y-8 animate-fade-in shadow-2xl">
+      {/* GEOS Organic Image Banner */}
+      <div className="relative w-full h-44 sm:h-52 overflow-hidden rounded-[36px_12px_36px_12px] border border-[#DCD6CD]/20 shadow-xl group">
+        <img 
+          src={archGeos} 
+          alt="Архитектура и Каналы" 
+          className="w-full h-full object-cover filter brightness-90 contrast-110 group-hover:scale-105 transition-transform duration-700" 
+          referrerPolicy="no-referrer"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#14100E] via-black/20 to-transparent" />
+        <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] uppercase tracking-[0.25em] text-[#C5A059] font-medium font-serif-geos block">
+              МОДУЛЬ СВЯЗИ · 24/7
+            </span>
+            <h3 className="font-serif-geos text-xl md:text-2xl text-[#EAE6DF] font-light">
+              Шлюз мгновенных коммуникаций
+            </h3>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A1614]/80 backdrop-blur-md border border-[#DCD6CD]/20 text-xs text-[#DCD6CD]">
+            <span className={`w-2 h-2 rounded-full ${isBotActive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            <span>{isBotActive ? 'Бот на связи' : 'Демо режим'}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/10">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#DCD6CD]/10">
         <div>
-          <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight">Симулятор каналов продаж</h2>
-          <p className="text-sm text-slate-400 mt-1 font-light">
+          <h2 className="text-2xl md:text-3xl font-serif-geos font-light text-[#EAE6DF] tracking-tight">Симулятор каналов продаж</h2>
+          <p className="text-sm text-[#B0A79E] mt-1 font-light">
             Проверка ответов ИИ-помощника в мессенджерах, соцсетях и по почте.
           </p>
         </div>
 
         {/* Small Bot Connection Indicator */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/10 self-start md:self-auto">
+        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#1C1816]/70 border border-[#DCD6CD]/15 self-start md:self-auto">
           <span className={`w-2 h-2 rounded-full ${isBotActive ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-          <span className="text-xs text-slate-400 font-normal">
+          <span className="text-xs text-[#B0A79E] font-normal">
             {isBotActive ? 'Бот на связи' : 'Бот не подключён'}
           </span>
         </div>
@@ -320,8 +355,8 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
                   onClick={() => setActiveChannel(ch.id as any)}
                   className={`w-full flex items-center gap-3.5 p-3 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
                     activeChannel === ch.id
-                      ? 'border-[#FF6B00] bg-[#FF6B00]/10 text-white shadow-[0_0_20px_rgba(255,107,0,0.15)] font-semibold'
-                      : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.06] hover:border-white/20 hover:-translate-y-0.5 shadow-sm'
+                      ? 'border-[#C5A059] bg-[#C5A059]/15 text-[#EAE6DF] font-medium shadow-md'
+                      : 'border-[#DCD6CD]/10 bg-[#1C1816]/60 text-[#B0A79E] hover:bg-[#231E1B] hover:border-[#DCD6CD]/20 shadow-sm'
                   }`}
                 >
                   <div
@@ -419,6 +454,43 @@ export const ChannelSimulator: React.FC<ChannelSimulatorProps> = ({
                       }`}
                     >
                       <div className="whitespace-pre-line">{msg.text}</div>
+
+                      {/* Multimodal Image Rendering */}
+                      {msg.mediaUrl && (
+                        <div className="mt-3 overflow-hidden rounded-lg border border-white/20 shadow-lg">
+                          <img 
+                            src={msg.mediaUrl} 
+                            alt="Сгенерированное изображение" 
+                            className="w-full max-h-72 object-cover" 
+                            referrerPolicy="no-referrer"
+                          />
+                        </div>
+                      )}
+
+                      {/* Multimodal Code Block Rendering */}
+                      {msg.codeDetails && (
+                        <div className="mt-3 overflow-hidden rounded-lg border border-[#C5A059]/30 bg-[#0E0C0A] text-[#EAE6DF]">
+                          <div className="flex items-center justify-between px-3 py-1.5 bg-[#1C1816] border-b border-[#C5A059]/20 text-[10px] text-[#C5A059] font-mono">
+                            <span>📄 {msg.codeDetails.filename} ({msg.codeDetails.language})</span>
+                            <button
+                              onClick={() => navigator.clipboard.writeText(msg.codeDetails?.code || '')}
+                              className="hover:text-white transition-colors cursor-pointer"
+                            >
+                              Скопировать
+                            </button>
+                          </div>
+                          <pre className="p-3 text-[11px] font-mono overflow-x-auto leading-normal text-amber-200/90 whitespace-pre">
+                            <code>{msg.codeDetails.code}</code>
+                          </pre>
+                        </div>
+                      )}
+
+                      {/* Quota degradation badge */}
+                      {msg.isQuotaDegraded && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-medium">
+                          <span>⚡ Режим мягкой адаптации квоты API</span>
+                        </div>
+                      )}
 
                       {msg.sender === 'agent' && (
                         <div className="mt-3 pt-2 border-t border-white/10 flex justify-between items-center text-[10px] text-slate-400 font-light">

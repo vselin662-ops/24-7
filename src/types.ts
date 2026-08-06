@@ -54,7 +54,16 @@ export interface SimulatedCustomer {
   avatar: string;
   lastMessage: string;
   timestamp: string;
-  history: { sender: 'customer' | 'agent'; text: string; hasAudio?: boolean; audioBase64?: string }[];
+  history: {
+    sender: 'customer' | 'agent';
+    text: string;
+    hasAudio?: boolean;
+    audioBase64?: string;
+    mediaType?: 'image' | 'code' | 'voice' | 'video' | 'text';
+    mediaUrl?: string;
+    codeDetails?: { language: string; filename: string; code: string; explanation: string };
+    isQuotaDegraded?: boolean;
+  }[];
 }
 
 export interface ModerationItem {

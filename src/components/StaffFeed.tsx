@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, DollarSign, PenTool, BarChart3, CheckSquare, Activity } from 'lucide-react';
+// @ts-ignore
+import natureForest from '../assets/images/nature_forest_1785822465712.jpg';
 
 export interface FeedEvent {
   id: string;
@@ -79,23 +81,48 @@ export const StaffFeed: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in py-4 font-sans text-white">
+    <div className="w-full bg-[#14100E]/50 backdrop-blur-xl border border-[#DCD6CD]/20 rounded-3xl p-6 md:p-8 space-y-8 animate-fade-in font-sans text-white shadow-2xl">
+      {/* GEOS Organic Pebble Photo Banner */}
+      <div className="relative w-full h-44 sm:h-52 overflow-hidden rounded-[12px_36px_12px_36px] border border-[#DCD6CD]/20 shadow-xl group">
+        <img 
+          src={natureForest} 
+          alt="Лента Штаба и Природа" 
+          className="w-full h-full object-cover filter brightness-90 contrast-110 group-hover:scale-105 transition-transform duration-700" 
+          referrerPolicy="no-referrer"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#14100E] via-black/20 to-transparent" />
+        <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] uppercase tracking-[0.25em] text-[#C5A059] font-medium font-serif-geos block">
+              ЖИВОЙ РЕЕСТР · 24/7
+            </span>
+            <h3 className="font-serif-geos text-xl md:text-2xl text-[#EAE6DF] font-light">
+              Лента активности цифрового штаба
+            </h3>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A1614]/80 backdrop-blur-md border border-[#DCD6CD]/20 text-xs text-[#DCD6CD]">
+            <Activity className="w-3.5 h-3.5 text-[#C5A059] animate-spin" />
+            <span>Непрерывный мониторинг</span>
+          </div>
+        </div>
+      </div>
+
       {/* Top Live Summary Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-md">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#1C1816]/60 border border-[#DCD6CD]/15 backdrop-blur-md">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
+          <h2 className="text-xl sm:text-2xl font-serif-geos font-light tracking-tight text-[#EAE6DF]">
             Сегодня штаб закрыл {doneCount} задач
           </h2>
-          <p className="text-xs text-slate-400 mt-1 font-light">
+          <p className="text-xs text-[#B0A79E] mt-1 font-light">
             Автоматическая хроника действий цифровых сотрудников
           </p>
         </div>
 
         {pendingCount > 0 ? (
-          <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FF6B00]/10 border border-[#FF6B00]/30 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#FF6B00] animate-ping" />
-            <span className="text-xs font-semibold text-[#FF6B00]">
-              <span className="text-sm font-bold mr-1">{pendingCount}</span> ждут тебя
+          <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#C5A059]/15 border border-[#C5A059]/40 shrink-0">
+            <span className="w-2 h-2 rounded-full bg-[#C5A059] animate-ping" />
+            <span className="text-xs font-medium text-[#EAE6DF]">
+              <span className="text-sm font-bold mr-1 text-[#C5A059]">{pendingCount}</span> ждут тебя
             </span>
           </div>
         ) : (

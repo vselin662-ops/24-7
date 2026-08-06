@@ -155,47 +155,47 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
   return (
     <div className="w-full max-w-2xl mx-auto px-4 py-8 font-modern">
       <div className="text-center mb-8">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/20 text-white mb-3 text-xs font-semibold shadow-[0_0_10px_rgba(255,255,255,0.1)]">
-          <Compass className="h-4 w-4" />
-          <span>Ваш Персональный Голосовой Квест</span>
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#C5A059]/15 border border-[#C5A059]/30 text-[#EAE6DF] mb-3 text-xs font-medium shadow-md backdrop-blur-md">
+          <Compass className="h-4 w-4 text-[#C5A059]" />
+          <span className="font-serif-geos tracking-wide uppercase text-[11px] text-[#C5A059]">СЕЛИНИ · ГОЛОСОВОЙ КВЕСТ</span>
         </div>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight">Запустите свой ИИ-штаб</h1>
-        <p className="text-slate-400 mt-2 text-sm max-w-md mx-auto">
+        <h1 className="text-3xl md:text-4xl font-serif-geos font-light text-[#EAE6DF] tracking-wide">Запустите свой ИИ-штаб</h1>
+        <p className="text-[#B0A79E] mt-2 text-sm max-w-md mx-auto font-light leading-relaxed">
           Мы составили пошаговый план запуска на основе вашего голосового запроса. Настройте параметры ниже.
         </p>
       </div>
 
       {/* Progress Tracker */}
       <div className="mb-6">
-        <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
+        <div className="flex justify-between items-center text-xs text-[#8E847A] mb-2 font-serif-geos">
           <span>Прогресс настройки</span>
-          <span className="font-semibold text-white">{progressPercent}%</span>
+          <span className="font-bold text-[#C5A059]">{progressPercent}%</span>
         </div>
-        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/5">
+        <div className="h-1.5 w-full bg-[#181412] rounded-full overflow-hidden border border-[#DCD6CD]/10">
           <div 
-            className="h-full bg-white transition-all duration-500 shadow-[0_0_10px_rgba(255,255,255,0.5)]"
+            className="h-full bg-gradient-to-r from-[#C5A059] to-[#D8B46E] transition-all duration-500 shadow-[0_0_12px_rgba(197,160,89,0.4)]"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
       </div>
 
       {/* Step Steps Indicator */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-6">
+      <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-6 custom-scrollbar">
         {steps.map((s, idx) => {
           const isActive = idx === currentIndex;
           const isDone = s.completed;
           return (
             <div 
               key={s.id} 
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs whitespace-nowrap transition-all duration-300 ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs whitespace-nowrap transition-all duration-300 ${
                 isActive 
-                  ? 'bg-white/20 border-white/40 text-white font-medium shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
+                  ? 'bg-[#C5A059]/15 border-[#C5A059]/40 text-[#EAE6DF] font-medium shadow-md' 
                   : isDone 
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                    : 'bg-white/5 border-white/5 text-slate-400'
+                    ? 'selin-status-mint font-medium' 
+                    : 'bg-[#181412]/60 border-[#DCD6CD]/10 text-[#8E847A]'
               }`}
             >
-              {isDone ? <CheckCircle2 className="h-3 w-3" /> : <div className="h-1.5 w-1.5 rounded-full bg-current" />}
+              {isDone ? <CheckCircle2 className="h-3.5 w-3.5 text-[#30D158]" /> : <div className="h-1.5 w-1.5 rounded-full bg-current" />}
               <span>Шаг {idx + 1}</span>
             </div>
           );
@@ -203,58 +203,58 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
       </div>
 
       {currentStep && (
-        <GlassPanel className="p-6 border-white/10 relative overflow-hidden" id={`quest_step_${currentStep.id}`}>
-          <div className="absolute top-0 right-0 p-4 text-slate-600/30 text-5xl font-extrabold select-none">
+        <GlassPanel className="p-6 md:p-8 border-[#DCD6CD]/15 relative overflow-hidden rounded-3xl bg-[#181412]/85 shadow-2xl backdrop-blur-2xl" id={`quest_step_${currentStep.id}`}>
+          <div className="absolute top-0 right-0 p-6 text-[#C5A059]/10 text-6xl font-serif-geos font-light select-none">
             0{currentIndex + 1}
           </div>
 
           <div className="flex items-start gap-4 mb-6">
-            <div className="p-3 rounded-xl bg-white/10 border border-white/20 text-white">
+            <div className="p-3 rounded-2xl bg-[#28221F] border border-[#C5A059]/30 text-[#C5A059] shadow-md">
               <Sparkles className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white">{currentStep.title}</h2>
-              <p className="text-slate-400 text-sm mt-1">{currentStep.description}</p>
+              <h2 className="text-2xl font-serif-geos font-light text-[#EAE6DF] tracking-wide">{currentStep.title}</h2>
+              <p className="text-[#B0A79E] text-sm mt-1 font-light leading-relaxed">{currentStep.description}</p>
             </div>
           </div>
 
           {/* Interactive Form Controls for specific steps */}
-          <div className="space-y-4 border-t border-white/5 pt-5 mb-6">
+          <div className="space-y-4 border-t border-[#DCD6CD]/10 pt-5 mb-6">
             {currentIndex === 0 && (
               <div className="space-y-3">
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                <label className="block text-xs font-medium text-[#C5A059] uppercase tracking-wider font-serif-geos">
                   Основная информация о бизнесе
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <span className="text-xxs text-slate-500 block mb-1">Название компании</span>
+                    <span className="text-[11px] text-[#8E847A] block mb-1">Название компании</span>
                     <input 
                       type="text" 
                       value={businessName} 
                       onChange={(e) => setBusinessName(e.target.value)} 
                       placeholder="Например, ProЦветы" 
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/50"
+                      className="w-full bg-[#231E1B] border border-[#DCD6CD]/15 rounded-xl px-3.5 py-2.5 text-sm text-[#EAE6DF] focus:outline-none focus:border-[#C5A059]/60 transition-colors"
                     />
                   </div>
                   <div>
-                    <span className="text-xxs text-slate-500 block mb-1">Сфера деятельности</span>
+                    <span className="text-[11px] text-[#8E847A] block mb-1">Сфера деятельности</span>
                     <input 
                       type="text" 
                       value={industry} 
                       onChange={(e) => setIndustry(e.target.value)} 
                       placeholder="Например, доставка цветов" 
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/50"
+                      className="w-full bg-[#231E1B] border border-[#DCD6CD]/15 rounded-xl px-3.5 py-2.5 text-sm text-[#EAE6DF] focus:outline-none focus:border-[#C5A059]/60 transition-colors"
                     />
                   </div>
                 </div>
                 <div>
-                  <span className="text-xxs text-slate-500 block mb-1">Имя владельца</span>
+                  <span className="text-[11px] text-[#8E847A] block mb-1">Имя владельца</span>
                   <input 
                     type="text" 
                     value={ownerName} 
                     onChange={(e) => setOwnerName(e.target.value)} 
                     placeholder="Ваше имя" 
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-white/50"
+                    className="w-full bg-[#231E1B] border border-[#DCD6CD]/15 rounded-xl px-3.5 py-2.5 text-sm text-[#EAE6DF] focus:outline-none focus:border-[#C5A059]/60 transition-colors"
                   />
                 </div>
               </div>
@@ -262,17 +262,17 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
 
             {currentIndex === 1 && (
               <div className="space-y-3">
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                <label className="block text-xs font-medium text-[#C5A059] uppercase tracking-wider font-serif-geos">
                   Приветственное сообщение (Ресивер Анна)
                 </label>
                 <textarea 
                   value={welcomeText} 
                   onChange={(e) => setWelcomeText(e.target.value)} 
                   rows={3}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-white/50"
+                  className="w-full bg-[#231E1B] border border-[#DCD6CD]/15 rounded-xl p-3.5 text-sm text-[#EAE6DF] focus:outline-none focus:border-[#C5A059]/60 transition-colors font-light leading-relaxed"
                   placeholder="Введите текст приветствия..."
                 />
-                <span className="text-xxs text-slate-500 block">
+                <span className="text-[11px] text-[#8E847A] block font-light">
                   Этот текст будет отправлен клиентам в первую очередь, когда они начнут диалог с вашим ботом.
                 </span>
               </div>
@@ -281,7 +281,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
             {currentIndex === 2 && (
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                  <label className="block text-xs font-medium text-[#C5A059] uppercase tracking-wider mb-2 font-serif-geos">
                     Каналы связи штаба
                   </label>
                   <div className="flex flex-wrap gap-2">
@@ -298,10 +298,10 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                               setSelectedChannels([...selectedChannels, ch]);
                             }
                           }}
-                          className={`px-3 py-1.5 rounded-lg border text-xs capitalize font-medium transition-all duration-200 ${
+                          className={`px-3.5 py-2 rounded-xl border text-xs capitalize font-medium transition-all duration-200 cursor-pointer ${
                             isSelected 
-                              ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
-                              : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
+                              ? 'bg-[#C5A059]/20 border-[#C5A059]/50 text-[#EAE6DF] shadow-md' 
+                              : 'bg-[#231E1B] border-[#DCD6CD]/10 text-[#8E847A] hover:border-[#DCD6CD]/25'
                           }`}
                         >
                           {ch}
@@ -312,7 +312,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                  <label className="block text-xs font-medium text-[#C5A059] uppercase tracking-wider mb-2 font-serif-geos">
                     Тон общения ИИ-агентов
                   </label>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -321,10 +321,10 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                         key={t}
                         type="button"
                         onClick={() => setSelectedTone(t)}
-                        className={`px-2 py-1.5 rounded-lg border text-center text-xs font-medium transition-all duration-200 ${
+                        className={`px-2.5 py-2 rounded-xl border text-center text-xs font-medium transition-all duration-200 cursor-pointer ${
                           selectedTone === t 
-                            ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
-                            : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
+                            ? 'bg-[#C5A059]/20 border-[#C5A059]/50 text-[#EAE6DF] shadow-md' 
+                            : 'bg-[#231E1B] border-[#DCD6CD]/10 text-[#8E847A] hover:border-[#DCD6CD]/25'
                         }`}
                       >
                         {t === 'friendly' ? 'Дружелюбный' :
@@ -340,39 +340,39 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
 
             {currentIndex > 2 && (
               <div className="space-y-3">
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                <label className="block text-xs font-medium text-[#C5A059] uppercase tracking-wider font-serif-geos">
                   Уровень автономности решений
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => setAutonomyLevel('full')}
-                    className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all duration-200 ${
+                    className={`flex items-start gap-3 p-3.5 rounded-2xl border text-left transition-all duration-200 cursor-pointer ${
                       autonomyLevel === 'full' 
-                        ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
-                        : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
+                        ? 'bg-[#C5A059]/20 border-[#C5A059]/50 text-[#EAE6DF] shadow-md' 
+                        : 'bg-[#231E1B] border-[#DCD6CD]/10 text-[#8E847A] hover:border-[#DCD6CD]/25'
                     }`}
                   >
-                    <Radio className="h-4 w-4 text-white mt-0.5 shrink-0" />
+                    <Radio className="h-4 w-4 text-[#C5A059] mt-0.5 shrink-0" />
                     <div>
-                      <span className="text-xs font-bold block text-white">Полная автономия</span>
-                      <span className="text-xxs text-slate-400 mt-1 block">Агенты отвечают клиентам автоматически 24/7.</span>
+                      <span className="text-xs font-medium block text-[#EAE6DF]">Полная автономия</span>
+                      <span className="text-[11px] text-[#8E847A] mt-1 block font-light">Агенты отвечают клиентам автоматически 24/7.</span>
                     </div>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setAutonomyLevel('human-supervised')}
-                    className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all duration-200 ${
+                    className={`flex items-start gap-3 p-3.5 rounded-2xl border text-left transition-all duration-200 cursor-pointer ${
                       autonomyLevel === 'human-supervised' 
-                        ? 'bg-white/20 border-white/50 text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
-                        : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
+                        ? 'bg-[#C5A059]/20 border-[#C5A059]/50 text-[#EAE6DF] shadow-md' 
+                        : 'bg-[#231E1B] border-[#DCD6CD]/10 text-[#8E847A] hover:border-[#DCD6CD]/25'
                     }`}
                   >
-                    <Sliders className="h-4 w-4 text-white mt-0.5 shrink-0" />
+                    <Sliders className="h-4 w-4 text-[#C5A059] mt-0.5 shrink-0" />
                     <div>
-                      <span className="text-xs font-bold block text-white">С подтверждением</span>
-                      <span className="text-xxs text-slate-400 mt-1 block">Ответы отправляются в очередь модерации на проверку.</span>
+                      <span className="text-xs font-medium block text-[#EAE6DF]">С подтверждением</span>
+                      <span className="text-[11px] text-[#8E847A] mt-1 block font-light">Ответы отправляются в очередь модерации на проверку.</span>
                     </div>
                   </button>
                 </div>
@@ -381,13 +381,13 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
           </div>
 
           <div className="flex justify-between items-center">
-            <span className="text-xxs text-slate-500">
+            <span className="text-xs text-[#8E847A] font-serif-geos">
               Шаг {currentIndex + 1} из {steps.length}
             </span>
-            <NeonButton 
+            <button 
               onClick={handleNext} 
               disabled={loading}
-              className="flex items-center gap-1.5"
+              className="px-6 py-3 rounded-full bg-[#DCD6CD] hover:bg-[#EAE6DF] text-[#1A1614] font-medium text-xs uppercase tracking-widest transition-all duration-300 shadow-md flex items-center gap-2 cursor-pointer font-serif-geos"
             >
               {loading ? (
                 <span>Запуск...</span>
@@ -402,7 +402,7 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                   <ArrowRight className="h-4 w-4" />
                 </>
               )}
-            </NeonButton>
+            </button>
           </div>
         </GlassPanel>
       )}

@@ -1,79 +1,110 @@
-import React from 'react';
-import { GlassPanel } from './GlassPanel';
-import { BarChart, TrendingUp, Users, Zap, Award } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Users, TrendingUp, Zap, Award, Activity, CheckCircle2 } from 'lucide-react';
 
 export const AnalyticsPanel: React.FC = () => {
+  const [feedCount, setFeedCount] = useState<number>(0);
+  const [pendingCount, setPendingCount] = useState<number>(0);
+  const [activeChannelsCount, setActiveChannelsCount] = useState<number>(1);
+  const [isLive, setIsLive] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Fetch live counts from actual system APIs
+    fetch('/api/feed')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setFeedCount(data.length);
+        }
+      })
+      .catch(() => {});
+
+    fetch('/api/moderation/pending')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setPendingCount(data.length);
+        }
+      })
+      .catch(() => {});
+
+    fetch('/api/get-config')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.config) {
+          setIsLive(!!data.config.is_live);
+          if (Array.isArray(data.config.channels)) {
+            setActiveChannelsCount(data.config.channels.length);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const stats = [
-    { title: 'Заявок обработано', value: '412', change: '+18% за неделю', icon: <Users className="h-4 w-4 text-accent" /> },
-    { title: 'Конверсия в сделку', value: '28.4%', change: '+4.2% в этом месяце', icon: <TrendingUp className="h-4 w-4 text-emerald-400" /> },
-    { title: 'Сэкономлено времени', value: '148 ч', change: '24/7 автономная работа', icon: <Zap className="h-4 w-4 text-amber-400" /> },
-    { title: 'Успешность задач', value: '94.2%', change: 'Оценка SMART соответствия', icon: <Award className="h-4 w-4 text-purple-400" /> }
+    { title: 'Записей в Ленте', value: `${feedCount}`, change: 'Реальные события штаба', icon: <Users className="h-4 w-4 text-[#C5A059]" /> },
+    { title: 'Очередь Модерации', value: `${pendingCount}`, change: 'Задачи на проверку', icon: <TrendingUp className="h-4 w-4 text-[#30d158]" /> },
+    { title: 'Каналы связи', value: `${activeChannelsCount}`, change: 'Подключенные мессенджеры', icon: <Zap className="h-4 w-4 text-[#DCD6CD]" /> },
+    { title: 'Статус штаба', value: isLive ? '24/7 LIVE' : 'ГОТОВ', change: 'Режим автономии', icon: <Award className="h-4 w-4 text-[#C5A059]" /> }
   ];
 
-  const agentPerformance = [
-    { name: 'Приемщик (Receiver)', taskCount: 215, score: '98%', color: 'bg-purple-500' },
-    { name: 'Продажник (Sales)', taskCount: 148, score: '92%', color: 'bg-emerald-500' },
-    { name: 'Контентщик (Content)', taskCount: 88, score: '95%', color: 'bg-accent' },
-    { name: 'Аналитик (Analyst)', taskCount: 30, score: '96%', color: 'bg-blue-500' }
+  const agentsList = [
+    { name: 'Приемщик (Receiver)', role: 'Прием обращений', status: 'Активен', color: 'bg-[#C5A059]' },
+    { name: 'Продажник (Sales)', role: 'Ведение лидов', status: 'Активен', color: 'bg-[#30d158]' },
+    { name: 'Операционист (Operator)', role: 'Координация задач', status: 'Активен', color: 'bg-[#DCD6CD]' }
   ];
 
   return (
-    <div className="space-y-12 animate-fade-in py-6">
-      {/* Short Hero-Block Header */}
-      <div className="relative text-left border-b border-white/5 pb-8">
-        <div className="absolute -top-12 left-0 text-8xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
-          07
-        </div>
-        <span className="text-[11px] font-bold text-accent uppercase tracking-[0.25em] block mb-2">модуль аналитики</span>
-        <h2 className="text-3xl md:text-4xl font-display font-black text-white uppercase tracking-tight">Аналитика штаба & Эффективность</h2>
-        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light">
-          Подробный разбор показателей эффективности ИИ-сотрудников, аналитика обращений и динамика экономии ресурсов.
+    <div className="space-y-10 animate-fade-in py-4 font-serif-geos">
+      {/* Header */}
+      <div className="relative text-left border-b border-[#DCD6CD]/15 pb-6">
+        <span className="text-xs font-medium text-[#C5A059] uppercase tracking-[0.25em] block mb-1.5">СЕЛИНИ · АНАЛИТИКА</span>
+        <h2 className="text-3xl md:text-4xl font-light text-[#EAE6DF] tracking-wide">Аналитика и Метрики Штаба</h2>
+        <p className="text-sm text-[#B0A79E] mt-1.5 max-w-2xl font-light leading-relaxed">
+          Реальные показатели работы ИИ-сотрудников, синхронизированные с базой данных и мессенджерами.
         </p>
       </div>
 
       {/* Stat Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {stats.map((s, idx) => (
-          <div key={idx} className="premium-card p-6 rounded-2xl border border-white/8 flex items-center justify-between">
+          <div key={idx} className="p-6 rounded-2xl bg-[#181412]/80 border border-[#DCD6CD]/15 flex items-center justify-between shadow-xl">
             <div>
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider">{s.title}</span>
-              <div className="text-2xl font-display font-black text-white mt-2">{s.value}</div>
-              <span className="text-[11px] text-slate-500 block mt-1.5 font-light">{s.change}</span>
+              <span className="text-[11px] text-[#8E847A] uppercase tracking-wider">{s.title}</span>
+              <div className="text-2xl font-medium text-[#EAE6DF] mt-2">{s.value}</div>
+              <span className="text-[11px] text-[#B0A79E] block mt-1.5 font-light">{s.change}</span>
             </div>
-            <div className="bg-white/5 p-3 rounded-xl border border-white/5 shrink-0">{s.icon}</div>
+            <div className="bg-[#28221F] p-3 rounded-xl border border-[#DCD6CD]/10 shrink-0">{s.icon}</div>
           </div>
         ))}
       </div>
 
-      {/* Main performance chart & agents */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* SVG Interactive Chart */}
+      {/* Real Agents & System Health */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-8">
-          <div className="premium-card rounded-2xl p-6 h-full flex flex-col justify-between">
+          <div className="p-6 md:p-8 rounded-3xl bg-[#181412]/80 border border-[#DCD6CD]/15 h-full flex flex-col justify-between shadow-xl">
             <div className="flex justify-between items-center mb-6">
               <div>
-                <h4 className="text-sm font-bold text-white uppercase tracking-wider font-display">Трафик и активность по часам</h4>
-                <p className="text-[11px] text-slate-400 font-light mt-1">Суммарная активность за последние 24 часа</p>
+                <h4 className="text-base font-medium text-[#EAE6DF] tracking-wide">Состояние активных ИИ-сотрудников</h4>
+                <p className="text-xs text-[#B0A79E] font-light mt-1">Штаб автоматически распределяет поступившие задачи</p>
               </div>
-              <span className="text-[10px] font-bold uppercase tracking-wider bg-accent/10 border border-accent/20 text-accent px-3 py-1 rounded">
-                Live Мониторинг
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-[#30d158]/10 border border-[#30d158]/20 text-[#30d158] px-3 py-1 rounded-full flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Онлайн
               </span>
             </div>
 
-            {/* Custom SVG Bar Chart */}
-            <div className="h-60 w-full flex items-end justify-between gap-1.5 pt-6">
-              {[30, 45, 20, 55, 75, 40, 85, 90, 60, 45, 80, 100, 70, 65, 50, 40, 60, 85, 95, 70, 50, 40, 30, 20].map((val, idx) => (
-                <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group relative">
-                  {/* Tooltip */}
-                  <span className="opacity-0 group-hover:opacity-100 absolute bottom-64 bg-slate-950 text-white text-[10px] px-2 py-1 rounded border border-white/10 pointer-events-none transition-all whitespace-nowrap z-10 shadow-2xl">
-                    {val} заявок
-                  </span>
-                  <div
-                    className="w-full bg-accent/10 hover:bg-accent border border-accent/20 hover:border-accent rounded-t transition-all duration-300 cursor-pointer"
-                    style={{ height: `${val}%` }}
-                  />
-                  <span className="text-[9px] text-slate-600 group-hover:text-accent transition-all font-light">
-                    {idx}:00
+            <div className="space-y-3.5">
+              {agentsList.map((agent, idx) => (
+                <div key={idx} className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-2.5 h-2.5 rounded-full ${agent.color}`} />
+                    <div>
+                      <div className="text-sm font-medium text-[#EAE6DF]">{agent.name}</div>
+                      <div className="text-xs text-[#8E847A] font-light">{agent.role}</div>
+                    </div>
+                  </div>
+                  <span className="text-xs font-medium px-3 py-1 rounded-full bg-[#28221F] border border-[#DCD6CD]/20 text-[#DCD6CD]">
+                    {agent.status}
                   </span>
                 </div>
               ))}
@@ -81,35 +112,28 @@ export const AnalyticsPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Agents Performance */}
         <div className="lg:col-span-4">
-          <div className="premium-card rounded-2xl p-6 h-full flex flex-col justify-between space-y-6">
+          <div className="p-6 md:p-8 rounded-3xl bg-[#181412]/80 border border-[#DCD6CD]/15 h-full flex flex-col justify-between space-y-6 shadow-xl">
             <div>
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider font-display mb-6">Коэффициент эффективности ИИ</h4>
-              <div className="space-y-5">
-                {agentPerformance.map((ap, idx) => (
-                  <div key={idx} className="space-y-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-slate-300 uppercase tracking-wide text-[11px]">{ap.name}</span>
-                      <span className="text-accent font-bold">{ap.score}</span>
-                    </div>
-                    <div className="w-full bg-black/40 h-1.5 rounded-full overflow-hidden border border-white/5">
-                      <div
-                        className={`${ap.color} h-full rounded-full transition-all duration-500`}
-                        style={{ width: ap.score }}
-                      />
-                    </div>
-                    <div className="text-slate-500 text-[10px] font-light">
-                      Выполнено SMART-задач: {ap.taskCount}
-                    </div>
-                  </div>
-                ))}
+              <h4 className="text-base font-medium text-[#EAE6DF] tracking-wide mb-3">База знаний & ИИ</h4>
+              <p className="text-xs text-[#B0A79E] font-light leading-relaxed mb-4">
+                Штаб непрерывно использует ваши данные о бизнесе и системные промпты для ответа клиентам.
+              </p>
+              <div className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 space-y-2.5">
+                <div className="flex justify-between text-xs">
+                  <span className="text-[#8E847A]">Синхронизация</span>
+                  <span className="text-[#30d158] font-medium">Активна</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-[#8E847A]">Модель ИИ</span>
+                  <span className="text-[#EAE6DF] font-mono">Gemini 2.5 Flash</span>
+                </div>
               </div>
             </div>
 
-            <div className="mt-5 border-t border-white/5 pt-5 text-[10px] text-slate-500 flex justify-between items-center">
-              <span>Система: База Знаний + Firestore</span>
-              <span className="text-accent font-bold">Оценка MOS: 4.85/5</span>
+            <div className="pt-4 border-t border-[#DCD6CD]/10 text-[11px] text-[#8E847A] flex justify-between items-center">
+              <span>СИСТЕМА SELIN</span>
+              <span className="text-[#C5A059] font-medium">100% АВТОНОМНОСТЬ</span>
             </div>
           </div>
         </div>

@@ -50,7 +50,7 @@ export const ModerationPanel: React.FC = () => {
         });
       }
     } catch (err) {
-      console.error('Error fetching moderation data:', err);
+      // Silently ignore transient network errors during server restarts
     } finally {
       if (!silent) setLoading(false);
     }

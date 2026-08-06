@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import { AppConfig, Agent } from '../types';
+// @ts-ignore
+import bgCathedral from '../assets/images/mountain_forest_bg_1785821902731.jpg';
 
 interface AgentPlan {
   agent: string;
@@ -252,245 +254,163 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
   return (
     <div 
-      className="w-full min-h-[600px] text-white rounded-3xl border border-white/10 p-8 md:p-12 font-modern relative overflow-hidden transition-all duration-300 shadow-[0_24px_70px_rgba(0,0,0,0.85)]"
-      style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.04) 0%, rgba(8, 8, 12, 0.95) 75%)' }}
+      className="w-full min-h-[600px] text-white rounded-3xl border border-[#DCD6CD]/20 p-6 md:p-10 font-modern relative overflow-hidden transition-all duration-300 shadow-[0_24px_70px_rgba(0,0,0,0.75)] bg-[#14100E]/80 backdrop-blur-2xl"
     >
       {/* INTRO SCREEN */}
       {questStep === 'intro' && processingStatus !== 'clarifying' && (
-        <section className="relative w-full min-h-[520px] rounded-2xl p-6 sm:p-8 md:p-12 text-left overflow-hidden border border-white/10 bg-gradient-to-b from-[#0e0e12] to-[#050507]">
-          {/* Thin Grid Background */}
+        <section className="relative w-full rounded-2xl p-6 sm:p-8 md:p-12 text-center overflow-hidden border border-[#DCD6CD]/15 bg-[#1C1816]/70 backdrop-blur-xl shadow-2xl">
+          {/* Ambient Warm Golden Glow */}
           <div 
-            className="absolute inset-0 pointer-events-none opacity-40"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none rounded-full"
             style={{
-              backgroundImage: `linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px)`,
-              backgroundSize: '48px 48px',
-              maskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)',
-              WebkitMaskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)'
-            }}
-          />
-          {/* Soft ambient white light top right */}
-          <div 
-            className="absolute top-0 right-0 w-[400px] h-[400px] pointer-events-none rounded-full"
-            style={{
-              background: 'radial-gradient(circle at top right, rgba(255,255,255,0.04) 0%, transparent 70%)'
+              background: 'radial-gradient(circle, rgba(197, 160, 89, 0.12) 0%, transparent 70%)'
             }}
           />
 
-          <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
-            {/* Left Column (Text & Mic) */}
-            <div className="space-y-6 text-left">
-              {/* Micro-label */}
-              <div className="flex items-center gap-2 text-[11px] text-[#94A3B8] font-normal">
-                <span className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_#FFFFFF] shrink-0" />
-                <span>Selin — автономный штаб</span>
+          <div className="relative z-10 max-w-xl mx-auto space-y-8 flex flex-col items-center">
+            
+            {/* Organic Pebble Nature Frame - Clean Image */}
+            <div className="relative mx-auto w-full max-w-sm sm:max-w-md h-64 sm:h-72 overflow-hidden geos-pebble-1 border border-[#DCD6CD]/20 shadow-[0_25px_60px_rgba(0,0,0,0.85)] group transition-transform duration-700 hover:scale-[1.02]">
+              <img 
+                src={bgCathedral} 
+                alt="ИИ-Штаб SELIN" 
+                className="w-full h-full object-cover filter contrast-105 brightness-95 transition-transform duration-1000 group-hover:scale-110"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10" />
+              <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between text-[11px] font-serif-geos text-[#C5A059] bg-[#181412]/80 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-[#DCD6CD]/20">
+                <span>SELIN CORE</span>
+                <span className="text-[#30d158] font-bold">● ONLINE 24/7</span>
               </div>
+            </div>
 
-              {/* Headline */}
-              <h1 className="font-display font-bold text-4xl sm:text-5xl md:text-6xl text-white leading-[1.05] tracking-tight">
-                Отвечает клиентам<br />
-                вместо вас.
-              </h1>
-
-              {/* Subtitle */}
-              <p className="text-lg md:text-xl font-normal text-[#e2e8f0] font-display">
-                Голосом. Круглые сутки.
-              </p>
-
-              {/* Paragraph */}
-              <p className="text-sm md:text-base text-[#94A3B8] max-w-md font-light leading-relaxed">
-                Опишите бизнес голосом — за минуту соберу команду под вашу задачу и выведу её на линию.
-              </p>
-
-              {/* Recording Block */}
-              <div className="pt-2 flex flex-col sm:flex-row sm:items-center gap-4">
-                <div className="relative flex items-center justify-center shrink-0">
-                  {isRecording && (
-                    <span className="absolute inset-0 rounded-full bg-red-500/30 animate-ping pointer-events-none" />
-                  )}
-                  <button
-                    type="button"
-                    disabled={processingStatus !== 'idle'}
-                    onClick={toggleRecording}
-                    className={`w-22 h-22 md:w-24 md:h-24 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 border relative z-10 ${
-                      isRecording
-                        ? 'border-red-500 text-red-500 bg-red-500/10 shadow-[0_0_35px_rgba(239,68,68,0.4)] scale-105'
-                        : 'border-white/20 text-white bg-white/5 hover:bg-white/10 hover:border-white/50 shadow-[0_0_25px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95'
-                    }`}
-                  >
-                    {isRecording ? (
-                      <Icons.StopCircle className="w-7 h-7 text-red-500" />
-                    ) : (
-                      <Icons.Mic className="w-7 h-7 text-white" />
-                    )}
-                  </button>
-                </div>
-
-                <div className="text-xs text-[#94A3B8] font-normal leading-relaxed">
+            {/* Glass Voice Recording Action Button */}
+            <div className="w-full flex flex-col items-center justify-center gap-4 pt-2">
+              <div className="relative flex items-center justify-center">
+                {isRecording && (
+                  <span className="absolute inset-0 rounded-full bg-red-500/30 animate-ping pointer-events-none" />
+                )}
+                <button
+                  type="button"
+                  disabled={processingStatus !== 'idle'}
+                  onClick={toggleRecording}
+                  className={`px-8 py-4 rounded-full font-serif-geos text-base font-semibold tracking-wide transition-all duration-300 border flex items-center gap-3 cursor-pointer relative z-10 ${
+                    isRecording
+                      ? 'border-red-500 text-red-400 bg-red-500/15 shadow-[0_0_35px_rgba(239,68,68,0.5)] scale-105'
+                      : 'border-[#C5A059]/40 text-[#1A1614] bg-[#DCD6CD] hover:bg-[#EAE6DF] hover:scale-105 active:scale-95 shadow-[0_10px_30px_rgba(0,0,0,0.6)]'
+                  }`}
+                >
                   {isRecording ? (
-                    <span className="text-red-400 font-medium">слушаю — нажмите ещё раз, чтобы остановить</span>
-                  ) : processingStatus === 'transcribing' ? (
-                    <div className="flex items-center gap-2 text-slate-300">
-                      <Icons.Loader2 className="w-4 h-4 text-white animate-spin" />
-                      <span>Распознаю речь…</span>
-                    </div>
-                  ) : processingStatus === 'assembling' ? (
-                    <div className="flex items-center gap-2 text-slate-300">
-                      <Icons.Loader2 className="w-4 h-4 text-white animate-spin" />
-                      <span>Собираю штаб…</span>
-                    </div>
-                  ) : processingStatus === 'error' ? (
-                    <span className="text-red-400">не расслышал — повторите</span>
+                    <>
+                      <Icons.StopCircle className="w-6 h-6 text-red-500 animate-pulse" />
+                      <span>Остановить запись</span>
+                    </>
                   ) : (
-                    <span>нажмите и говорите 10–30 сек</span>
+                    <>
+                      <Icons.Mic className="w-6 h-6 text-[#1A1614]" />
+                      <span>ЗАПУСТИТЬ ГОЛОСОВОЙ ВВОД</span>
+                    </>
                   )}
-                </div>
-              </div>
-            </div>
-
-            {/* Vertical Divider for md screens */}
-            <div className="hidden md:block absolute left-1/2 top-10 bottom-10 w-[1px] bg-white/[0.08] -translate-x-1/2 pointer-events-none" />
-
-            {/* Right Column (Staff Registry) */}
-            <div className="md:pl-6 space-y-4 text-left">
-              <div className="text-[11px] text-[#94A3B8] font-normal">
-                Команда под вашу задачу
+                </button>
               </div>
 
-              <div className="rounded-xl border border-white/[0.08] bg-black/30 divide-y divide-white/[0.06] overflow-hidden">
-                {[
-                  { role: 'receiver', title: 'Приём обращений', icon: Icons.MessageSquare },
-                  { role: 'sales', title: 'Продажи', icon: Icons.DollarSign },
-                  { role: 'content', title: 'Контент', icon: Icons.PenTool },
-                  { role: 'analyst', title: 'Аналитика', icon: Icons.BarChart3 },
-                  { role: 'operator', title: 'Координация', icon: Icons.CheckSquare },
-                ].map((item, idx) => {
-                  const IconComp = item.icon;
-                  return (
-                    <div
-                      key={item.role}
-                      className="flex items-center justify-between p-3.5 px-4 transition-all duration-300 hover:bg-white/[0.03]"
-                      style={{
-                        animation: `fadeIn 0.3s ease-out ${idx * 0.06}s both`
-                      }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
-                        <IconComp className="w-4 h-4 text-slate-300 shrink-0" />
-                        <span className="text-sm font-medium text-white">{item.title}</span>
-                      </div>
-                      <span className="text-xs text-slate-400 font-mono">{item.role}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <p className="text-[11px] text-[#94A3B8] font-normal">
-                Состав уточнится после вашего описания.
-              </p>
-            </div>
-          </div>
-
-          {/* BALANCE CARD & ACTION GRID matching requested design */}
-          <div className="pt-8 space-y-6 relative z-10">
-            {/* Balance Card */}
-            <div className="balance-card">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <div className="balance-label">Баланс Обработок ИИ-Штаба</div>
-                  <div className="balance-main">3,420,000 ₽</div>
-                  <div className="balance-sub">
-                    <Icons.TrendingUp className="w-5 h-5 text-[#00D4FF]" />
-                    <span>+128 автономных обращений сегодня</span>
+              {/* Status indicator */}
+              <div className="text-xs text-[#B0A79E] font-serif-geos tracking-wider text-center min-h-[20px]">
+                {isRecording ? (
+                  <span className="text-red-400 font-medium animate-pulse">Слушаю вас — нажмите ещё раз для остановки</span>
+                ) : processingStatus === 'transcribing' ? (
+                  <div className="flex items-center justify-center gap-2 text-[#EAE6DF]">
+                    <Icons.Loader2 className="w-4 h-4 text-[#C5A059] animate-spin" />
+                    <span>Распознаю голос…</span>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="status-badge">24/7 ONLINE</span>
-                </div>
+                ) : processingStatus === 'assembling' ? (
+                  <div className="flex items-center justify-center gap-2 text-[#EAE6DF]">
+                    <Icons.Loader2 className="w-4 h-4 text-[#C5A059] animate-spin" />
+                    <span>Формирую ИИ-штаб…</span>
+                  </div>
+                ) : null}
               </div>
             </div>
 
-            {/* Action Grid */}
-            <div className="action-grid">
+            {/* Quick Modules Row */}
+            <div className="pt-8 border-t border-[#DCD6CD]/10 grid grid-cols-2 sm:grid-cols-4 gap-3">
               <button
                 type="button"
                 onClick={toggleRecording}
-                className="action-btn cursor-pointer"
+                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
               >
-                <div className="btn-icon">
-                  <Icons.Mic className="w-5 h-5" />
-                </div>
-                <span className="btn-label">Голосовой Приём</span>
+                <Icons.Mic className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <div className="text-xs font-semibold text-[#EAE6DF]">Голосовой Инженер</div>
+                <div className="text-[10px] text-[#8E847A]">Живой диалог</div>
               </button>
 
               <button
                 type="button"
                 onClick={() => setCurrentTab('simulator')}
-                className="action-btn cursor-pointer"
+                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
               >
-                <div className="btn-icon">
-                  <Icons.MessageSquare className="w-5 h-5" />
-                </div>
-                <span className="btn-label">Каналы Связи</span>
+                <Icons.MessageSquare className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <div className="text-xs font-semibold text-[#EAE6DF]">Каналы Связи</div>
+                <div className="text-[10px] text-[#8E847A]">WhatsApp / TG</div>
               </button>
 
               <button
                 type="button"
                 onClick={() => setCurrentTab('feed')}
-                className="action-btn cursor-pointer"
+                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
               >
-                <div className="btn-icon">
-                  <Icons.Activity className="w-5 h-5" />
-                </div>
-                <span className="btn-label">Лента Штаба</span>
+                <Icons.Activity className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <div className="text-xs font-semibold text-[#EAE6DF]">Лента Штаба</div>
+                <div className="text-[10px] text-[#8E847A]">Отчеты 24/7</div>
               </button>
 
               <button
                 type="button"
                 onClick={() => setCurrentTab('billing')}
-                className="action-btn cursor-pointer"
+                className="p-4 rounded-2xl bg-[#231E1B] border border-[#DCD6CD]/10 hover:border-[#DCD6CD]/30 text-left transition-all duration-300 cursor-pointer group"
               >
-                <div className="btn-icon">
-                  <Icons.CreditCard className="w-5 h-5" />
-                </div>
-                <span className="btn-label">Баланс & Тарифы</span>
+                <Icons.CreditCard className="w-5 h-5 text-[#C5A059] mb-2 group-hover:scale-110 transition-transform" />
+                <div className="text-xs font-semibold text-[#EAE6DF]">Баланс & Тарифы</div>
+                <div className="text-[10px] text-[#8E847A]">Управление</div>
               </button>
             </div>
+
           </div>
         </section>
       )}
 
       {/* PLAN RESULTS SCREEN (Dynamic count of agents) */}
       {questStep === 'plan' && plan.length > 0 && (
-        <div className="space-y-10 animate-fade-in text-left font-modern">
-          <div className="space-y-3 pb-4 border-b border-white/10">
-            <span className="text-[10px] tracking-[0.2em] text-white/80 uppercase block font-semibold">задачи распределены по ролям</span>
-            <h2 className="text-3xl md:text-4xl font-bold text-white leading-snug">Что будет делать ваш штаб</h2>
-            <p className="text-sm text-[#94A3B8] leading-relaxed max-w-2xl font-light">
+        <div className="space-y-10 animate-fade-in text-left font-serif-geos">
+          <div className="space-y-3 pb-4 border-b border-[#DCD6CD]/15">
+            <span className="text-xs uppercase tracking-[0.2em] text-[#C5A059] block font-medium">ЗАДАЧИ РАСПРЕДЕЛЕНЫ ПО РОЛЯМ</span>
+            <h2 className="text-3xl md:text-4xl font-light text-[#EAE6DF] leading-snug">Что будет делать ваш штаб</h2>
+            <p className="text-sm text-[#B0A79E] leading-relaxed max-w-2xl font-light">
               Я подобрал {plan.length} специалистов именно под ваши задачи. Каждый знает свою роль и готов работать.
             </p>
           </div>
 
           <div className="space-y-6">
             {plan.map((agent, idx) => (
-              <div key={idx} className="glass-panel p-6 md:p-8 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition-all duration-300 hover:border-white/30 hover:bg-white/[0.04]">
+              <div key={idx} className="p-6 md:p-8 rounded-2xl bg-[#1C1816]/80 border border-[#DCD6CD]/15 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 transition-all duration-300 hover:border-[#C5A059]/40 hover:bg-[#231E1B]">
                 <div className="flex items-start md:items-center gap-6">
-                  <div className="h-16 w-16 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(255,255,255,0.05)]">
+                  <div className="h-16 w-16 rounded-2xl bg-[#28221F] border border-[#C5A059]/30 flex items-center justify-center shrink-0 shadow-lg">
                     {renderIcon(agent.icon)}
                   </div>
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-3">
-                      <h3 className="font-bold text-xl text-white tracking-tight">{agent.title}</h3>
-                      <span className="text-[10px] text-white uppercase tracking-wider border border-white/30 bg-white/10 px-2.5 py-0.5 rounded-full font-semibold font-modern shadow-[0_0_8px_rgba(255,255,255,0.1)]">Активен</span>
+                      <h3 className="font-medium text-xl text-[#EAE6DF] tracking-wide">{agent.title}</h3>
+                      <span className="text-[10px] text-[#C5A059] uppercase tracking-wider border border-[#C5A059]/40 bg-[#C5A059]/10 px-2.5 py-0.5 rounded-full font-medium">Активен</span>
                     </div>
-                    <p className="text-sm text-[#94A3B8] leading-relaxed max-w-3xl font-light">{agent.mission}</p>
+                    <p className="text-sm text-[#B0A79E] leading-relaxed max-w-3xl font-light">{agent.mission}</p>
                   </div>
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-6">
-            <button onClick={() => { setQuestStep('intro'); setPlan([]); }} className="text-xs uppercase tracking-widest text-[#94A3B8] hover:text-white transition-colors cursor-pointer font-semibold">Пройти заново</button>
+          <div className="pt-8 border-t border-[#DCD6CD]/15 flex flex-col sm:flex-row items-center justify-between gap-6">
+            <button onClick={() => { setQuestStep('intro'); setPlan([]); }} className="text-xs uppercase tracking-widest text-[#B0A79E] hover:text-[#EAE6DF] transition-colors cursor-pointer font-medium">Пройти заново</button>
             <button 
               onClick={() => {
                 setIsSuccessModalOpen(true);
@@ -502,9 +422,9 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
                   }
                 }
               }} 
-              className="w-full sm:w-auto bg-white hover:bg-slate-200 text-black text-xs font-bold py-4 px-10 rounded-xl transition-all duration-300 cursor-pointer tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_4px_25px_rgba(255,255,255,0.25)]"
+              className="w-full sm:w-auto bg-[#DCD6CD] hover:bg-[#EAE6DF] text-[#1A1614] text-xs font-semibold py-4 px-10 rounded-full transition-all duration-300 cursor-pointer tracking-widest uppercase flex items-center justify-center gap-2 shadow-xl"
             >
-              <Icons.Zap className="h-4 w-4 fill-current text-black" /> Запустить штаб в работу
+              <Icons.Zap className="h-4 w-4 fill-current text-[#1A1614]" /> Запустить штаб в работу
             </button>
           </div>
         </div>
@@ -512,13 +432,13 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
       {/* CLARIFICATION SCREEN */}
       {processingStatus === 'clarifying' && (
-        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-6 animate-fade-in font-modern">
-          <div className="h-20 w-20 rounded-full bg-white/10 border border-white/20 flex items-center justify-center shadow-[0_0_25px_rgba(255,255,255,0.1)]">
-            <Icons.HelpCircle className="h-10 w-10 text-white" />
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-6 animate-fade-in font-serif-geos">
+          <div className="h-20 w-20 rounded-full bg-[#28221F] border border-[#C5A059]/40 flex items-center justify-center shadow-xl">
+            <Icons.HelpCircle className="h-10 w-10 text-[#C5A059]" />
           </div>
-          <h2 className="text-2xl font-bold text-white">Нужно немного уточнить</h2>
-          <p className="text-sm text-[#94A3B8] max-w-md leading-relaxed font-light">{clarifyMessage}</p>
-          <button onClick={() => setProcessingStatus('idle')} className="mt-4 bg-white hover:bg-slate-200 text-black font-bold px-8 py-3 rounded-xl transition-all cursor-pointer text-xs uppercase tracking-widest shadow-[0_4px_20px_rgba(255,255,255,0.2)]">
+          <h2 className="text-2xl font-light text-[#EAE6DF]">Нужно немного уточнить</h2>
+          <p className="text-sm text-[#B0A79E] max-w-md leading-relaxed font-light">{clarifyMessage}</p>
+          <button onClick={() => setProcessingStatus('idle')} className="mt-4 bg-[#DCD6CD] hover:bg-[#EAE6DF] text-[#1A1614] font-semibold px-8 py-3 rounded-full transition-all cursor-pointer text-xs uppercase tracking-widest shadow-lg">
             Попробовать ещё раз
           </button>
         </div>
@@ -526,18 +446,21 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
 
       {/* Success Modal */}
       {isSuccessModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in font-modern">
-          <div className="bg-[#0A0A0E] border border-white/15 rounded-2xl p-8 md:p-12 max-w-lg w-full text-center space-y-6 shadow-[0_24px_70px_rgba(0,0,0,0.9)]">
-            <div className="h-16 w-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(255,255,255,0.2)]">
-              <Icons.Sparkles className="h-8 w-8 text-white" />
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in font-serif-geos">
+          <div className="bg-[#181412] border border-[#DCD6CD]/20 rounded-3xl p-8 md:p-12 max-w-lg w-full text-center space-y-6 shadow-2xl">
+            <div className="h-20 w-20 rounded-full bg-[#C5A059]/15 border border-[#C5A059]/40 flex items-center justify-center mx-auto shadow-xl">
+              <Icons.CheckCircle className="h-10 w-10 text-[#C5A059]" />
             </div>
-            <div className="space-y-3">
-              <h3 className="text-2xl md:text-3xl font-bold text-white tracking-tight">Штаб успешно запущен!</h3>
-              <p className="text-sm text-[#94A3B8] leading-relaxed font-light">
-                {plan.length} ИИ-сотрудников активированы и настроены на алгоритмы вашего бизнеса "{businessName}". Проверьте вкладку "Каналы связи"!
+            <div className="space-y-2">
+              <h3 className="text-2xl font-light text-[#EAE6DF]">Штаб успешно запущен!</h3>
+              <p className="text-xs text-[#B0A79E] leading-relaxed font-light">
+                Все ИИ-сотрудники приступили к выполнению регламентов. Вы можете отслеживать их работу в разделах "Лента" и "Аналитика".
               </p>
             </div>
-            <button onClick={() => { setIsSuccessModalOpen(false); setCurrentTab?.('simulator'); }} className="w-full bg-white hover:bg-slate-200 text-black text-xs font-bold py-4 rounded-xl transition-all duration-300 cursor-pointer uppercase tracking-widest shadow-[0_4px_20px_rgba(255,255,255,0.25)]">
+            <button 
+              onClick={() => { setIsSuccessModalOpen(false); setCurrentTab?.('simulator'); }}
+              className="w-full bg-[#DCD6CD] hover:bg-[#EAE6DF] text-[#1A1614] font-medium py-3.5 rounded-full text-xs uppercase tracking-widest transition-all cursor-pointer shadow-md font-serif-geos"
+            >
               Отлично, к симулятору!
             </button>
           </div>

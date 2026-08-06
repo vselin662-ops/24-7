@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { GlassPanel } from './GlassPanel';
 import { NeonButton } from './NeonButton';
 import { Check, ShieldAlert, CreditCard, ExternalLink, Key } from 'lucide-react';
+// @ts-ignore
+import luxSpace from '../assets/images/lux_space_1785822495366.jpg';
 
 export const BillingPanel: React.FC = () => {
   const [selectedPlan, setSelectedPlan] = useState<'free' | 'personal' | 'business' | 'enterprise'>('personal');
@@ -88,15 +90,37 @@ export const BillingPanel: React.FC = () => {
   };
 
   return (
-    <div className="space-y-12 animate-fade-in py-6 font-sans">
-      {/* Short Hero-Block Header */}
-      <div className="relative text-left border-b border-white/[0.08] pb-6">
-        <div className="absolute -top-12 left-0 text-8xl font-extrabold text-white/[0.03] select-none pointer-events-none font-display">
-          08
+    <div className="w-full bg-[#14100E]/50 backdrop-blur-xl border border-[#DCD6CD]/20 rounded-3xl p-6 md:p-8 space-y-10 animate-fade-in font-sans text-white shadow-2xl">
+      {/* GEOS Organic Pebble Photo Banner */}
+      <div className="relative w-full h-44 sm:h-52 overflow-hidden rounded-[28px_12px_28px_12px] border border-[#DCD6CD]/20 shadow-xl group">
+        <img 
+          src={luxSpace} 
+          alt="Тарифы и Пространство" 
+          className="w-full h-full object-cover filter brightness-90 contrast-110 group-hover:scale-105 transition-transform duration-700" 
+          referrerPolicy="no-referrer"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#14100E] via-black/20 to-transparent" />
+        <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] uppercase tracking-[0.25em] text-[#C5A059] font-medium font-serif-geos block">
+              ТАРИФЫ И ЛИМИТЫ
+            </span>
+            <h3 className="font-serif-geos text-xl md:text-2xl text-[#EAE6DF] font-light">
+              Индивидуальная автономность и баланс
+            </h3>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1A1614]/80 backdrop-blur-md border border-[#DCD6CD]/20 text-xs text-[#DCD6CD]">
+            <CreditCard className="w-3.5 h-3.5 text-[#C5A059]" />
+            <span>0% Удорожания</span>
+          </div>
         </div>
-        <span className="text-[10px] tracking-[0.1em] text-[#F5A623]/70 block mb-2 uppercase">модуль тарифов</span>
-        <h2 className="text-3xl md:text-4xl font-lux font-light text-white leading-snug">Подписка и лимиты</h2>
-        <p className="text-sm text-slate-400 mt-2 max-w-2xl font-light leading-relaxed">
+      </div>
+
+      {/* Short Hero-Block Header */}
+      <div className="relative text-left border-b border-[#DCD6CD]/10 pb-6">
+        <span className="text-[10px] tracking-[0.2em] text-[#C5A059] block mb-1 uppercase font-serif-geos">МОДУЛЬ ТАРИФОВ</span>
+        <h2 className="text-3xl md:text-4xl font-serif-geos font-light text-[#EAE6DF] leading-snug">Подписка и баланс</h2>
+        <p className="text-sm text-[#B0A79E] mt-2 max-w-2xl font-light leading-relaxed">
           Выберите тарифный план для масштабирования вашего ИИ-штаба. Переключайтесь между тарифами в любое время.
         </p>
       </div>
