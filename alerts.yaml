@@ -1,0 +1,75 @@
+groups:
+  - name: selin_server_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: (sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP 5xx Error Rate detected"
+          description: "More than 5% of HTTP requests returned 5xx errors over the last 5 minutes. Check application logs."
+
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state{state="OPEN"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit Breaker is OPEN"
+          description: "Gemini Primary API circuit breaker has been OPEN for more than 1 minute. Traffic routed to failover."
+
+      - alert: RateLimitSpike
+        expr: rate(rate_limit_hits_total[1m]) * 60 > 50
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Spike in Rate Limit Hits"
+          description: "Rate limiter triggered more than 50 times in a single minute. Potential DDoS or client misconfiguration."
+
+      - alert: SQLiteLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High SQLite Database Latency"
+          description: "p99 latency exceeded 500ms over 5 minutes. Verify database WAL checkpoint and table size."
+
+      - alert: TTSFailureRate
+        expr: (sum(rate(tts_syntheses_total{status="error"}[10m])) / sum(rate(tts_syntheses_total[10m]))) * 100 > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High TTS Failure Rate"
+          description: "TTS synthesis error rate exceeded 20% over 10 minutes."
+
+      - alert: TenantDataLeakAttempt
+        expr: rate(http_requests_total{status="403"}[1m]) * 60 > 10
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Potential Tenant Data Leak / Unauthorized Access Attempt"
+          description: "Multiple 403 Forbidden errors detected. Inspect request headers and block suspicious IP."
+
+      - alert: MemoryUsageHigh
+        expr: process_resident_memory_bytes > 419430400
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Memory Usage"
+          description: "Container RAM usage exceeded 400MB of 512MB limit."
+
+notification_channels:
+  - name: slack-alert-channel
+    type: slack
+    config:
+      url: "${SLACK_WEBHOOK_URL}"
+  - name: devops-email
+    type: email
+    config:
+      address: "devops@selin.app"

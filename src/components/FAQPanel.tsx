@@ -2,8 +2,16 @@ import React, { useState } from 'react';
 import { GlassPanel } from './GlassPanel';
 import { NeonButton } from './NeonButton';
 import { HelpCircle, Shield, Key, Eye, Check, AlertTriangle, Copy, FileText } from 'lucide-react';
-import { TECHNICAL_REPORT_MARKDOWN } from './TechnicalReportData';
-import { TELEGRAM_SETUP_INSTRUCTIONS } from './TelegramSetupData';
+const TECHNICAL_REPORT_MARKDOWN = `# Технический отчет Selin AI
+- Платформа: Selin AI
+- Безопасность: 152-ФЗ РФ, шифрование данных
+- База данных: SQLite WAL mode
+- Интеграция: Max Bot API, Gemini AI`;
+
+const TELEGRAM_SETUP_INSTRUCTIONS = `# Инструкция по подключению
+1. Откройте бота в Max: https://max.ru/se13914883_bot
+2. Нажмите "Старт" или отправьте /язык или /бизнес
+3. Бот сразу начнёт работу!`;
 
 interface FAQPanelProps {
   onWipeData: () => void;

@@ -1,0 +1,10 @@
+{
+  "config": {},
+  "chats": {},
+  "knowledge_base": {},
+  "kb_documents": {},
+  "kb_chunks": {},
+  "moderation_queue": {},
+  "moderation_log": {},
+  "feed": {}
+}
