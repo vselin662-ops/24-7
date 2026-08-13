@@ -28,6 +28,8 @@ import { NeonButton } from './components/NeonButton';
 import { StaffFeed } from './components/StaffFeed';
 import { ModerationPanel } from './components/ModerationPanel';
 import { KnowledgeBasePanel } from './components/KnowledgeBasePanel';
+import { VoiceButton } from './components/VoiceButton';
+import { useVoiceRecorder } from './hooks/useVoiceRecorder';
 import { SettingsPanel } from './components/SettingsPanel';
 import { FAQPanel } from './components/FAQPanel';
 
@@ -36,6 +38,33 @@ const MAX_BOT_URL = "https://max.ru/se13914883_bot";
 export default function App() {
   const [activeTab, setActiveTab] = useState<'main' | 'languages' | 'business' | 'lifestyle' | 'feed' | 'moderation' | 'knowledge' | 'settings'>('main');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [voiceToast, setVoiceToast] = useState<string | null>(null);
+
+  const {
+    state: voiceState,
+    volume: voiceVolume,
+    duration: voiceDuration,
+    error: voiceError,
+    startRecording,
+    stopRecording,
+  } = useVoiceRecorder({
+    onTranscript: (text) => {
+      setVoiceToast(`Распознано: "${text}"`);
+      setTimeout(() => setVoiceToast(null), 5000);
+    },
+    onError: (err) => {
+      setVoiceToast(err);
+      setTimeout(() => setVoiceToast(null), 5000);
+    },
+  });
+
+  const handleVoiceClick = () => {
+    if (voiceState === 'idle') {
+      startRecording();
+    } else if (voiceState === 'recording') {
+      stopRecording();
+    }
+  };
 
   // Quick stats state
   const [langStats, setLangStats] = useState({ level: 'A1', words: 0, streak: 0, lang: 'Английский' });
@@ -193,9 +222,9 @@ export default function App() {
         {activeTab === 'main' && (
           <div className="space-y-8">
             {/* Banner */}
-            <div className="p-8 rounded-3xl bg-gradient-to-br from-[#1E1815] via-[#161210] to-[#120F0D] border border-[#2E2621] relative overflow-hidden shadow-2xl">
+            <div className="p-8 rounded-3xl bg-gradient-to-br from-[#1E1815] via-[#161210] to-[#120F0D] border border-[#2E2621] relative overflow-hidden shadow-2xl flex flex-col lg:flex-row items-center justify-between gap-8">
               <div className="absolute top-0 right-0 w-96 h-96 bg-[#C5A059]/10 rounded-full blur-3xl pointer-events-none" />
-              <div className="max-w-2xl relative z-10 space-y-4">
+              <div className="max-w-xl relative z-10 space-y-4">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#C5A059]/10 border border-[#C5A059]/30 text-[#C5A059] text-xs font-medium">
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Selin AI — Автономный Интеллект</span>
@@ -458,9 +487,18 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-6 border-t border-[#2A231F] mt-12 text-center text-xs text-[#7A7167]">
+      <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-6 border-t border-[#2A231F] mt-12 pb-36 text-center text-xs text-[#7A7167]">
         <p>© 2026 Selin AI · Интеллектуальный наставник & Автономный цифровой сотрудник</p>
       </footer>
+
+      {/* Floating Voice Recording Button fixed at bottom center */}
+      <VoiceButton
+        state={voiceState}
+        volume={voiceVolume}
+        duration={voiceDuration}
+        onClick={handleVoiceClick}
+        error={voiceError || voiceToast}
+      />
     </div>
   );
 }

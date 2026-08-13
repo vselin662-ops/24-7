@@ -69,11 +69,12 @@ export class FoodDeliveryConnector extends BaseConnector<FoodDeliveryParams, Foo
     error: Error,
     tenantId?: string
   ): Promise<{ data?: FoodDeliveryResult; fallbackUrl?: string; message?: string }> {
-    const query = encodeURIComponent(params.items.join(" "));
-    const addressEnc = encodeURIComponent(params.address);
+    const items = params?.items || [];
+    const query = encodeURIComponent(items.join(" "));
+    const addressEnc = encodeURIComponent(params?.address || "");
 
     // Deep link generation depending on brand
-    const isDodo = params.items.some((i) => i.toLowerCase().includes("пицц") || i.toLowerCase().includes("додо"));
+    const isDodo = items.some((i) => (i || "").toLowerCase().includes("пицц") || (i || "").toLowerCase().includes("додо"));
     const deepLink = isDodo
       ? `https://dodopizza.ru/search?address=${addressEnc}&q=${query}`
       : `https://eda.yandex.ru/search?address=${addressEnc}&q=${query}`;

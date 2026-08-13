@@ -104,7 +104,7 @@ export const VoiceOrganismOnboarding: React.FC<VoiceOrganismOnboardingProps> = (
         utterance.pitch = 1.0;
 
         const voices = window.speechSynthesis.getVoices();
-        const ruVoice = voices.find(v => v.lang.includes('ru') || v.lang.includes('RU'));
+        const ruVoice = voices.find(v => v.lang?.includes('ru') || v.lang?.includes('RU'));
         if (ruVoice) utterance.voice = ruVoice;
 
         utterance.onstart = () => setIsSpeaking(true);

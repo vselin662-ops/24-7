@@ -34,7 +34,8 @@ export class DecisionEngine {
 
     switch (intent.type) {
       case 'learn_language':
-        if (intent.raw_text.toLowerCase().includes('уро') || intent.raw_text.toLowerCase().includes('начн')) {
+        const rawText = (intent?.raw_text || '').toLowerCase();
+        if (rawText.includes('уро') || rawText.includes('начн')) {
           actions.push({
             type: 'start_lesson',
             payload: { tenantId, language: intent.entities.language || 'en' },

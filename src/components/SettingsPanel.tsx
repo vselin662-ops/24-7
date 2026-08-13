@@ -21,9 +21,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) 
   };
 
   const handleChannelToggle = (ch: string) => {
-    const channels = localConfig.channels.includes(ch)
-      ? localConfig.channels.filter(c => c !== ch)
-      : [...localConfig.channels, ch];
+    const currentChannels = localConfig.channels || [];
+    const channels = currentChannels.includes(ch)
+      ? currentChannels.filter(c => c !== ch)
+      : [...currentChannels, ch];
     setLocalConfig({ ...localConfig, channels });
   };
 
@@ -133,7 +134,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) 
             </label>
             <div className="flex flex-wrap gap-2.5">
               {['telegram', 'whatsapp', 'vk', 'email'].map(ch => {
-                const hasCh = localConfig.channels.includes(ch);
+                const hasCh = (localConfig.channels || []).includes(ch);
                 return (
                   <button
                     key={ch}

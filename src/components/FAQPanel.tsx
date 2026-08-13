@@ -48,7 +48,7 @@ export const FAQPanel: React.FC<FAQPanelProps> = ({ onWipeData, systemPrompts })
   ];
 
   const filteredFaqs = faqs.filter(
-    f => f.q.toLowerCase().includes(searchTerm.toLowerCase()) || f.a.toLowerCase().includes(searchTerm.toLowerCase())
+    f => (f.q || '').toLowerCase().includes((searchTerm || '').toLowerCase()) || (f.a || '').toLowerCase().includes((searchTerm || '').toLowerCase())
   );
 
   const handleWipe = () => {

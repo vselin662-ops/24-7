@@ -105,7 +105,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
       const data = await response.json();
       if (data.text) {
         // Check if [COMPLETE] exists in response text
-        if (data.text.includes('[COMPLETE]')) {
+        if (data.text?.includes('[COMPLETE]')) {
           const parts = data.text.split('[COMPLETE]');
           const cleanText = parts[0].trim();
 
@@ -181,7 +181,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
 
       const data = await response.json();
       if (data.text) {
-        if (data.text.includes('[COMPLETE]')) {
+        if (data.text?.includes('[COMPLETE]')) {
           const parts = data.text.split('[COMPLETE]');
           const cleanText = parts[0].trim();
 
@@ -751,16 +751,19 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
                       </label>
                       <div className="flex flex-wrap gap-2 pt-1">
                         {['telegram', 'whatsapp', 'vk', 'email'].map(ch => {
-                          const hasCh = detectedConfig.channels.includes(ch);
+                          const currentChannels = detectedConfig?.channels || [];
+                          const hasCh = currentChannels.includes(ch);
                           return (
                             <button
                               key={ch}
                               type="button"
                               onClick={() => {
                                 const newChannels = hasCh
-                                  ? detectedConfig.channels.filter(c => c !== ch)
-                                  : [...detectedConfig.channels, ch];
-                                setDetectedConfig({ ...detectedConfig, channels: newChannels });
+                                  ? currentChannels.filter(c => c !== ch)
+                                  : [...currentChannels, ch];
+                                if (detectedConfig) {
+                                  setDetectedConfig({ ...detectedConfig, channels: newChannels });
+                                }
                               }}
                               className={`px-4 py-2 rounded-xl border text-xxs uppercase transition-all duration-200 cursor-pointer ${
                                 hasCh
@@ -816,7 +819,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
                     </div>
 
                     <div className="border-t border-white/5 pt-4 mt-6 flex justify-between items-center text-[10px] text-slate-500 font-light">
-                      <span>Поддерживаемые каналы: {detectedConfig.channels.join(', ')}</span>
+                      <span>Поддерживаемые каналы: {(detectedConfig?.channels || []).join(', ')}</span>
                       <span className="text-accent font-semibold">Статус: Готов к запуску</span>
                     </div>
                   </div>

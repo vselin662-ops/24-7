@@ -1,0 +1,51 @@
+name: Supply Chain Protection & OWASP LLM Audit
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  supply-chain-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Verify package-lock.json Integrity
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "✅ package-lock.json exists."
+          else
+            echo "⚠️ package-lock.json missing! Generating..."
+            npm i --package-lock-only
+          fi
+
+      - name: Install dependencies cleanly
+        run: npm ci || npm install
+
+      - name: Run npm audit (Security CVE Check)
+        run: npm audit --audit-level=high
+
+      - name: Socket.dev Supply Chain Security Check
+        continue-on-error: true
+        run: npx -y socket@latest ci
+
+      - name: Check for unauthorized postinstall scripts
+        run: |
+          SUSPICIOUS_POSTINSTALL=$(node -e '
+            const pkg = require("./package.json");
+            const scripts = pkg.scripts || {};
+            if (scripts.postinstall && !scripts.postinstall.includes("esbuild")) {
+              console.log("SUSPICIOUS postinstall script found:", scripts.postinstall);
+              process.exit(1);
+            }
+            console.log("✅ No unauthorized postinstall scripts found.");
+          ')
+          echo "$SUSPICIOUS_POSTINSTALL"

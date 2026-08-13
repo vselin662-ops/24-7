@@ -1,6 +1,0 @@
-{
-  "name": "Selin AI",
-  "description": "Автономный интеллект. Учит, помогает, управляет. Сегодня в твоём телефоне. Завтра — рядом с тобой.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

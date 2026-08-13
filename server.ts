@@ -17,6 +17,7 @@ import * as pdf from "pdf-parse";
 import mammoth from "mammoth";
 import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
+import multer from "multer";
 import { apiRateLimiter, expensiveOpLimiter } from "./middleware/rateLimit";
 import { authMiddleware } from "./middleware/auth";
 import { logger } from "./src/logger";
@@ -24,6 +25,12 @@ import { metrics } from "./src/metrics";
 import { requestIdMiddleware } from "./src/middleware/requestId";
 import { connectorRegistry } from "./src/connectors";
 import languageRouter from "./src/routes/language.routes";
+import securityRouter from "./src/routes/security.routes";
+import { aiShieldMiddleware } from "./src/middleware/ai-shield";
+import { filterAIOutput } from "./src/services/output-filter";
+import { sanitizeRAGChunk, RAG_SYSTEM_INSTRUCTION } from "./src/services/rag-protection";
+import { trackAgentMetrics, trackUserRateAndAnomalies } from "./src/services/agent-monitor";
+import { injectCanaryInstruction } from "./src/services/canary-tokens";
 import { orchestrator } from "./src/core/orchestrator";
 import { MaxAdapter } from "./src/adapters/max.adapter";
 import { RobotAdapter } from "./src/adapters/robot.adapter";
@@ -104,12 +111,57 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// 1. AI Shield Middleware (Prompt Sanitization & Jailbreak Defense)
+app.use('/api', aiShieldMiddleware);
 
+// 2. Rate Limiting Middleware
 app.use('/api', apiRateLimiter);
 app.use('/api/tts', expensiveOpLimiter);
 app.use('/api/synthesize', expensiveOpLimiter);
 app.use('/api/voice-organism-dialogue', expensiveOpLimiter);
+
+// 3. Agent Monitor Middleware (Behavior Tracking & Anomaly Detection)
+app.use('/api', (req, res, next) => {
+  const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || "default";
+  trackUserRateAndAnomalies(tenantId);
+  next();
+});
+
+// 4. Output Filter Middleware (Response Sanitization & Anti-Exfiltration)
+app.use((req, res, next) => {
+  const originalJson = res.json;
+  const originalSend = res.send;
+
+  const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || "default";
+  const userPrompt = req.body?.user_message || req.body?.prompt || req.body?.text || "";
+
+  res.json = function (body: any) {
+    if (body && typeof body === "object") {
+      if (typeof body.text === "string") {
+        body.text = filterAIOutput(body.text, { tenantId, userPrompt });
+      }
+      if (typeof body.response === "string") {
+        body.response = filterAIOutput(body.response, { tenantId, userPrompt });
+      }
+      if (typeof body.message === "string" && !body.error) {
+        body.message = filterAIOutput(body.message, { tenantId, userPrompt });
+      }
+    }
+    return originalJson.call(this, body);
+  };
+
+  res.send = function (body: any) {
+    if (typeof body === "string") {
+      body = filterAIOutput(body, { tenantId, userPrompt });
+    }
+    return originalSend.call(this, body);
+  };
+
+  next();
+});
+
 app.use('/api', authMiddleware);
+app.use('/api/security', securityRouter);
 app.use('/api/language', languageRouter);
 
 // Initialize Gemini API
@@ -946,8 +998,10 @@ async function queryKnowledgeBase(queryText: string, limit: number = 3): Promise
   const queryVec = await getEmbedding(queryText);
   const results = kb.chunks.map((chunk: any) => {
     const score = cosineSimilarity(queryVec, chunk.embedding);
+    // Apply RAG Indirect Injection Protection & XML wrapping
+    const sanitizedText = sanitizeRAGChunk(chunk.text, chunk.docName || "KnowledgeBase");
     return {
-      text: chunk.text,
+      text: sanitizedText,
       docName: chunk.docName,
       score: score
     };
@@ -3603,6 +3657,51 @@ app.post("/api/transcribe", async (req, res) => {
   } catch (err: any) {
     console.error("Transcribe error:", err?.message || err);
     return res.json({ text: "" });
+  }
+});
+
+// Configure multer for voice audio uploads (max 5MB)
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+// Dedicated POST /api/voice/transcribe endpoint
+app.post("/api/voice/transcribe", expensiveOpLimiter, audioUpload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: "Файл записи не передан" });
+    }
+
+    if (!ai) {
+      return res.status(503).json({ error: "Gemini API не настроен на сервере" });
+    }
+
+    const mimeType = req.file.mimetype || "audio/webm";
+    const base64Audio = req.file.buffer.toString("base64");
+
+    const response = await generateWithFallback(
+      () => [{
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data: base64Audio } },
+          { text: "Transcribe this audio to text. Return only the transcription, nothing else. Language: Russian." }
+        ]
+      }],
+      { temperature: 0 }
+    );
+
+    const text = (response.text || "").trim();
+    logger.info(`🎤 Voice transcribed (${req.file.size} bytes): "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+
+    return res.json({
+      text,
+      confidence: text ? 0.98 : 0,
+      duration: Math.round(req.file.size / 32000) || 1,
+    });
+  } catch (err: any) {
+    logger.error("POST /api/voice/transcribe error:", err?.message || err);
+    return res.status(500).json({ error: err?.message || "Ошибка распознавания речи" });
   }
 });
 

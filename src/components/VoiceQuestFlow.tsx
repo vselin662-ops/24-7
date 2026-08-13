@@ -286,16 +286,17 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
                   </label>
                   <div className="flex flex-wrap gap-2">
                     {['telegram', 'whatsapp', 'vk', 'email'].map((ch) => {
-                      const isSelected = selectedChannels.includes(ch);
+                      const currentChannels = selectedChannels || [];
+                      const isSelected = currentChannels.includes(ch);
                       return (
                         <button
                           key={ch}
                           type="button"
                           onClick={() => {
                             if (isSelected) {
-                              setSelectedChannels(selectedChannels.filter(c => c !== ch));
+                              setSelectedChannels(currentChannels.filter(c => c !== ch));
                             } else {
-                              setSelectedChannels([...selectedChannels, ch]);
+                              setSelectedChannels([...currentChannels, ch]);
                             }
                           }}
                           className={`px-3.5 py-2 rounded-xl border text-xs capitalize font-medium transition-all duration-200 cursor-pointer ${

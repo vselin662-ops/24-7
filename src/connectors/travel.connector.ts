@@ -83,13 +83,14 @@ export class TravelConnector extends BaseConnector<TravelParams, TravelResult> {
     error: Error,
     tenantId?: string
   ): Promise<{ data?: TravelResult; fallbackUrl?: string; message?: string }> {
-    const originEnc = encodeURIComponent(params.from);
-    const destEnc = encodeURIComponent(params.to);
+    const originEnc = encodeURIComponent(params?.from || "");
+    const destEnc = encodeURIComponent(params?.to || "");
 
-    const deepLink = `https://www.aviasales.ru/search?origin=${originEnc}&destination=${destEnc}&depart_date=${params.departureDate}&marker=selin_ai`;
+    const deepLink = `https://www.aviasales.ru/search?origin=${originEnc}&destination=${destEnc}&depart_date=${params?.departureDate || ""}&marker=selin_ai`;
 
     // Curated standard estimates for fallback presentation
-    const basePrice = params.to.toLowerCase().includes("дубай") || params.to.toLowerCase().includes("dxb") ? 42000 : 18500;
+    const destinationStr = (params?.to || "").toLowerCase();
+    const basePrice = destinationStr.includes("дубай") || destinationStr.includes("dxb") ? 42000 : 18500;
 
     const fallbackOptions: TravelOption[] = [
       {

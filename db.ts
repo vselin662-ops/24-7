@@ -191,6 +191,35 @@ try {
       last_active_date TEXT
     );
 
+    -- AI Security Shield Tables (OWASP Top 10 for LLM 2026)
+    CREATE TABLE IF NOT EXISTS security_audit (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      event_type TEXT NOT NULL,
+      details TEXT,
+      risk_score REAL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS jailbreak_log (
+      tenant_id TEXT PRIMARY KEY,
+      count INTEGER DEFAULT 0,
+      last_attempt_at INTEGER DEFAULT 0,
+      blocked_until INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS mcp_hashes (
+      tool_name TEXT PRIMARY KEY,
+      hash TEXT NOT NULL,
+      approved_by TEXT DEFAULT 'system',
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS canary_tokens (
+      token TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_chats_tenant ON chats(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_tenant ON knowledge_base(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_docs_tenant ON kb_documents(tenant_id);
