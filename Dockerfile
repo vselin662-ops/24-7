@@ -6,8 +6,8 @@ WORKDIR /app
 # Install build dependencies for native modules (e.g. better-sqlite3) and ffmpeg
 RUN apk add --no-cache python3 make g++ ffmpeg
 
-COPY package*.json ./
-RUN npm ci
+COPY package.json ./
+RUN npm install
 
 COPY . .
 RUN npm run build
@@ -26,8 +26,8 @@ RUN apk add --no-cache ffmpeg curl
 ENV NODE_ENV=production
 ENV PORT=3000
 
-COPY package*.json ./
-RUN npm ci --only=production
+COPY package.json ./
+RUN npm install --only=production
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/index.html ./dist/index.html
