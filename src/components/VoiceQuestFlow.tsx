@@ -97,10 +97,10 @@ export const VoiceQuestFlow: React.FC<VoiceQuestFlowProps> = ({ steps: initialSt
       channels: selectedChannels,
       tone: selectedTone,
       autonomy_level: autonomyLevel,
-      voice_id: 'Kore',
+      voice_id: 'Charon',
       is_active: true,
       auto_synthesize: false,
-      tts_voice: 'Kore',
+      tts_voice: 'Charon',
       is_live: true,
       agent_missions: {
         receiver: `Отвечает на утренние/вечерние заявки в мессенджерах для ${bName}. Приветствие: "${welcomeText}"`,

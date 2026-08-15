@@ -68,7 +68,7 @@ export const VoiceOrganismOnboarding: React.FC<VoiceOrganismOnboardingProps> = (
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'Kore' })
+        body: JSON.stringify({ text, voice: 'Charon' })
       });
 
       if (res.ok) {

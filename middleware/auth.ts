@@ -6,10 +6,57 @@ export interface AuthenticatedRequest extends Request {
   user?: any;
 }
 
-export const PUBLIC_PATHS = ['/api/health', '/health', '/metrics', '/api/sync-status', '/api/readiness', '/api/calculator/eval'];
+export const PUBLIC_PATHS = [
+  '/api/health',
+  '/health',
+  '/api/max/webhook',
+  '/max/webhook',
+  '/metrics',
+  '/api/sync-status',
+  '/sync-status',
+  '/api/readiness',
+  '/readiness',
+  '/api/calculator/eval',
+  '/calculator/eval',
+  '/api/voice/transcribe',
+  '/api/transcribe',
+  '/api/tts',
+  '/api/voice-organism-dialogue',
+  '/api/get-voice-quest',
+  '/api/interview',
+  '/api/quest',
+  '/api/feed',
+  '/api/knowledge',
+  '/api/mcp',
+  '/api/moderation',
+  '/api/get-config',
+  '/api/agent-respond',
+  '/api/launch',
+  '/api/telegram/webhook',
+  '/telegram/webhook'
+];
 
 export function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  if (PUBLIC_PATHS.some(p => req.path === p || req.path.startsWith(p + '/'))) {
+  const currentPath = (req.path || '').toLowerCase();
+  const originalUrl = (req.originalUrl ? req.originalUrl.split('?')[0] : '').toLowerCase();
+  const url = (req.url ? req.url.split('?')[0] : '').toLowerCase();
+  const fullPath = ((req.baseUrl || '') + (req.path || '')).toLowerCase();
+
+  const isPublic = PUBLIC_PATHS.some(p => {
+    const target = p.toLowerCase();
+    return (
+      currentPath === target ||
+      currentPath.startsWith(target + '/') ||
+      originalUrl === target ||
+      originalUrl.startsWith(target + '/') ||
+      url === target ||
+      url.startsWith(target + '/') ||
+      fullPath === target ||
+      fullPath.startsWith(target + '/')
+    );
+  });
+
+  if (isPublic) {
     return next();
   }
 

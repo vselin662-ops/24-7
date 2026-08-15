@@ -70,6 +70,7 @@ function checkRequiredEnvVars() {
 checkRequiredEnvVars();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = 3000;
 
 app.use(requestIdMiddleware);
@@ -111,17 +112,169 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// ==========================================
+// Max Messenger Webhook Route (Registered BEFORE all /api middlewares)
+// ==========================================
+app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
+  try {
+    logger.info("MAX webhook получен", { body: req.body });
+
+    const payload = req.body || {};
+
+    // 1. Проверяем секретный заголовок X-Max-Bot-Api-Secret (если настроен в env)
+    const webhookSecret = process.env.MAX_BOT_API_SECRET || process.env.MAX_WEBHOOK_SECRET;
+    const providedSecret = req.headers["x-max-bot-api-secret"] as string | undefined;
+
+    if (webhookSecret && providedSecret && providedSecret !== webhookSecret) {
+      logger.warn("Max webhook: invalid X-Max-Bot-Api-Secret header");
+      return res.status(200).json({ ok: true, ignored: "invalid_secret" });
+    }
+
+    let handledBySdk = false;
+
+    // 2. Штатный механизм вебхуков библиотеки @maxhub/max-bot-api
+    if (maxBot && payload && typeof payload === "object") {
+      try {
+        const updateType = payload.update_type || payload.event || payload.type || (payload.message ? "message_created" : undefined);
+        if (updateType) {
+          const normalizedUpdate = {
+            ...payload,
+            update_type: updateType,
+            timestamp: payload.timestamp || Date.now(),
+          };
+          await (maxBot as any).handleUpdate(normalizedUpdate);
+          handledBySdk = true;
+        }
+      } catch (sdkErr: any) {
+        logger.warn("maxBot.handleUpdate warning in webhook:", { error: sdkErr?.message || sdkErr });
+      }
+    }
+
+    // 3. Fallback / direct parsing (если SDK не инициализирован или не обработал кастомный формат)
+    if (!handledBySdk) {
+      const message = payload.message || payload;
+      const sender = payload.from || payload.sender || message.from || message.sender || {};
+      const chat = payload.chat || message.chat || {};
+
+      const rawChatId = chat.id || message.chat_id || payload.chat_id || sender.id || payload.user_id || 0;
+      const chatId = parseInt(String(rawChatId), 10) || 0;
+
+      const firstName = sender.first_name || sender.name?.split(" ")[0] || "";
+      const lastName = sender.last_name || sender.name?.split(" ").slice(1).join(" ") || "";
+      const clientName = `${firstName} ${lastName}`.trim() || `Клиент #${chatId}`;
+
+      const text = message.body?.text || message.text || payload.text || "";
+      const updateType = payload.update_type || payload.event || payload.type;
+
+      if (updateType === "bot_started" || text === "/start") {
+        const userConfig = await getUserConfigByChatId(String(chatId));
+        let welcomeText = "";
+        if (userConfig && !userConfig.is_universal) {
+          welcomeText = `Привет! Я — ваш голосовой ИИ-ассистент компании "${userConfig.business_name}". Готов принимать заявки и помогать 24/7.`;
+        } else {
+          welcomeText = `Привет! Я твой персональный AI-консьерж Selin. Чем могу помочь?`;
+        }
+
+        if (maxBot && chatId) {
+          try {
+            await synthesizeAndSendVoice(maxBot, chatId, welcomeText, true);
+          } catch (err: any) {}
+          try {
+            await maxBot.api.sendMessageToChat(chatId, welcomeText);
+          } catch (e) {
+            logger.warn("Failed to send welcome text via maxBot in webhook", { error: e });
+          }
+        }
+        return res.status(200).json({ ok: true, event: "bot_started" });
+      }
+
+      // Voice attachment handling
+      const attachments = message.attachments || payload.attachments || [];
+      const audioAttachment = attachments.find((a: any) => a.type === "audio" || a.type === "voice");
+
+      if (audioAttachment) {
+        const fileUrl = audioAttachment.payload?.url || audioAttachment.url;
+        if (fileUrl) {
+          try {
+            const resp = await fetch(fileUrl);
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const b64 = buf.toString("base64");
+
+            let transcript = "";
+            if (ai) {
+              const tr = await generateWithFallback(
+                () => [{
+                  role: "user",
+                  parts: [
+                    { inlineData: { mimeType: "audio/mpeg", data: b64 } },
+                    { text: "Верни ТОЛЬКО точную транскрипцию речи на русском, без комментариев." }
+                  ]
+                }],
+                { temperature: 0 }
+              );
+              transcript = (tr?.text || "").trim();
+            }
+
+            if (transcript && chatId) {
+              maxAdapter.handleWebhookMessage(String(chatId), transcript, { isVoice: true });
+              await handleIncomingText(chatId, clientName, transcript, "max", true);
+            } else if (maxBot && chatId) {
+              await maxBot.api.sendMessageToChat(chatId, "Не расслышал, повтори.");
+            }
+            return res.status(200).json({ ok: true, isVoice: true, transcript });
+          } catch (err) {
+            logger.error("Error processing Max voice attachment in webhook", { error: err });
+          }
+        }
+      }
+
+      // Text message handling
+      if (text && chatId) {
+        maxAdapter.handleWebhookMessage(String(chatId), text, { payload });
+        await handleIncomingText(chatId, clientName, text, "max", false);
+        return res.status(200).json({ ok: true, processed: true });
+      }
+    }
+
+    return res.status(200).json({ ok: true });
+  } catch (error: any) {
+    logger.error("Error in Max webhook handler", { error: error?.message || error });
+    return res.status(200).json({ ok: true });
+  }
+});
+
+app.get(["/api/max/webhook", "/max/webhook"], (req, res) => {
+  logger.info("MAX webhook получен (GET проверка)");
+  return res.status(200).json({ ok: true });
+});
+
 // 1. AI Shield Middleware (Prompt Sanitization & Jailbreak Defense)
-app.use('/api', aiShieldMiddleware);
+app.use('/api', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  return aiShieldMiddleware(req, res, next);
+});
 
 // 2. Rate Limiting Middleware
-app.use('/api', apiRateLimiter);
-app.use('/api/tts', expensiveOpLimiter);
-app.use('/api/synthesize', expensiveOpLimiter);
-app.use('/api/voice-organism-dialogue', expensiveOpLimiter);
+app.use('/api', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  return apiRateLimiter(req, res, next);
+});
+app.use('/api/tts', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  return expensiveOpLimiter(req, res, next);
+});
+app.use('/api/synthesize', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  return expensiveOpLimiter(req, res, next);
+});
+app.use('/api/voice-organism-dialogue', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  return expensiveOpLimiter(req, res, next);
+});
 
 // 3. Agent Monitor Middleware (Behavior Tracking & Anomaly Detection)
 app.use('/api', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
   const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || "default";
   trackUserRateAndAnomalies(tenantId);
   next();
@@ -129,6 +282,7 @@ app.use('/api', (req, res, next) => {
 
 // 4. Output Filter Middleware (Response Sanitization & Anti-Exfiltration)
 app.use((req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
   const originalJson = res.json;
   const originalSend = res.send;
 
@@ -160,7 +314,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/api', authMiddleware);
+app.use('/api', (req, res, next) => {
+  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  return authMiddleware(req, res, next);
+});
 app.use('/api/security', securityRouter);
 app.use('/api/language', languageRouter);
 
@@ -181,9 +338,10 @@ if (apiKey) {
   logger.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
 }
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-const MODEL_CHAIN = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const MODEL_CHAIN = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.7-flash"];
+
 async function generateWithFallback(buildContents: () => any, cfg: any) {
   let lastErr: any;
   const start = Date.now();
@@ -202,19 +360,32 @@ async function generateWithFallback(buildContents: () => any, cfg: any) {
   }
 
   for (const m of MODEL_CHAIN) {
-    try {
-      if (!ai) throw new Error("Gemini client not initialized");
-      const contents = buildContents();
-      const res = await ai.models.generateContent({ model: m, contents, config: sanitizedCfg });
-      const durationSec = (Date.now() - start) / 1000;
-      metrics.incrementCounter("llm_calls_total", { model: m, status: "success" });
-      metrics.observeHistogram("llm_call_duration_seconds", durationSec, { model: m });
-      logger.info(`LLM call succeeded on model ${m}`, { model: m, durationMs: Date.now() - start });
-      return res;
-    } catch (e: any) {
-      lastErr = e;
-      metrics.incrementCounter("llm_calls_total", { model: m, status: "error" });
-      logger.warn(`Model ${m} failed in fallback chain: ${e?.message || e}`, { model: m });
+    // Up to 2 attempts per model for transient errors like 503 / UNAVAILABLE / 429
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (!ai) throw new Error("Gemini client not initialized");
+        const contents = buildContents();
+        const res = await ai.models.generateContent({ model: m, contents, config: sanitizedCfg });
+        const durationSec = (Date.now() - start) / 1000;
+        metrics.incrementCounter("llm_calls_total", { model: m, status: "success" });
+        metrics.observeHistogram("llm_call_duration_seconds", durationSec, { model: m });
+        logger.info(`LLM call succeeded on model ${m} (attempt ${attempt + 1})`, { model: m, durationMs: Date.now() - start });
+        return res;
+      } catch (e: any) {
+        lastErr = e;
+        const errMsg = e?.message || String(e);
+        const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand") || errMsg.includes("RESOURCE_EXHAUSTED");
+        
+        if (isTransient && attempt === 0) {
+          logger.info(`Model ${m} encountered transient demand spike (${errMsg.substring(0, 80)}). Retrying or falling back...`);
+          await new Promise(r => setTimeout(r, 400));
+          continue;
+        }
+
+        metrics.incrementCounter("llm_calls_total", { model: m, status: "error" });
+        logger.warn(`Model ${m} failed in fallback chain: ${errMsg}`, { model: m });
+        break; // proceed to next model in chain
+      }
     }
   }
   throw lastErr;
@@ -330,6 +501,100 @@ try {
   logger.info("🔥 Firebase Admin initialized successfully!");
 } catch (error: any) {
   logger.info("ℹ️ Firebase Admin initialization bypassed/skipped. Using local SQLite/JSON fallback.");
+}
+
+const MALE_TTS_STYLE_INSTRUCTION = "Говори низким, спокойным и уверенным мужским голосом опытного специалиста. Ровный деловой тон, чёткая дикция, умеренный темп, без пафоса, без мягкости и без монотонности — как инженер, который точно знает, что делает, и говорит по делу.";
+const FEMALE_TTS_STYLE_INSTRUCTION = "Говори естественным, доброжелательным и ясным женским голосом. Ровный разговорный тон, чёткая дикция, живая интонация, без пафоса и без роботизированности.";
+
+function formatTtsText(rawText: string, voiceName: string = "Kore"): string {
+  if (!rawText) return "";
+  const cleaned = rawText.trim();
+  const isMale = ["Charon", "Orus", "Alnilam", "Fenrir", "Puck"].includes(voiceName);
+  const instruction = isMale ? MALE_TTS_STYLE_INSTRUCTION : FEMALE_TTS_STYLE_INSTRUCTION;
+  if (cleaned.includes("Говори низким, спокойным") || cleaned.includes("Говори естественным, доброжелательным")) {
+    return cleaned;
+  }
+  return `${instruction}\n\n${cleaned}`;
+}
+
+export interface WakeWordResult {
+  detected: boolean;
+  voice: "Charon" | "Kore" | null;
+  mode: "male" | "female" | null;
+  cleanedText: string;
+  isOnlyWakeWord: boolean;
+  confirmationSpeech: string;
+}
+
+function normalizeForWakeWord(text: string): string {
+  if (!text) return "";
+  let s = text.toLowerCase();
+  
+  // Replace spoken Russian numbers and variants
+  s = s.replace(/семьсот\s*семьдесят\s*семь/g, "777");
+  s = s.replace(/три\s*сем[её]рки/g, "777");
+  s = s.replace(/три\s*нуля/g, "000");
+  s = s.replace(/семь\s*семь\s*семь/g, "777");
+  s = s.replace(/ноль\s*ноль\s*ноль/g, "000");
+  s = s.replace(/нуль\s*нуль\s*нуль/g, "000");
+  s = s.replace(/\bсемь\b/g, "7");
+  s = s.replace(/\bноль\b/g, "0");
+  s = s.replace(/\bнуль\b/g, "0");
+  
+  return s;
+}
+
+function detectVoiceWakeWord(rawText: string): WakeWordResult {
+  if (!rawText || typeof rawText !== "string") {
+    return { detected: false, voice: null, mode: null, cleanedText: rawText || "", isOnlyWakeWord: false, confirmationSpeech: "" };
+  }
+
+  const normalized = normalizeForWakeWord(rawText);
+  const compactText = rawText.toLowerCase().replace(/[\s\-_.,!?:;]+/g, "");
+
+  // Patterns for male wake-word: Selin777 / Селин 777
+  const maleRegex = /(?:selin|селин|силин|селен|салин|целин|zelin)\s*(?:7\s*7\s*7|777|три\s*сем[её]рки|семь\s*семь\s*семь|семьсот\s*семьдесят\s*семь)/i;
+  // Patterns for female wake-word: Selin000 / Селин 000
+  const femaleRegex = /(?:selin|селин|силин|селен|салин|целин|zelin)\s*(?:0\s*0\s*0|000|[oо]\s*[oо]\s*[oо]|[oо]{3}|три\s*нуля|ноль\s*ноль\s*ноль|нуль\s*нуль\s*нуль)/i;
+
+  let matchedMode: "male" | "female" | null = null;
+  let targetVoice: "Charon" | "Kore" | null = null;
+
+  if (maleRegex.test(normalized) || compactText.includes("selin777") || compactText.includes("селин777") || compactText.includes("силин777")) {
+    matchedMode = "male";
+    targetVoice = "Charon";
+  } else if (femaleRegex.test(normalized) || compactText.includes("selin000") || compactText.includes("селин000") || compactText.includes("силин000") || compactText.includes("selinooo") || compactText.includes("селинооо")) {
+    matchedMode = "female";
+    targetVoice = "Kore";
+  }
+
+  if (!matchedMode || !targetVoice) {
+    return { detected: false, voice: null, mode: null, cleanedText: rawText.trim(), isOnlyWakeWord: false, confirmationSpeech: "" };
+  }
+
+  // Remove the wake word from raw text
+  let cleaned = rawText;
+  if (matchedMode === "male") {
+    cleaned = cleaned.replace(/(?:привет[\s,]*)?(?:selin|селин|силин|селен|салин|целин|zelin)[\s\-_]*(?:7[\s\-_]*7[\s\-_]*7|777|три\s*сем[её]рки|семь\s*семь\s*семь|семьсот\s*семьдесят\s*семь|семьсемьсемь)[\s,]*/gi, " ");
+  } else {
+    cleaned = cleaned.replace(/(?:привет[\s,]*)?(?:selin|селин|силин|селен|салин|целин|zelin)[\s\-_]*(?:0[\s\-_]*0[\s\-_]*0|000|[oо][\s\-_]*[oо][\s\-_]*[oо]|[oо]{3}|три\s*нуля|ноль\s*ноль\s*ноль|нольнольноль|нуль\s*нуль\s*нуль)[\s,]*/gi, " ");
+  }
+
+  cleaned = cleaned.replace(/\s*,\s*,+/g, ", ").replace(/\s{2,}/g, " ").replace(/^[\s,!:;?—-]+/, "").replace(/[\s,!:;?—-]+$/, "").trim();
+
+  const isOnlyWakeWord = cleaned.length === 0;
+  const confirmationSpeech = matchedMode === "male"
+    ? "Мужской режим активирован. Я на связи."
+    : "Женский режим активирован.";
+
+  return {
+    detected: true,
+    voice: targetVoice,
+    mode: matchedMode,
+    cleanedText: cleaned,
+    isOnlyWakeWord,
+    confirmationSpeech
+  };
 }
 
 // In-memory caching for faster response times and offline/no-database reliability
@@ -608,6 +873,32 @@ function getUniversalConfig(): any {
     metrics: { track: [], targets: {} },
     agents: []
   };
+}
+
+async function getVoiceForChat(chatId?: number | string | null): Promise<string> {
+  if (chatId) {
+    const userCfg = await getUserConfigByChatId(chatId);
+    if (userCfg?.tts_voice || userCfg?.voice_id) {
+      return userCfg.tts_voice || userCfg.voice_id;
+    }
+  }
+  const companyCfg = getCompanyConfig();
+  return companyCfg.tts_voice || companyCfg.voice_id || "Kore";
+}
+
+async function setVoiceForChat(chatId: number | string | null | undefined, voiceName: "Charon" | "Kore"): Promise<void> {
+  if (chatId && chatId !== "preview" && chatId !== "default" && String(chatId) !== "0") {
+    const existing = (await getUserConfigByChatId(chatId)) || getUniversalConfig();
+    const updated = {
+      ...existing,
+      tts_voice: voiceName,
+      voice_id: voiceName,
+    };
+    await saveUserConfigByChatId(chatId, updated);
+  }
+  
+  // Persist to company config so smart speaker preview and general voice stays switched
+  saveCompanyConfig({ tts_voice: voiceName, voice_id: voiceName });
 }
 
 async function getUserConfigByChatId(chatId: number | string): Promise<any> {
@@ -1256,10 +1547,9 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
   const cleanId = cleanChatIdStr(chatId);
   const numericChatId = parseInt(cleanId);
 
-  const userConfig = await getUserConfigByChatId(chatId);
-  const config = userConfig || getUniversalConfig();
-  const voiceName = config.tts_voice || config.voice_id || 'Kore';
-  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts", "gemini-2.0-flash-preview-tts"];
+  const voiceName = await getVoiceForChat(chatId);
+  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
+  const styledText = formatTtsText(text, voiceName);
 
   let pcmPath: string | null = null;
   let mp3Path: string | null = null;
@@ -1276,7 +1566,7 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
       try {
         const response = await ai.models.generateContent({
           model: m,
-          contents: [{ parts: [{ text }] }],
+          contents: [{ parts: [{ text: styledText }] }],
           config: {
             responseModalities: ["AUDIO"],
             speechConfig: {
@@ -1659,27 +1949,36 @@ async function processMultimodalMessage(
 
   if (wantsVoice) {
     try {
-      const TTS_MODEL = "gemini-2.5-flash-preview-tts";
-      const voiceRes = await ai.models.generateContent({
-        model: TTS_MODEL,
-        contents: [{ parts: [{ text: textResponse }] }],
-        config: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: config.tts_voice || "Kore" }
-            }
-          }
-        }
-      });
+      const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
+      const voiceName = config?.tts_voice || config?.voice_id || "Kore";
+      const styledText = formatTtsText(textResponse, voiceName);
 
-      const audioPart = voiceRes?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData && p.inlineData.mimeType?.startsWith("audio/"));
-      if (audioPart?.inlineData?.data) {
-        return {
-          textResponse: textResponse,
-          mediaType: 'voice',
-          audioBase64: audioPart.inlineData.data
-        };
+      for (const m of TTS_MODEL_CHAIN) {
+        try {
+          const voiceRes = await ai.models.generateContent({
+            model: m,
+            contents: [{ parts: [{ text: styledText }] }],
+            config: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName }
+                }
+              }
+            }
+          });
+
+          const audioPart = voiceRes?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData && p.inlineData.mimeType?.startsWith("audio/"));
+          if (audioPart?.inlineData?.data) {
+            return {
+              textResponse: textResponse,
+              mediaType: 'voice',
+              audioBase64: audioPart.inlineData.data
+            };
+          }
+        } catch (innerTtsErr: any) {
+          console.warn(`Capability 4 TTS model ${m} failed:`, innerTtsErr?.message || innerTtsErr);
+        }
       }
     } catch (ttsErr: any) {
       console.warn("TTS synthesis error / quota fallback:", ttsErr?.message || ttsErr);
@@ -1760,7 +2059,7 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
 
 // Endpoint to append customer message and retrieve/moderate agent response
 app.post("/api/chats/message", async (req, res) => {
-  const { chatId, text, agent_role } = req.body;
+  let { chatId, text, agent_role } = req.body;
   if (!chatId || !text) {
     return res.status(400).json({ error: "chatId and text are required." });
   }
@@ -1769,6 +2068,28 @@ app.post("/api/chats/message", async (req, res) => {
   let chatIndex = chats.findIndex((c: any) => c.id === chatId);
   if (chatIndex === -1) {
     return res.status(404).json({ error: "Chat not found." });
+  }
+
+  // Check for smart speaker voice wake words ("Selin777" for Charon male, "Selin000" for Kore female)
+  const wakeResult = detectVoiceWakeWord(text);
+  if (wakeResult.detected) {
+    await setVoiceForChat(chatId, wakeResult.voice!);
+    if (wakeResult.isOnlyWakeWord) {
+      chats[chatIndex].history.push({ sender: "customer", text: text });
+      chats[chatIndex].history.push({ sender: "agent", text: wakeResult.confirmationSpeech });
+      chats[chatIndex].lastMessage = wakeResult.confirmationSpeech;
+      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      saveTelegramChats(chats);
+
+      if (maxBot) {
+        try {
+          await synthesizeAndSendVoice(maxBot, chatId, wakeResult.confirmationSpeech, true);
+        } catch (err: any) {}
+      }
+      return res.json({ response: wakeResult.confirmationSpeech, voice: wakeResult.voice, wakeDetected: true, mode: wakeResult.mode });
+    } else {
+      text = wakeResult.cleanedText;
+    }
   }
 
   // Append client message
@@ -2015,6 +2336,37 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
       history: []
     });
     chatIndex = chats.length - 1;
+  }
+
+  // Check for smart speaker voice wake words ("Selin777" for Charon male, "Selin000" for Kore female)
+  const wakeResult = detectVoiceWakeWord(text);
+  if (wakeResult.detected) {
+    await setVoiceForChat(chatId, wakeResult.voice!);
+    if (wakeResult.isOnlyWakeWord) {
+      chats[chatIndex].history.push({
+        sender: "customer",
+        text: text,
+        timestamp: new Date().toISOString(),
+        isVoice: isVoice
+      });
+      chats[chatIndex].history.push({
+        sender: "agent",
+        text: wakeResult.confirmationSpeech,
+        timestamp: new Date().toISOString()
+      });
+      chats[chatIndex].lastMessage = wakeResult.confirmationSpeech;
+      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      saveTelegramChats(chats);
+
+      if (maxBot) {
+        try {
+          await synthesizeAndSendVoice(maxBot, chatId, wakeResult.confirmationSpeech, true);
+        } catch (err: any) {}
+      }
+      return wakeResult.confirmationSpeech;
+    } else {
+      text = wakeResult.cleanedText;
+    }
   }
 
   // Get or extract user config (NEVER fallback to global company config)
@@ -2326,18 +2678,15 @@ if (maxToken) {
     });
 
     maxBot.catch((err: any) => {
-      console.error('Max Bot Error:', err);
+      logger.error('Max Bot SDK Error:', { error: err?.message || err });
     });
 
-    maxBot.start().catch((err: any) => {
-      console.error('❌ Max Bot start/polling connection error:', err?.message || err);
-    });
-    console.log('🤖 Max Bot запущен!');
-  } catch (error) {
-    console.error('❌ Failed to start Max Bot:', error);
+    logger.info('🤖 Max Bot успешно инициализирован в режиме Webhook (polling отключен)');
+  } catch (error: any) {
+    logger.error('❌ Ошибка инициализации Max Bot:', { error: error?.message || error });
   }
 } else {
-  console.log('ℹ️ MAX_BOT_TOKEN не задан. Max-бот не активен.');
+  logger.warn('⚠️ ПРЕДУПРЕЖДЕНИЕ: Переменная MAX_BOT_TOKEN не задана в окружении. Max-бот не активен для отправки через API.');
 }
 
 // 1. Onboarding Interview endpoint
@@ -2587,7 +2936,30 @@ function sanitizeVoiceName(rawName: any): string | null {
 }
 
 app.post("/api/voice-organism-dialogue", async (req, res) => {
-  const { step, userName, userInput, history } = req.body;
+  let { step, userName, userInput, history, chatId } = req.body;
+
+  // Check for smart speaker voice wake words ("Selin777" for Charon male, "Selin000" for Kore female)
+  let wakeWordInfo: any = null;
+  if (userInput && typeof userInput === "string") {
+    const wakeResult = detectVoiceWakeWord(userInput);
+    if (wakeResult.detected) {
+      await setVoiceForChat(chatId || "preview", wakeResult.voice!);
+      wakeWordInfo = wakeResult;
+      if (wakeResult.isOnlyWakeWord) {
+        return res.json({
+          speech: wakeResult.confirmationSpeech,
+          userName: sanitizeVoiceName(userName),
+          extractedGoal: null,
+          nextStep: step || "EXPLAIN_PLATFORM",
+          voice: wakeResult.voice,
+          wakeDetected: true,
+          mode: wakeResult.mode
+        });
+      } else {
+        userInput = wakeResult.cleanedText;
+      }
+    }
+  }
 
   const systemInstruction = `Ты — Интеллектуальный Голосовой Агент платформы SELIN.
 Твоя цель — в формате живого, природного, увлеченного и естественного диалога (как высококлассный инжиниринговый партнер и персональный помощник) встретить человека, узнать его имя, познакомить с возможностями платформы по делегированию всей рутины и узнать, какие задачи он хочет передать штабу.
@@ -2632,11 +3004,14 @@ app.post("/api/voice-organism-dialogue", async (req, res) => {
       nextStep = "SETUP_COMPLETE";
     }
 
+    const currentVoice = await getVoiceForChat(chatId);
     return res.json({
       speech,
       userName: extractedName,
       extractedGoal: userInput || null,
-      nextStep
+      nextStep,
+      voice: currentVoice,
+      wakeDetected: !!wakeWordInfo
     });
   }
 
@@ -2679,12 +3054,15 @@ app.post("/api/voice-organism-dialogue", async (req, res) => {
 
     const data = JSON.parse(response.text || "{}");
     const cleanName = sanitizeVoiceName(data.userName) || sanitizeVoiceName(userName);
+    const currentVoice = await getVoiceForChat(chatId);
 
     return res.json({
       speech: data.speech,
       userName: cleanName,
       extractedGoal: data.extractedGoal || null,
-      nextStep: data.nextStep
+      nextStep: data.nextStep,
+      voice: currentVoice,
+      wakeDetected: !!wakeWordInfo
     });
   } catch (error: any) {
     console.error("Voice Organism Error:", error);
@@ -2720,27 +3098,41 @@ function pcmToWavBuffer(pcmBuffer: Buffer, sampleRate = 24000, numChannels = 1, 
 }
 
 app.post("/api/tts", async (req, res) => {
-  const { text, voice } = req.body;
+  const { text, voice, chatId } = req.body;
   if (!text) return res.status(400).json({ error: "Text is required." });
 
   if (!ai) {
     return res.status(503).json({ error: "AI client not initialized" });
   }
 
-  const config = getCompanyConfig();
-  const voiceName = voice || config.tts_voice || config.voice_id || 'Kore';
-  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts", "gemini-2.0-flash-preview-tts"];
+  // Check for smart speaker voice wake words
+  const wakeResult = detectVoiceWakeWord(text);
+  let textToSynthesize = text;
+  let targetVoice = voice;
+
+  if (wakeResult.detected) {
+    await setVoiceForChat(chatId, wakeResult.voice!);
+    targetVoice = wakeResult.voice!;
+    textToSynthesize = wakeResult.isOnlyWakeWord ? wakeResult.confirmationSpeech : wakeResult.cleanedText;
+  }
+
+  if (!targetVoice) {
+    targetVoice = (await getVoiceForChat(chatId)) || 'Kore';
+  }
+
+  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
+  const styledText = formatTtsText(textToSynthesize, targetVoice);
 
   for (const m of TTS_MODEL_CHAIN) {
     try {
       const response = await ai.models.generateContent({
         model: m,
-        contents: [{ parts: [{ text }] }],
+        contents: [{ parts: [{ text: styledText }] }],
         config: {
           responseModalities: ["AUDIO"],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName }
+              prebuiltVoiceConfig: { voiceName: targetVoice }
             }
           }
         }
@@ -2750,7 +3142,14 @@ app.post("/api/tts", async (req, res) => {
         const pcmBuffer = Buffer.from(rawAudio, "base64");
         const wavBuffer = pcmToWavBuffer(pcmBuffer, 24000, 1, 16);
         const dataUrl = `data:audio/wav;base64,${wavBuffer.toString("base64")}`;
-        return res.json({ audioUrl: dataUrl });
+        return res.json({
+          audioUrl: dataUrl,
+          voice: targetVoice,
+          wakeDetected: wakeResult.detected,
+          mode: wakeResult.mode,
+          confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
+          text: textToSynthesize
+        });
       }
     } catch (e: any) {
       console.warn(`TTS endpoint model ${m} failed:`, e?.message || e);
@@ -3523,7 +3922,7 @@ app.post("/api/agent-respond", async (req, res) => {
 
 // 4. Voice synthesis endpoint (Gemini TTS)
 app.post("/api/synthesize", async (req, res) => {
-  const { text, voice } = req.body;
+  const { text, voice, chatId } = req.body;
 
   if (!text) {
     return res.status(400).json({ error: "Text is required for synthesis." });
@@ -3535,24 +3934,35 @@ app.post("/api/synthesize", async (req, res) => {
   }
 
   try {
-    // Map of voice configs
-    const allowedVoices = ["Aoede", "Leda", "Kore", "Zephyr", "Puck", "Charon", "Fenrir"];
-    const voiceName = allowedVoices.includes(voice) ? voice : "Kore";
+    const wakeResult = detectVoiceWakeWord(text);
+    let textToSynthesize = text;
+    let targetVoice = voice;
 
-    const TTS_MODEL_CHAIN = ["gemini-2.5-flash-preview-tts", "gemini-3.1-flash-tts-preview", "gemini-2.0-flash-preview-tts"];
+    if (wakeResult.detected) {
+      await setVoiceForChat(chatId, wakeResult.voice!);
+      targetVoice = wakeResult.voice!;
+      textToSynthesize = wakeResult.isOnlyWakeWord ? wakeResult.confirmationSpeech : wakeResult.cleanedText;
+    }
+
+    if (!targetVoice) {
+      targetVoice = (await getVoiceForChat(chatId)) || "Kore";
+    }
+
+    const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
     let base64Audio: string | undefined = undefined;
     let lastTtsErr: any = null;
+    const styledText = formatTtsText(textToSynthesize, targetVoice);
 
     for (const m of TTS_MODEL_CHAIN) {
       try {
         const response = await ai.models.generateContent({
           model: m,
-          contents: [{ parts: [{ text }] }],
+          contents: [{ parts: [{ text: styledText }] }],
           config: {
             responseModalities: ["AUDIO"],
             speechConfig: {
               voiceConfig: {
-                prebuiltVoiceConfig: { voiceName }
+                prebuiltVoiceConfig: { voiceName: targetVoice }
               }
             }
           }
@@ -3574,7 +3984,14 @@ app.post("/api/synthesize", async (req, res) => {
     }
 
     if (base64Audio) {
-      res.json({ audio: base64Audio });
+      res.json({
+        audio: base64Audio,
+        voice: targetVoice,
+        wakeDetected: wakeResult.detected,
+        mode: wakeResult.mode,
+        confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
+        text: textToSynthesize
+      });
     } else {
       res.status(500).json({ error: "No audio generated from the Gemini TTS model." });
     }
@@ -3641,11 +4058,13 @@ app.post("/api/transcribe", async (req, res) => {
       return res.json({ text: "" });
     }
 
+    const cleanMime = (mimeType || "audio/webm").split(";")[0].trim();
+
     const response = await generateWithFallback(
       () => [{
         role: "user",
         parts: [
-          { inlineData: { mimeType: mimeType || "audio/webm", data: audio } },
+          { inlineData: { mimeType: cleanMime, data: audio } },
           { text: "Верни ТОЛЬКО точную транскрипцию этой речи на русском языке, без комментариев и пояснений. Если речи нет — верни пустую строку." }
         ]
       }],
@@ -3667,7 +4086,7 @@ const audioUpload = multer({
 });
 
 // Dedicated POST /api/voice/transcribe endpoint
-app.post("/api/voice/transcribe", expensiveOpLimiter, audioUpload.single("audio"), async (req, res) => {
+app.post("/api/voice/transcribe", audioUpload.single("audio"), async (req, res) => {
   try {
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ error: "Файл записи не передан" });
@@ -3677,7 +4096,8 @@ app.post("/api/voice/transcribe", expensiveOpLimiter, audioUpload.single("audio"
       return res.status(503).json({ error: "Gemini API не настроен на сервере" });
     }
 
-    const mimeType = req.file.mimetype || "audio/webm";
+    const rawMime = req.file.mimetype || "audio/webm";
+    const mimeType = rawMime.split(";")[0].trim() || "audio/webm";
     const base64Audio = req.file.buffer.toString("base64");
 
     const response = await generateWithFallback(
@@ -3694,10 +4114,13 @@ app.post("/api/voice/transcribe", expensiveOpLimiter, audioUpload.single("audio"
     const text = (response.text || "").trim();
     logger.info(`🎤 Voice transcribed (${req.file.size} bytes): "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
+    const wakeResult = detectVoiceWakeWord(text);
+
     return res.json({
       text,
       confidence: text ? 0.98 : 0,
       duration: Math.round(req.file.size / 32000) || 1,
+      wakeWord: wakeResult.detected ? wakeResult : null
     });
   } catch (err: any) {
     logger.error("POST /api/voice/transcribe error:", err?.message || err);

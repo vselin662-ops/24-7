@@ -221,7 +221,7 @@ export const SMARTPlanner: React.FC<SMARTPlannerProps> = ({
               channels: configData.channels || channels || ['telegram'],
               tone: (configData.tone || tone || 'friendly') as any,
               autonomy_level: (configData.autonomy_level || 'full') as any,
-              voice_id: 'Kore', is_active: true, auto_synthesize: false, tts_voice: 'Kore'
+              voice_id: 'Charon', is_active: true, auto_synthesize: false, tts_voice: 'Charon'
             };
 
             setPlan(finalPlan);

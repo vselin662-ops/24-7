@@ -190,20 +190,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ config, onSave }) 
               </label>
               <select
                 value={localConfig.tts_voice || 'Kore'}
-                onChange={e => setLocalConfig({ ...localConfig, tts_voice: e.target.value })}
+                onChange={e => setLocalConfig({ ...localConfig, tts_voice: e.target.value, voice_id: e.target.value })}
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-accent focus:bg-black/60 transition-all font-light cursor-pointer"
               >
-                <option value="Kore" className="bg-black text-white">Kore</option>
-                <option value="Puck" className="bg-black text-white">Puck</option>
-                <option value="Charon" className="bg-black text-white">Charon</option>
-                <option value="Fenrir" className="bg-black text-white">Fenrir</option>
-                <option value="Zephyr" className="bg-black text-white">Zephyr</option>
+                <option value="Kore" className="bg-black text-white">Kore (Заводской женский по умолчанию ✨)</option>
+                <option value="Charon" className="bg-black text-white">Charon (Мужской голос инженера / Selin777 🏛️)</option>
+                <option value="Aoede" className="bg-black text-white">Aoede (Мелодичный женский 🎵)</option>
+                <option value="Orus" className="bg-black text-white">Orus (Уверенный мужской 🎙️)</option>
+                <option value="Alnilam" className="bg-black text-white">Alnilam (Глубокий мужской 🔊)</option>
+                <option value="Fenrir" className="bg-black text-white">Fenrir (Бархатный мужской 🎙️)</option>
+                <option value="Puck" className="bg-black text-white">Puck (Энергичный мужской ⚡)</option>
+                <option value="Zephyr" className="bg-black text-white">Zephyr (Мягкий нейтральный 🍃)</option>
               </select>
             </div>
           </div>
 
-          <div className="text-xs text-slate-400 bg-black/40 p-4 rounded-xl border border-white/5 leading-relaxed font-light">
-            💡 <span className="font-semibold text-slate-200">Подсказка:</span> Это стандартные голоса ИИ. Персональный голосовой клон владельца появится в полной версии.
+          <div className="text-xs text-slate-400 bg-black/40 p-4 rounded-xl border border-white/5 leading-relaxed font-light space-y-2">
+            <p>
+              💡 <span className="font-semibold text-slate-200">Голосовое переключение в умной колонке:</span>
+            </p>
+            <ul className="list-disc list-inside space-y-1 text-slate-300">
+              <li>Скажите <span className="text-accent font-semibold">«Selin777»</span> (или «Селин 777») — включится мужской голос инженера (Charon).</li>
+              <li>Скажите <span className="text-accent font-semibold">«Selin000»</span> (или «Селин 000») — вернется заводской женский голос (Kore).</li>
+            </ul>
           </div>
         </div>
 

@@ -127,10 +127,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
               channels: configData.channels || ['telegram'],
               tone: configData.tone || 'friendly',
               autonomy_level: configData.autonomy_level || 'full',
-              voice_id: 'Kore',
+              voice_id: 'Charon',
               is_active: true,
               auto_synthesize: false,
-              tts_voice: 'Kore'
+              tts_voice: 'Charon'
             });
 
             // Initialize default agent prompts
@@ -147,10 +147,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
               channels: ['telegram'],
               tone: 'friendly',
               autonomy_level: 'full',
-              voice_id: 'Kore',
+              voice_id: 'Charon',
               is_active: true,
               auto_synthesize: false,
-              tts_voice: 'Kore'
+              tts_voice: 'Charon'
             });
             setStep('agents_setup');
           }
@@ -202,10 +202,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
               channels: configData.channels || ['telegram'],
               tone: configData.tone || 'friendly',
               autonomy_level: configData.autonomy_level || 'full',
-              voice_id: 'Kore',
+              voice_id: 'Charon',
               is_active: true,
               auto_synthesize: false,
-              tts_voice: 'Kore'
+              tts_voice: 'Charon'
             });
 
             initializeDefaultAgents(configData);
@@ -237,10 +237,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
       channels: ['telegram', 'whatsapp'],
       tone: 'friendly' as const,
       autonomy_level: 'full' as const,
-      voice_id: 'Kore',
+      voice_id: 'Charon',
       is_active: true,
       auto_synthesize: false,
-      tts_voice: 'Kore'
+      tts_voice: 'Charon'
     };
     setDetectedConfig(defaultData);
     initializeDefaultAgents(defaultData);
@@ -728,15 +728,18 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
                           Выбор голоса ИИ:
                         </label>
                         <select
-                          value={detectedConfig.tts_voice || 'Kore'}
-                          onChange={e => setDetectedConfig({ ...detectedConfig, tts_voice: e.target.value })}
+                          value={detectedConfig.tts_voice || 'Charon'}
+                          onChange={e => setDetectedConfig({ ...detectedConfig, tts_voice: e.target.value, voice_id: e.target.value })}
                           className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-accent focus:bg-black/60 transition-all font-light"
                         >
-                          <option value="Kore">Kore</option>
-                          <option value="Puck">Puck</option>
-                          <option value="Charon">Charon</option>
-                          <option value="Fenrir">Fenrir</option>
-                          <option value="Zephyr">Zephyr</option>
+                          <option value="Charon">Charon (Мужской специалист)</option>
+                          <option value="Orus">Orus (Уверенный мужской)</option>
+                          <option value="Alnilam">Alnilam (Глубокий мужской)</option>
+                          <option value="Fenrir">Fenrir (Бархатный мужской)</option>
+                          <option value="Puck">Puck (Энергичный мужской)</option>
+                          <option value="Kore">Kore (Теплый женский)</option>
+                          <option value="Aoede">Aoede (Мелодичный женский)</option>
+                          <option value="Zephyr">Zephyr (Мягкий)</option>
                         </select>
                       </div>
                     </div>
