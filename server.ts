@@ -7,6 +7,8 @@ import { evaluate } from "mathjs";
 import { sqliteDb } from "./db";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import Groq from 'groq-sdk';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -134,6 +136,62 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
       return res.status(200).json({ ok: true, ignored: "invalid_secret" });
     }
 
+    const chatIdStr = extractMaxChatId(payload);
+    if (!chatIdStr) {
+      console.error('❌ CRITICAL: chatId не найден в MAX payload', JSON.stringify(payload).slice(0, 500));
+      return res.status(200).send('ok');
+    }
+    const chatId = chatIdStr;
+
+    const body = req.body?.body || req.body;
+    const message = body?.message || {};
+    const attachments = message?.attachments || [];
+    let userText = message?.body?.text || '';
+
+    if (!userText.trim()) {
+      const voice = attachments.find((a: any) => a?.type === 'audio' || a?.payload?.url || a?.url);
+      if (voice?.payload?.url || voice?.url) {
+        userText = await transcribeAudio(voice.payload?.url || voice.url);
+        console.log('🎧 Recognized voice:', userText);
+      }
+    }
+
+    if (userText.trim()) {
+      const lower = userText.toLowerCase().trim();
+
+      if (lower.startsWith('/img ') || lower.startsWith('нарисуй ')) {
+        const p = userText.replace(/^(\/img |нарисуй )/i, '').trim();
+        const img = await generateImage(p);
+        if (img) await sendImageToMax(chatId, img);
+        else await safeSendMessageToChat(maxBot, chatId, 'Не удалось создать изображение.');
+        return res.status(200).send('ok');
+      }
+
+      if (lower.startsWith('/code ')) {
+        const p = userText.replace(/^\/code /i, '').trim();
+        const code = await callLLM([
+          { role: 'system', content: 'Ты экспертный программист. Генерируй полный рабочий код с комментариями на русском.' },
+          { role: 'user', content: p }
+        ]);
+        await safeSendMessageToChat(maxBot, chatId, `💻 Код:\n\n${code}`);
+        return res.status(200).send('ok');
+      }
+
+      // Sync userText back to message payload so that standard handlers receive it
+      if (payload.body?.message?.body) {
+        payload.body.message.body.text = userText;
+      }
+      if (payload.message?.body) {
+        payload.message.body.text = userText;
+      }
+      payload.text = userText;
+    } else {
+      const updateType = payload.update_type || payload.event || payload.type;
+      if (updateType !== "bot_started" && payload.message?.body?.text !== "/start") {
+        return res.status(200).send('ok');
+      }
+    }
+
     let handledBySdk = false;
 
     // 2. Штатный механизм вебхуков библиотеки @maxhub/max-bot-api
@@ -204,24 +262,7 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
         const fileUrl = audioAttachment.payload?.url || audioAttachment.url;
         if (fileUrl) {
           try {
-            const resp = await fetch(fileUrl);
-            const buf = Buffer.from(await resp.arrayBuffer());
-            const b64 = buf.toString("base64");
-
-            let transcript = "";
-            if (ai) {
-              const tr = await generateWithFallback(
-                () => [{
-                  role: "user",
-                  parts: [
-                    { inlineData: { mimeType: "audio/mpeg", data: b64 } },
-                    { text: "Верни ТОЛЬКО точную транскрипцию речи на русском, без комментариев." }
-                  ]
-                }],
-                { temperature: 0 }
-              );
-              transcript = (tr?.text || "").trim();
-            }
+            const transcript = await transcribeAudio(fileUrl);
 
             if (transcript && chatId) {
               maxAdapter.handleWebhookMessage(String(chatId), transcript, { isVoice: true });
@@ -230,8 +271,12 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
               await safeSendMessageToChat(maxBot, chatId, "Не расслышал, повтори.");
             }
             return res.status(200).json({ ok: true, isVoice: true, transcript });
-          } catch (err) {
-            logger.error("Error processing Max voice attachment in webhook", { error: err });
+          } catch (err: any) {
+            console.error("❌ Audio attachment transcription failed:", err?.message);
+            if (maxBot && chatId) {
+              await safeSendMessageToChat(maxBot, chatId, "Не расслышал, повтори.");
+            }
+            return res.status(200).json({ ok: true, error: err?.message });
           }
         }
       }
@@ -346,57 +391,130 @@ if (apiKey) {
   logger.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
 }
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = "llama-3.3-70b-versatile";
 
-const MODEL_CHAIN = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.7-flash"];
+const MODEL_CHAIN = ["gemma2-9b-it", "llama-3.3-70b-versatile"];
 
-async function generateWithFallback(buildContents: () => any, cfg: any) {
-  let lastErr: any;
-  const start = Date.now();
-
-  // Sanitize tools to prevent combining googleSearch + functionDeclarations in a single request (causes 400 INVALID_ARGUMENT)
-  let sanitizedCfg = cfg;
-  if (cfg?.tools && Array.isArray(cfg.tools)) {
-    const hasFunc = cfg.tools.some((t: any) => t.functionDeclarations);
-    const hasSearch = cfg.tools.some((t: any) => t.googleSearch);
-    if (hasFunc && hasSearch) {
-      sanitizedCfg = {
-        ...cfg,
-        tools: cfg.tools.filter((t: any) => !t.googleSearch)
-      };
+let groqInstance: Groq | null = null;
+function getGroq(): Groq {
+  if (!groqInstance) {
+    const key = process.env.GROQ_API_KEY;
+    if (!key) {
+      console.warn("⚠️ GROQ_API_KEY is not defined in the environment. Creating a placeholder client.");
+      groqInstance = new Groq({ apiKey: "missing_api_key" });
+    } else {
+      groqInstance = new Groq({ apiKey: key });
     }
   }
+  return groqInstance;
+}
 
-  for (const m of MODEL_CHAIN) {
-    // Up to 2 attempts per model for transient errors like 503 / UNAVAILABLE / 429
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        if (!ai) throw new Error("Gemini client not initialized");
-        const contents = buildContents();
-        const res = await ai.models.generateContent({ model: m, contents, config: sanitizedCfg });
-        const durationSec = (Date.now() - start) / 1000;
-        metrics.incrementCounter("llm_calls_total", { model: m, status: "success" });
-        metrics.observeHistogram("llm_call_duration_seconds", durationSec, { model: m });
-        logger.info(`LLM call succeeded on model ${m} (attempt ${attempt + 1})`, { model: m, durationMs: Date.now() - start });
-        return res;
-      } catch (e: any) {
-        lastErr = e;
-        const errMsg = e?.message || String(e);
-        const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand") || errMsg.includes("RESOURCE_EXHAUSTED");
-        
-        if (isTransient && attempt === 0) {
-          logger.info(`Model ${m} encountered transient demand spike (${errMsg.substring(0, 80)}). Retrying or falling back...`);
-          await new Promise(r => setTimeout(r, 400));
-          continue;
+async function callLLM(messages: Array<{role: string, content: string}>): Promise<string> {
+  try {
+    const groq = getGroq();
+    const completion = await groq.chat.completions.create({
+      messages: messages as any,
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+    return completion.choices[0]?.message?.content || 'Извините, ошибка генерации.';
+  } catch (err: any) {
+    console.error('❌ Groq LLM:', err?.status, err?.message);
+    if (err?.status === 429) {
+      const groq = getGroq();
+      const fb = await groq.chat.completions.create({
+        messages: messages as any,
+        model: 'gemma2-9b-it',
+        max_tokens: 1024,
+      });
+      return fb.choices[0]?.message?.content || 'Сервис временно перегружен.';
+    }
+    return 'Извините, временная ошибка.';
+  }
+}
+
+function convertGeminiToGroqMessages(contents: any, systemInstruction?: string): any[] {
+  const messages: any[] = [];
+  if (systemInstruction) {
+    messages.push({ role: 'system', content: systemInstruction });
+  }
+  
+  if (Array.isArray(contents)) {
+    for (const c of contents) {
+      let role = c.role;
+      if (role === 'model' || role === 'assistant') {
+        role = 'assistant';
+      } else {
+        role = 'user';
+      }
+      
+      let text = '';
+      if (Array.isArray(c.parts)) {
+        for (const p of c.parts) {
+          if (p.text) {
+            text += p.text;
+          }
         }
-
-        metrics.incrementCounter("llm_calls_total", { model: m, status: "error" });
-        logger.warn(`Model ${m} failed in fallback chain: ${errMsg}`, { model: m });
-        break; // proceed to next model in chain
+      } else if (typeof c.parts === 'string') {
+        text = c.parts;
+      }
+      
+      messages.push({ role, content: text });
+    }
+  } else if (typeof contents === 'string') {
+    messages.push({ role: 'user', content: contents });
+  } else if (contents && contents.parts) {
+    let role = contents.role === 'model' ? 'assistant' : 'user';
+    let text = '';
+    if (Array.isArray(contents.parts)) {
+      for (const p of contents.parts) {
+        if (p.text) text += p.text;
       }
     }
+    messages.push({ role, content: text });
   }
-  throw lastErr;
+  
+  return messages;
+}
+
+async function generateWithFallback(buildContents: () => any, cfg: any): Promise<any> {
+  try {
+    const contents = buildContents();
+    let sysInstText = '';
+    if (cfg?.systemInstruction) {
+      if (typeof cfg.systemInstruction === 'string') {
+        sysInstText = cfg.systemInstruction;
+      } else if (cfg.systemInstruction.parts) {
+        if (Array.isArray(cfg.systemInstruction.parts)) {
+          sysInstText = cfg.systemInstruction.parts.map((p: any) => p.text || '').join('');
+        } else {
+          sysInstText = String(cfg.systemInstruction.parts);
+        }
+      }
+    }
+
+    const messages = convertGeminiToGroqMessages(contents, sysInstText);
+    const textResult = await callLLM(messages);
+
+    return {
+      text: textResult,
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: textResult
+              }
+            ]
+          }
+        }
+      ]
+    };
+  } catch (err: any) {
+    console.error('❌ generateWithFallback failed via Groq:', err?.message || err);
+    throw err;
+  }
 }
 
 async function execTool(name: string, args: any): Promise<any> {
@@ -1627,101 +1745,115 @@ async function safeSendMessageToChat(
 
 // Helper to synthesize and send voice message to Max Bot
 async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | string, text: string, skipFallbackText = false): Promise<void> {
-  if (!botInstance) return;
-
-  const cleanId = cleanChatIdStr(chatId);
-  const numericChatId = parseInt(cleanId);
-
-  const voiceName = await getVoiceForChat(chatId);
-  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
-  const styledText = formatTtsText(text, voiceName);
-
-  let pcmPath: string | null = null;
-  let mp3Path: string | null = null;
-
   try {
-    if (!ai) {
-      throw new Error("Gemini AI client is not initialized.");
+    console.log('🎤 Edge TTS:', text.slice(0, 50));
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(
+      process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+    );
+    
+    const { audioStream } = tts.toStream(text);
+    const chunks: Buffer[] = [];
+    for await (const chunk of audioStream) {
+      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
     }
-
-    let base64Audio: string | undefined = undefined;
-    let lastTtsErr: any = null;
-
-    for (const m of TTS_MODEL_CHAIN) {
-      try {
-        const response = await ai.models.generateContent({
-          model: m,
-          contents: [{ parts: [{ text: styledText }] }],
-          config: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName }
-              }
-            }
-          }
-        });
-        const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (audio) {
-          base64Audio = audio;
-          console.log(`✅ TTS succeeded via model ${m}`);
-          break;
-        }
-      } catch (e: any) {
-        lastTtsErr = e;
-        console.warn(`⚠️ TTS model ${m} failed:`, e?.message || e);
-      }
+    const audioBuffer = Buffer.concat(chunks);
+    console.log('📦 TTS ready:', audioBuffer.length, 'bytes');
+    
+    if (audioBuffer.length < 1000) {
+      await safeSendMessageToChat(botInstance, chatId, text);
+      return;
     }
-
-    if (!base64Audio) {
-      throw lastTtsErr || new Error("No TTS model produced audio.");
-    }
-
-    const timestamp = Date.now();
-    const randomSuffix = Math.random().toString(36).substring(2, 8);
-    pcmPath = path.join(process.cwd(), `temp_${timestamp}_${randomSuffix}.pcm`);
-    mp3Path = path.join(process.cwd(), `temp_${timestamp}_${randomSuffix}.mp3`);
-
-    fs.writeFileSync(pcmPath, Buffer.from(base64Audio, "base64"));
-    await execFileAsync("ffmpeg", [
-      "-y", "-f", "s16le", "-ar", "24000", "-ac", "1",
-      "-i", pcmPath,
-      "-c:a", "libmp3lame", "-b:a", "128k",
-      mp3Path
-    ]);
-
-    if (!fs.existsSync(mp3Path)) {
-      throw new Error("ffmpeg conversion failed to produce mp3 file.");
-    }
-
-    const fileBuf = fs.readFileSync(mp3Path);
-    const uploadToken = await uploadFileToMax(fileBuf, "voice.mp3");
-
-    if (uploadToken) {
-      await safeSendMessageToChat(botInstance, numericChatId, "", {
-        attachments: [{ type: "audio", payload: { token: uploadToken } }]
-      });
-    } else {
-      await safeSendMessageToChat(botInstance, numericChatId, text);
-    }
+    
+    const MAX_TOKEN = process.env.MAX_BOT_TOKEN!;
+    const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
+      method: 'POST',
+      headers: { 'Authorization': MAX_TOKEN }
+    });
+    const { url, token } = await initRes.json();
+    
+    const formData = new FormData();
+    formData.append('data', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'voice.mp3');
+    await fetch(url, { method: 'POST', headers: { 'Authorization': MAX_TOKEN }, body: formData });
+    
+    await new Promise(r => setTimeout(r, 1200));
+    
+    await safeSendMessageToChat(botInstance, chatId, undefined, { type: 'audio', payload: { token } });
+    console.log('✅ Voice sent');
   } catch (err: any) {
-    console.warn("⚠️ Voice synthesis failed on all TTS models, falling back to text:", err.message || err);
-    if (!skipFallbackText) {
-      try {
-        await safeSendMessageToChat(botInstance, numericChatId, "Голосом сейчас не вышло — напишите задачу текстом, я отвечу.");
-      } catch (msgErr) {
-        console.error("Failed to send fallback text message to Max:", msgErr);
-      }
-    } else {
-      throw err;
-    }
-  } finally {
-    if (pcmPath && fs.existsSync(pcmPath)) {
-      try { fs.unlinkSync(pcmPath); } catch (e) {}
-    }
-    if (mp3Path && fs.existsSync(mp3Path)) {
-      try { fs.unlinkSync(mp3Path); } catch (e) {}
-    }
+    console.error('❌ TTS failed:', err?.message);
+    await safeSendMessageToChat(botInstance, chatId, text);
+  }
+}
+
+async function transcribeAudioBuffer(buf: Buffer): Promise<string> {
+  try {
+    const fsPromises = await import('fs/promises');
+    const tmp = `/tmp/voice_${Date.now()}.ogg`;
+    await fsPromises.writeFile(tmp, buf);
+    
+    const fileContent = await fsPromises.readFile(tmp);
+    const groq = getGroq();
+    const textObj = await groq.audio.transcriptions.create({
+      file: fileContent as any,
+      model: 'whisper-large-v3',
+      language: 'ru',
+    });
+    
+    const textStr = (textObj as any).text || String(textObj);
+    await fsPromises.unlink(tmp).catch(()=>{});
+    return textStr;
+  } catch (err: any) {
+    console.error('❌ STT buffer failed:', err?.message);
+    return '';
+  }
+}
+
+async function transcribeAudio(audioUrl: string): Promise<string> {
+  try {
+    console.log('🎧 STT download:', audioUrl.slice(0, 80));
+    const res = await fetch(audioUrl);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const textStr = await transcribeAudioBuffer(buf);
+    console.log('🎧 STT result:', textStr.slice(0, 100));
+    return textStr;
+  } catch (err: any) {
+    console.error('❌ STT failed:', err?.message);
+    return '';
+  }
+}
+
+async function generateImage(prompt: string): Promise<Buffer | null> {
+  try {
+    const encoded = encodeURIComponent(prompt);
+    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&seed=${Date.now()}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err: any) {
+    console.error('❌ Image gen failed:', err?.message);
+    return null;
+  }
+}
+
+async function sendImageToMax(chatId: string, imageBuffer: Buffer) {
+  try {
+    const MAX_TOKEN = process.env.MAX_BOT_TOKEN!;
+    const initRes = await fetch('https://platform-api.max.ru/uploads?type=image', {
+      method: 'POST', headers: { 'Authorization': MAX_TOKEN }
+    });
+    const { url, token } = await initRes.json();
+    
+    const fd = new FormData();
+    fd.append('data', new Blob([imageBuffer], {type:'image/jpeg'}), 'img.jpg');
+    await fetch(url, { method:'POST', headers:{'Authorization':MAX_TOKEN}, body:fd });
+    await new Promise(r=>setTimeout(r,1500));
+    
+    await safeSendMessageToChat(maxBot, chatId, undefined, { type:'image', payload:{token} });
+  } catch (err: any) {
+    console.error('❌ Image send failed:', err?.message);
   }
 }
 
@@ -2034,46 +2166,33 @@ async function processMultimodalMessage(
 
   if (wantsVoice) {
     try {
-      const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
-      const voiceName = config?.tts_voice || config?.voice_id || "Kore";
-      const styledText = formatTtsText(textResponse, voiceName);
-
-      for (const m of TTS_MODEL_CHAIN) {
-        try {
-          const voiceRes = await ai.models.generateContent({
-            model: m,
-            contents: [{ parts: [{ text: styledText }] }],
-            config: {
-              responseModalities: ["AUDIO"],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName }
-                }
-              }
-            }
-          });
-
-          const audioPart = voiceRes?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData && p.inlineData.mimeType?.startsWith("audio/"));
-          if (audioPart?.inlineData?.data) {
-            return {
-              textResponse: textResponse,
-              mediaType: 'voice',
-              audioBase64: audioPart.inlineData.data
-            };
-          }
-        } catch (innerTtsErr: any) {
-          console.warn(`Capability 4 TTS model ${m} failed:`, innerTtsErr?.message || innerTtsErr);
-        }
+      console.log('🎤 Edge TTS inside wantsVoice:', textResponse.slice(0, 50));
+      const tts = new MsEdgeTTS();
+      await tts.setMetadata(
+        process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+        OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+      );
+      
+      const { audioStream } = tts.toStream(textResponse);
+      const chunks: Buffer[] = [];
+      for await (const chunk of audioStream) {
+        if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
       }
+      const audioBuffer = Buffer.concat(chunks);
+      const base64Data = audioBuffer.toString('base64');
+      return {
+        textResponse: textResponse,
+        mediaType: 'voice',
+        audioBase64: base64Data
+      };
     } catch (ttsErr: any) {
       console.warn("TTS synthesis error / quota fallback:", ttsErr?.message || ttsErr);
-      if (isQuotaOrLimitError(ttsErr)) {
-        return {
-          textResponse: `Голосовая озвучка сейчас ограничена квотой API. Отвечаю вам текстом:\n\n${textResponse}`,
-          mediaType: 'text',
-          isQuotaDegraded: true
-        };
-      }
+      return {
+        textResponse: `Голосовая озвучка сейчас временно недоступна. Отвечаю вам текстом:\n\n${textResponse}`,
+        mediaType: 'text',
+        isQuotaDegraded: true
+      };
     }
   }
 
@@ -2730,24 +2849,7 @@ if (maxToken) {
         const fileUrl = audioAttachment.payload?.url;
         if (fileUrl) {
           try {
-            const resp = await fetch(fileUrl);
-            const buf = Buffer.from(await resp.arrayBuffer());
-            const b64 = buf.toString('base64');
-
-            let transcript = '';
-            if (ai) {
-              const tr = await generateWithFallback(
-                () => [{
-                  role: 'user',
-                  parts: [
-                    { inlineData: { mimeType: 'audio/mpeg', data: b64 } },
-                    { text: 'Верни ТОЛЬКО точную транскрипцию речи на русском, без комментариев.' }
-                  ]
-                }],
-                { temperature: 0 }
-              );
-              transcript = (tr?.text || '').trim();
-            }
+            const transcript = await transcribeAudio(fileUrl);
 
             if (transcript) {
               await handleIncomingText(parseInt(chatId), clientName, transcript, 'max', true);
@@ -3186,10 +3288,6 @@ app.post("/api/tts", async (req, res) => {
   const { text, voice, chatId } = req.body;
   if (!text) return res.status(400).json({ error: "Text is required." });
 
-  if (!ai) {
-    return res.status(503).json({ error: "AI client not initialized" });
-  }
-
   // Check for smart speaker voice wake words
   const wakeResult = detectVoiceWakeWord(text);
   let textToSynthesize = text;
@@ -3205,43 +3303,33 @@ app.post("/api/tts", async (req, res) => {
     targetVoice = (await getVoiceForChat(chatId)) || 'Kore';
   }
 
-  const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
-  const styledText = formatTtsText(textToSynthesize, targetVoice);
-
-  for (const m of TTS_MODEL_CHAIN) {
-    try {
-      const response = await ai.models.generateContent({
-        model: m,
-        contents: [{ parts: [{ text: styledText }] }],
-        config: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: targetVoice }
-            }
-          }
-        }
-      });
-      const rawAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (rawAudio) {
-        const pcmBuffer = Buffer.from(rawAudio, "base64");
-        const wavBuffer = pcmToWavBuffer(pcmBuffer, 24000, 1, 16);
-        const dataUrl = `data:audio/wav;base64,${wavBuffer.toString("base64")}`;
-        return res.json({
-          audioUrl: dataUrl,
-          voice: targetVoice,
-          wakeDetected: wakeResult.detected,
-          mode: wakeResult.mode,
-          confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
-          text: textToSynthesize
-        });
-      }
-    } catch (e: any) {
-      console.warn(`TTS endpoint model ${m} failed:`, e?.message || e);
+  try {
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(
+      process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+    );
+    
+    const { audioStream } = tts.toStream(textToSynthesize);
+    const chunks: Buffer[] = [];
+    for await (const chunk of audioStream) {
+      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
     }
+    const audioBuffer = Buffer.concat(chunks);
+    const dataUrl = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
+    return res.json({
+      audioUrl: dataUrl,
+      voice: targetVoice,
+      wakeDetected: wakeResult.detected,
+      mode: wakeResult.mode,
+      confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
+      text: textToSynthesize
+    });
+  } catch (e: any) {
+    console.error("TTS endpoint failed:", e?.message);
+    return res.status(500).json({ error: "Failed to generate audio from TTS." });
   }
-
-  return res.status(500).json({ error: "Failed to generate audio from TTS models." });
 });
 
 // ==========================================
@@ -4013,11 +4101,6 @@ app.post("/api/synthesize", async (req, res) => {
     return res.status(400).json({ error: "Text is required for synthesis." });
   }
 
-  if (!ai) {
-    // Simulated voice clone synthesis (returns empty or simulated audio data response)
-    return res.json({ audio: null, message: "Voice synthesis simulated (GEMINI_API_KEY is not defined)" });
-  }
-
   try {
     const wakeResult = detectVoiceWakeWord(text);
     let textToSynthesize = text;
@@ -4033,55 +4116,31 @@ app.post("/api/synthesize", async (req, res) => {
       targetVoice = (await getVoiceForChat(chatId)) || "Kore";
     }
 
-    const TTS_MODEL_CHAIN = ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
-    let base64Audio: string | undefined = undefined;
-    let lastTtsErr: any = null;
-    const styledText = formatTtsText(textToSynthesize, targetVoice);
-
-    for (const m of TTS_MODEL_CHAIN) {
-      try {
-        const response = await ai.models.generateContent({
-          model: m,
-          contents: [{ parts: [{ text: styledText }] }],
-          config: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: targetVoice }
-              }
-            }
-          }
-        });
-        const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (audio) {
-          base64Audio = audio;
-          console.log(`✅ TTS succeeded via model ${m}`);
-          break;
-        }
-      } catch (e: any) {
-        lastTtsErr = e;
-        console.warn(`⚠️ TTS model ${m} failed:`, e?.message || e);
-      }
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(
+      process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+    );
+    
+    const { audioStream } = tts.toStream(textToSynthesize);
+    const chunks: Buffer[] = [];
+    for await (const chunk of audioStream) {
+      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
     }
+    const audioBuffer = Buffer.concat(chunks);
+    const base64Audio = audioBuffer.toString('base64');
 
-    if (!base64Audio) {
-      throw lastTtsErr || new Error("No TTS model produced audio.");
-    }
-
-    if (base64Audio) {
-      res.json({
-        audio: base64Audio,
-        voice: targetVoice,
-        wakeDetected: wakeResult.detected,
-        mode: wakeResult.mode,
-        confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
-        text: textToSynthesize
-      });
-    } else {
-      res.status(500).json({ error: "No audio generated from the Gemini TTS model." });
-    }
+    res.json({
+      audio: base64Audio,
+      voice: targetVoice,
+      wakeDetected: wakeResult.detected,
+      mode: wakeResult.mode,
+      confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
+      text: textToSynthesize
+    });
   } catch (error: any) {
-    console.error("Gemini TTS Error:", error);
+    console.error("TTS Synthesis Error:", error);
     res.status(500).json({ error: error.message || "Failed to synthesize voice" });
   }
 });
@@ -4138,25 +4197,13 @@ app.post("/api/launch", async (req, res) => {
 
 app.post("/api/transcribe", async (req, res) => {
   try {
-    const { audio, mimeType } = req.body || {};
-    if (!audio || !ai) {
+    const { audio } = req.body || {};
+    if (!audio) {
       return res.json({ text: "" });
     }
 
-    const cleanMime = (mimeType || "audio/webm").split(";")[0].trim();
-
-    const response = await generateWithFallback(
-      () => [{
-        role: "user",
-        parts: [
-          { inlineData: { mimeType: cleanMime, data: audio } },
-          { text: "Верни ТОЛЬКО точную транскрипцию этой речи на русском языке, без комментариев и пояснений. Если речи нет — верни пустую строку." }
-        ]
-      }],
-      { temperature: 0 }
-    );
-
-    const text = (response.text || "").trim();
+    const buf = Buffer.from(audio, "base64");
+    const text = await transcribeAudioBuffer(buf);
     return res.json({ text });
   } catch (err: any) {
     console.error("Transcribe error:", err?.message || err);
@@ -4177,26 +4224,7 @@ app.post("/api/voice/transcribe", audioUpload.single("audio"), async (req, res) 
       return res.status(400).json({ error: "Файл записи не передан" });
     }
 
-    if (!ai) {
-      return res.status(503).json({ error: "Gemini API не настроен на сервере" });
-    }
-
-    const rawMime = req.file.mimetype || "audio/webm";
-    const mimeType = rawMime.split(";")[0].trim() || "audio/webm";
-    const base64Audio = req.file.buffer.toString("base64");
-
-    const response = await generateWithFallback(
-      () => [{
-        role: "user",
-        parts: [
-          { inlineData: { mimeType, data: base64Audio } },
-          { text: "Transcribe this audio to text. Return only the transcription, nothing else. Language: Russian." }
-        ]
-      }],
-      { temperature: 0 }
-    );
-
-    const text = (response.text || "").trim();
+    const text = await transcribeAudioBuffer(req.file.buffer);
     logger.info(`🎤 Voice transcribed (${req.file.size} bytes): "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
     const wakeResult = detectVoiceWakeWord(text);
