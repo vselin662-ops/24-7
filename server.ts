@@ -1778,10 +1778,66 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
     formData.append('data', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'voice.mp3');
     await fetch(url, { method: 'POST', headers: { 'Authorization': MAX_TOKEN }, body: formData });
     
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 2500)); // пауза для обработки файла
     
-    await safeSendMessageToChat(botInstance, chatId, undefined, { type: 'audio', payload: { token } });
-    console.log('✅ Voice sent');
+    console.log('📤 MAX SEND PAYLOAD:', JSON.stringify({
+      chat_id: parseInt(String(chatId)),
+      attachments: [{
+        type: 'audio',
+        payload: {
+          token,
+          filename: 'voice.mp3',
+          duration: Math.ceil(audioBuffer.length / 6000)
+        }
+      }]
+    }, null, 2));
+
+    const activeBot = botInstance || maxBot;
+
+    try {
+      if (activeBot) {
+        await activeBot.api.sendMessageToChat(parseInt(String(chatId)), '', {
+          attachments: [{
+            type: 'audio',
+            payload: {
+              token,
+              filename: 'voice.mp3',
+              duration: Math.ceil(audioBuffer.length / 6000)
+            } as any
+          }]
+        } as any);
+        console.log('✅ Voice sent via SDK with full payload');
+      } else {
+        throw new Error('No active bot instance available');
+      }
+    } catch (sdkErr: any) {
+      console.warn('⚠️ SDK send failed, trying REST API:', sdkErr?.message);
+      
+      const sendRes = await fetch('https://platform-api.max.ru/messages', {
+        method: 'POST',
+        headers: {
+          'Authorization': MAX_TOKEN,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          chat_id: parseInt(String(chatId)),
+          attachments: [{
+            type: 'audio',
+            payload: {
+              token,
+              filename: 'voice.mp3'
+            }
+          }]
+        })
+      });
+      
+      const sendData = await sendRes.json();
+      if (!sendRes.ok) {
+        console.error('❌ REST API send failed:', sendRes.status, JSON.stringify(sendData));
+        throw new Error(`MAX send error: ${sendRes.status}`);
+      }
+      console.log('✅ Voice sent via REST API');
+    }
   } catch (err: any) {
     console.error('❌ TTS failed:', err?.message);
     await safeSendMessageToChat(botInstance, chatId, text);
@@ -1851,7 +1907,9 @@ async function sendImageToMax(chatId: string, imageBuffer: Buffer) {
     await fetch(url, { method:'POST', headers:{'Authorization':MAX_TOKEN}, body:fd });
     await new Promise(r=>setTimeout(r,1500));
     
-    await safeSendMessageToChat(maxBot, chatId, undefined, { type:'image', payload:{token} });
+    await safeSendMessageToChat(maxBot, chatId, undefined, {
+      attachments: [{ type: 'image', payload: { token } }]
+    });
   } catch (err: any) {
     console.error('❌ Image send failed:', err?.message);
   }
