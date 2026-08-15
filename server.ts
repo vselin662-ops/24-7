@@ -183,7 +183,7 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
             await synthesizeAndSendVoice(maxBot, chatId, welcomeText, true);
           } catch (err: any) {}
           try {
-            await maxBot.api.sendMessageToChat(chatId, welcomeText);
+            await safeSendMessageToChat(maxBot, chatId, welcomeText);
           } catch (e) {
             logger.warn("Failed to send welcome text via maxBot in webhook", { error: e });
           }
@@ -222,7 +222,7 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
               maxAdapter.handleWebhookMessage(String(chatId), transcript, { isVoice: true });
               await handleIncomingText(chatId, clientName, transcript, "max", true);
             } else if (maxBot && chatId) {
-              await maxBot.api.sendMessageToChat(chatId, "Не расслышал, повтори.");
+              await safeSendMessageToChat(maxBot, chatId, "Не расслышал, повтори.");
             }
             return res.status(200).json({ ok: true, isVoice: true, transcript });
           } catch (err) {
@@ -1523,7 +1523,7 @@ app.post(["/api/max/send-message", "/api/telegram/send-message"], async (req, re
   const cleanId = cleanChatIdStr(chatId);
   if (maxBot) {
     try {
-      await maxBot.api.sendMessageToChat(parseInt(cleanId), text);
+      await safeSendMessageToChat(maxBot, cleanId, text);
       
       // Save directly to chats history
       const chats = getTelegramChats();
@@ -1542,6 +1542,66 @@ app.post(["/api/max/send-message", "/api/telegram/send-message"], async (req, re
     return res.status(400).json({ error: "Max Bot is not active." });
   }
 });
+
+// Helper to safely send messages with robust logs and retry fallbacks
+async function safeSendMessageToChat(
+  botInstance: Bot | null,
+  chatId: number | string,
+  text: string | null | undefined,
+  extra?: any
+): Promise<any> {
+  if (!botInstance) return null;
+  const cleanId = cleanChatIdStr(chatId);
+  const numericChatId = parseInt(cleanId, 10);
+  if (isNaN(numericChatId)) {
+    logger.error("❌ safeSendMessageToChat: invalid chatId", { chatId });
+    return null;
+  }
+
+  // If text is empty string and extra is provided, we omit it or pass null/undefined to avoid proto.payload
+  const textToSend = (text === "" && extra) ? undefined : text;
+
+  try {
+    logger.info(`Sending message to Max chat ${numericChatId}`, {
+      text: textToSend,
+      hasExtra: !!extra,
+      extraKeys: extra ? Object.keys(extra) : []
+    });
+
+    const message = await botInstance.api.sendMessageToChat(numericChatId, textToSend as any, extra);
+    logger.info(`✅ Message successfully sent to Max chat ${numericChatId}`);
+    return message;
+  } catch (err: any) {
+    logger.error("❌ Max send failed in safeSendMessageToChat!", {
+      chatId: numericChatId,
+      status: err?.status,
+      code: err?.code || err?.response?.code,
+      message: err?.message,
+      response: err?.response ? JSON.stringify(err.response) : undefined,
+      fullError: JSON.stringify(err)
+    });
+
+    // Fallback: If sending with extra/attachments failed, retry sending plain text
+    if (extra && text) {
+      try {
+        logger.info(`🔄 Attempting fallback plain-text send to Max chat ${numericChatId}...`);
+        const fallbackMsg = await botInstance.api.sendMessageToChat(numericChatId, text);
+        logger.info(`✅ Fallback plain-text sent successfully to Max chat ${numericChatId}`);
+        return fallbackMsg;
+      } catch (fallbackErr: any) {
+        logger.error("❌ Fallback plain-text send ALSO failed!", {
+          chatId: numericChatId,
+          status: fallbackErr?.status,
+          code: fallbackErr?.code || fallbackErr?.response?.code,
+          message: fallbackErr?.message,
+          response: fallbackErr?.response ? JSON.stringify(fallbackErr.response) : undefined
+        });
+      }
+    }
+
+    throw err;
+  }
+}
 
 // Helper to synthesize and send voice message to Max Bot
 async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | string, text: string, skipFallbackText = false): Promise<void> {
@@ -1616,17 +1676,17 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
     const uploadToken = await uploadFileToMax(fileBuf, "voice.mp3");
 
     if (uploadToken) {
-      await botInstance.api.sendMessageToChat(numericChatId, "", {
+      await safeSendMessageToChat(botInstance, numericChatId, "", {
         attachments: [{ type: "audio", payload: { token: uploadToken } }]
       });
     } else {
-      await botInstance.api.sendMessageToChat(numericChatId, text);
+      await safeSendMessageToChat(botInstance, numericChatId, text);
     }
   } catch (err: any) {
     console.warn("⚠️ Voice synthesis failed on all TTS models, falling back to text:", err.message || err);
     if (!skipFallbackText) {
       try {
-        await botInstance.api.sendMessageToChat(numericChatId, "Голосом сейчас не вышло — напишите задачу текстом, я отвечу.");
+        await safeSendMessageToChat(botInstance, numericChatId, "Голосом сейчас не вышло — напишите задачу текстом, я отвечу.");
       } catch (msgErr) {
         console.error("Failed to send fallback text message to Max:", msgErr);
       }
@@ -2172,7 +2232,7 @@ app.post("/api/chats/message", async (req, res) => {
         } catch (err: any) {
           console.warn("Outgoing voice failed, fallback to text:", err?.message || err);
           try {
-            await maxBot.api.sendMessageToChat(parseInt(cleanChatIdStr(chatId)), responseText);
+            await safeSendMessageToChat(maxBot, chatId, responseText);
           } catch (msgErr) {
             console.error("Failed to send fallback text message to Max:", msgErr);
           }
@@ -2468,7 +2528,7 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
         try {
           await synthesizeAndSendVoice(maxBot, chatId, "Приняла. Это важный вопрос — я совещаюсь с командой, это займёт около минуты, и вернусь с точным ответом.", true);
         } catch (e) {
-          try { await maxBot.api.sendMessageToChat(parseInt(cleanId), "Приняла, совещаюсь с командой — вернусь через минуту."); } catch(err){}
+          try { await safeSendMessageToChat(maxBot, cleanId, "Приняла, совещаюсь с командой — вернусь через минуту."); } catch(err){}
         }
       }
 
@@ -2537,31 +2597,31 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
         if (mmResult?.mediaType === 'image' && mmResult?.imageBuffer) {
           const uploadToken = await uploadFileToMax(mmResult.imageBuffer, 'image.jpg');
           if (uploadToken) {
-            await maxBot.api.sendMessageToChat(numericChatId, responseText, {
+            await safeSendMessageToChat(maxBot, numericChatId, responseText, {
               attachments: [{ type: 'image', payload: { token: uploadToken } }]
             });
           } else {
-            await maxBot.api.sendMessageToChat(numericChatId, responseText);
+            await safeSendMessageToChat(maxBot, numericChatId, responseText);
           }
         } else if (mmResult?.mediaType === 'code' && mmResult?.codeDetails) {
           const fileBuffer = Buffer.from(mmResult.codeDetails.code, 'utf-8');
           const uploadToken = await uploadFileToMax(fileBuffer, mmResult.codeDetails.filename || 'script.js');
           if (uploadToken) {
-            await maxBot.api.sendMessageToChat(numericChatId, responseText, {
+            await safeSendMessageToChat(maxBot, numericChatId, responseText, {
               attachments: [{ type: 'file', payload: { token: uploadToken } }]
             });
           } else {
-            await maxBot.api.sendMessageToChat(numericChatId, responseText);
+            await safeSendMessageToChat(maxBot, numericChatId, responseText);
           }
         } else if (mmResult?.mediaType === 'voice' && mmResult?.audioBase64) {
           await synthesizeAndSendVoice(maxBot, chatId, responseText, true);
         } else {
-          await maxBot.api.sendMessageToChat(numericChatId, responseText);
+          await safeSendMessageToChat(maxBot, numericChatId, responseText);
         }
       } catch (err: any) {
         console.warn("Max send failed, fallback to text:", err?.message || err);
         try {
-          await maxBot.api.sendMessageToChat(numericChatId, responseText);
+          await safeSendMessageToChat(maxBot, numericChatId, responseText);
         } catch (msgErr) {
           console.error("Failed to send fallback text message to Max:", msgErr);
         }
@@ -2620,7 +2680,7 @@ if (maxToken) {
       }
 
       try {
-        await maxBot?.api.sendMessageToChat(parseInt(chatId), welcomeText);
+        await safeSendMessageToChat(maxBot, chatId, welcomeText);
       } catch (e) {
         console.warn("Failed to send welcome text", e);
       }
@@ -2670,11 +2730,11 @@ if (maxToken) {
             if (transcript) {
               await handleIncomingText(parseInt(chatId), clientName, transcript, 'max', true);
             } else {
-              await maxBot!.api.sendMessageToChat(parseInt(chatId), 'Не расслышал, повтори.');
+              await safeSendMessageToChat(maxBot, chatId, 'Не расслышал, повтори.');
             }
           } catch (err) {
             console.error('VOICE FAIL:', err);
-            await maxBot!.api.sendMessageToChat(parseInt(chatId), 'Не расслышал, повтори.');
+            await safeSendMessageToChat(maxBot, chatId, 'Не расслышал, повтори.');
           }
         }
       }
