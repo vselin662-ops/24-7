@@ -12,7 +12,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import dotenv from "dotenv";
 import fs from "fs";
-import { Agent as UndiciAgent, setGlobalDispatcher, buildConnector } from "undici";
 import { Bot } from "@maxhub/max-bot-api";
 import * as pdf from "pdf-parse";
 import mammoth from "mammoth";
@@ -56,32 +55,8 @@ import {
 
 dotenv.config();
 
-// ============================================================================
-// TLS / Undici Custom Dispatcher for MAX Messenger API
-// Точечный workaround для национального CA серверов MAX (*.max.ru),
-// всё остальное (Gemini, Firebase, Cloud API и т.д.) проверяется СТРОГО с валидацией CA.
-// ============================================================================
-try {
-  const strictConnector = buildConnector({});
-  const maxInsecureConnector = buildConnector({ rejectUnauthorized: false });
-
-  const customDispatcher = new UndiciAgent({
-    connect(opts: any, cb: any) {
-      const hostname = (opts.hostname || opts.host || "").toLowerCase();
-      // Точечно для серверов MAX отключаем строгую проверку сертификата (национальный CA)
-      if (hostname === "max.ru" || hostname.endsWith(".max.ru")) {
-        return maxInsecureConnector(opts, cb);
-      }
-      // Для всех остальных хостов — обычное строгое соединение
-      return strictConnector(opts, cb);
-    }
-  });
-
-  setGlobalDispatcher(customDispatcher);
-  logger.info("🔒 TLS Global Dispatcher initialized: Strict validation for external APIs, targeted workaround for *.max.ru");
-} catch (tlsErr: any) {
-  logger.warn("Failed to initialize custom undici dispatcher:", { error: tlsErr?.message || tlsErr });
-}
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// Временный обход TLS для MAX API. TODO: заменить на NODE_EXTRA_CA_CERTS
 
 const execFileAsync = promisify(execFile);
 
