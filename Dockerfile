@@ -3,8 +3,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies for native modules (e.g. better-sqlite3) and ffmpeg
-RUN apk add --no-cache python3 make g++ ffmpeg
+# Install build dependencies for native modules (e.g. better-sqlite3), ffmpeg, and CA certificates
+RUN apk add --no-cache python3 make g++ ffmpeg ca-certificates && update-ca-certificates
 
 COPY package.json ./
 RUN npm install
@@ -20,8 +20,8 @@ LABEL description="SELIN Enterprise AI Core SaaS Server"
 
 WORKDIR /app
 
-# Install ffmpeg and runtime libraries
-RUN apk add --no-cache ffmpeg curl
+# Install ffmpeg, curl, and CA certificates for secure TLS trust stores
+RUN apk add --no-cache ffmpeg curl ca-certificates && update-ca-certificates
 
 ENV NODE_ENV=production
 ENV PORT=3000
