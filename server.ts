@@ -120,6 +120,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // ==========================================
 app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
   try {
+    console.log('📨 MAX WEBHOOK RAW:', JSON.stringify(req.body).slice(0, 800));
     logger.info("MAX webhook получен", { body: req.body });
 
     const payload = req.body || {};
@@ -159,8 +160,12 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
       const sender = payload.from || payload.sender || message.from || message.sender || {};
       const chat = payload.chat || message.chat || {};
 
-      const rawChatId = chat.id || message.chat_id || payload.chat_id || sender.id || payload.user_id || 0;
-      const chatId = parseInt(String(rawChatId), 10) || 0;
+      const chatIdStr = extractMaxChatId(payload);
+      if (!chatIdStr) {
+        console.error('❌ CRITICAL: chatId не найден в MAX payload', JSON.stringify(payload).slice(0, 500));
+        return res.status(200).send('ok');
+      }
+      const chatId = parseInt(chatIdStr, 10) || 0;
 
       const firstName = sender.first_name || sender.name?.split(" ")[0] || "";
       const lastName = sender.last_name || sender.name?.split(" ").slice(1).join(" ") || "";
@@ -1543,6 +1548,24 @@ app.post(["/api/max/send-message", "/api/telegram/send-message"], async (req, re
   }
 });
 
+// Helper to extract chatId from various payload pathways
+function extractMaxChatId(payload: any): string | null {
+  const candidates = [
+    payload?.body?.message?.recipient?.chat_id,
+    payload?.message?.recipient?.chat_id,
+    payload?.body?.chat_id,
+    payload?.chat_id,
+    payload?.chat?.id,
+    payload?.body?.message?.chat_id,
+  ];
+  for (const c of candidates) {
+    if (c !== undefined && c !== null && String(c).trim() !== '' && String(c) !== 'null') {
+      return String(c).trim();
+    }
+  }
+  return null;
+}
+
 // Helper to safely send messages with robust logs and retry fallbacks
 async function safeSendMessageToChat(
   botInstance: Bot | null,
@@ -1551,10 +1574,9 @@ async function safeSendMessageToChat(
   extra?: any
 ): Promise<any> {
   if (!botInstance) return null;
-  const cleanId = cleanChatIdStr(chatId);
-  const numericChatId = parseInt(cleanId, 10);
-  if (isNaN(numericChatId)) {
-    logger.error("❌ safeSendMessageToChat: invalid chatId", { chatId });
+  const numericId = parseInt(String(chatId), 10);
+  if (isNaN(numericId) || numericId <= 0) {
+    console.error('❌ safeSendMessageToChat: невалидный numericId', { raw: chatId, parsed: numericId });
     return null;
   }
 
@@ -1562,18 +1584,18 @@ async function safeSendMessageToChat(
   const textToSend = (text === "" && extra) ? undefined : text;
 
   try {
-    logger.info(`Sending message to Max chat ${numericChatId}`, {
+    logger.info(`Sending message to Max chat ${numericId}`, {
       text: textToSend,
       hasExtra: !!extra,
       extraKeys: extra ? Object.keys(extra) : []
     });
 
-    const message = await botInstance.api.sendMessageToChat(numericChatId, textToSend as any, extra);
-    logger.info(`✅ Message successfully sent to Max chat ${numericChatId}`);
+    const message = await botInstance.api.sendMessageToChat(numericId, textToSend as any, extra);
+    logger.info(`✅ Message successfully sent to Max chat ${numericId}`);
     return message;
   } catch (err: any) {
     logger.error("❌ Max send failed in safeSendMessageToChat!", {
-      chatId: numericChatId,
+      chatId: numericId,
       status: err?.status,
       code: err?.code || err?.response?.code,
       message: err?.message,
@@ -1584,13 +1606,13 @@ async function safeSendMessageToChat(
     // Fallback: If sending with extra/attachments failed, retry sending plain text
     if (extra && text) {
       try {
-        logger.info(`🔄 Attempting fallback plain-text send to Max chat ${numericChatId}...`);
-        const fallbackMsg = await botInstance.api.sendMessageToChat(numericChatId, text);
-        logger.info(`✅ Fallback plain-text sent successfully to Max chat ${numericChatId}`);
+        logger.info(`🔄 Attempting fallback plain-text send to Max chat ${numericId}...`);
+        const fallbackMsg = await botInstance.api.sendMessageToChat(numericId, text);
+        logger.info(`✅ Fallback plain-text sent successfully to Max chat ${numericId}`);
         return fallbackMsg;
       } catch (fallbackErr: any) {
         logger.error("❌ Fallback plain-text send ALSO failed!", {
-          chatId: numericChatId,
+          chatId: numericId,
           status: fallbackErr?.status,
           code: fallbackErr?.code || fallbackErr?.response?.code,
           message: fallbackErr?.message,
@@ -2661,7 +2683,7 @@ if (maxToken) {
 
     // /start analogue in Max: bot_started event
     maxBot.on('bot_started', async (ctx: any) => {
-      const chatId = String(ctx.chat?.id || ctx.from?.id);
+      const chatId = extractMaxChatId(ctx) || String(ctx.chat?.id || ctx.from?.id);
       const firstName = ctx.from?.name?.split(' ')[0] || '';
       const nameGreeting = firstName ? `Привет, ${firstName}!` : "Привет!";
 
@@ -2689,7 +2711,7 @@ if (maxToken) {
 
     // Handle all incoming messages
     maxBot.on('message_created', async (ctx: any) => {
-      const chatId = String(ctx.chat?.id || ctx.from?.id);
+      const chatId = extractMaxChatId(ctx) || String(ctx.chat?.id || ctx.from?.id);
       const firstName = ctx.from?.name?.split(' ')[0] || '';
       const lastName = ctx.from?.name?.split(' ').slice(1).join(' ') || '';
       const clientName = `${firstName} ${lastName}`.trim() || `Клиент #${chatId}`;
