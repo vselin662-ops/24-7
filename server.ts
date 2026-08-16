@@ -296,6 +296,7 @@ function getGroq(): Groq {
 }
 
 async function callLLM(messages: Array<{role: string, content: string}>): Promise<string> {
+  // Если запрос требует актуальных данных (цены, наличие товаров), LLM должен предупредить об этом или дать общие рекомендации по проверке цен на агрегаторах.
   try {
     const groq = getGroq();
     const completion = await groq.chat.completions.create({
@@ -1578,7 +1579,8 @@ async function safeSendMessageToChat(
   extra?: any
 ): Promise<any> {
   if (!botInstance) return null;
-  const numericId = parseInt(String(chatId), 10);
+  const cleanIdStr = String(chatId).replace(/^[a-z_]+/, '');
+  const numericId = parseInt(cleanIdStr, 10);
   if (isNaN(numericId) || numericId <= 0) {
     console.error('❌ safeSendMessageToChat: невалидный numericId', { raw: chatId, parsed: numericId });
     return null;
@@ -1630,7 +1632,28 @@ async function safeSendMessageToChat(
 }
 
 // Helper to synthesize and send voice message to Max Bot
-async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | string, text: string, skipFallbackText = false): Promise<void> {
+async function synthesizeAndSendVoice(
+  botInstanceOrChatId: any,
+  chatIdOrText: any,
+  textOrSkip?: any,
+  skipFallbackText = false
+): Promise<void> {
+  let chatId: string;
+  let text: string;
+  let botInstance: Bot | null = maxBot;
+
+  if (typeof botInstanceOrChatId === 'string' || typeof botInstanceOrChatId === 'number') {
+    chatId = String(botInstanceOrChatId);
+    text = String(chatIdOrText);
+    if (typeof textOrSkip === 'boolean') {
+      skipFallbackText = textOrSkip;
+    }
+  } else {
+    botInstance = botInstanceOrChatId;
+    chatId = String(chatIdOrText);
+    text = String(textOrSkip);
+  }
+
   try {
     console.log('🎤 TTS Start:', text.slice(0, 50));
     
@@ -1680,14 +1703,12 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
 
     // Шаг Б: Загрузка файла (FormData)
     const formData = new FormData();
-    // ВАЖНО: Используем тип audio/mpeg и расширение .mp3
     formData.append('data', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'voice.mp3');
     
     const uploadRes = await fetch(initData.url, {
       method: 'POST',
       headers: { 
         'Authorization': MAX_TOKEN 
-        // Не указываем Content-Type для FormData, браузер сам поставит boundary
       },
       body: formData
     });
@@ -1703,14 +1724,20 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
     await new Promise(r => setTimeout(r, 3000));
 
     // Шаг Г: Отправка сообщения с вложением
-    const numericChatId = parseInt(String(chatId), 10);
+    // Очищаем chatId от любых префиксов перед конвертацией в число
+    const cleanChatId = String(chatId).replace(/^[a-z_]+/, ''); 
+    const numericChatId = parseInt(cleanChatId, 10);
+
+    if (isNaN(numericChatId) || numericChatId <= 0) {
+      throw new Error('Invalid ChatID after cleaning');
+    }
     
     // Рассчитываем примерную длительность в миллисекундах для метаданных
     // MP3 48kbps mono ~ 6000 bytes per second
     const durationMs = Math.ceil((audioBuffer.length / 6000) * 1000);
 
     const messagePayload = {
-      chat_id: numericChatId,
+      chat_id: numericChatId, // Передаем ТОЛЬКО чистое число
       attachments: [{
         type: 'audio',
         payload: {
@@ -1722,6 +1749,10 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
       }]
     };
 
+    console.log('📤 Final Payload for MAX:', JSON.stringify({
+      chat_id: numericChatId,
+      token: initData.token.slice(0, 10) + '...'
+    }));
     console.log(' Sending message payload:', JSON.stringify(messagePayload));
 
     const sendRes = await fetch('https://platform-api.max.ru/messages', {
@@ -1738,10 +1769,10 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
       throw new Error(`Send message failed: ${sendRes.status} ${JSON.stringify(errData)}`);
     }
 
-    console.log('✅ Voice message delivered successfully');
+    console.log('✅ Voice Sent Successfully');
 
   } catch (err: any) {
-    console.error('❌ Voice Pipeline Critical Error:', err?.message);
+    console.error('❌ Voice Error:', err?.message);
     if (!skipFallbackText) {
       // Fallback на текст
       await safeSendMessageToChat(botInstance, chatId, text);
@@ -4871,20 +4902,73 @@ app.get("/api/info", (req, res) => {
   });
 });
 
+async function hasUserInteractedBefore(chatId: string): Promise<boolean> {
+  if (!sqliteDb) return true; // fallback to prevent infinite greeting loops if DB is not ready
+  try {
+    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    const row = sqliteDb.prepare("SELECT id FROM chats WHERE id = ?").get(cleanId);
+    return !!row;
+  } catch (err) {
+    console.error("❌ Error in hasUserInteractedBefore:", err);
+    return true; // safe fallback
+  }
+}
+
+async function markUserAsVisited(chatId: string): Promise<void> {
+  if (!sqliteDb) return;
+  try {
+    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    const now = new Date().toISOString();
+    sqliteDb.prepare("INSERT OR REPLACE INTO chats (id, tenant_id, data, updated_at) VALUES (?, ?, ?, ?)")
+      .run(cleanId, 'default', JSON.stringify({ visited: true }), now);
+  } catch (err) {
+    console.error("❌ Error in markUserAsVisited:", err);
+  }
+}
+
+const userModes = new Map<string, string>(); // In-memory cache
+
+async function getBotUserMode(chatId: string): Promise<string> {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (userModes.has(cleanId)) return userModes.get(cleanId)!;
+  if (!sqliteDb) return 'voice';
+  try {
+    const row = sqliteDb.prepare("SELECT active_mode FROM conversation_context WHERE tenant_id = ?").get(cleanId);
+    return row ? row.active_mode : 'voice';
+  } catch (err) {
+    return 'voice';
+  }
+}
+
+async function setBotUserMode(chatId: string, mode: string): Promise<void> {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  userModes.set(cleanId, mode);
+  if (!sqliteDb) return;
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    sqliteDb.prepare("INSERT OR REPLACE INTO conversation_context (tenant_id, active_mode, updated_at) VALUES (?, ?, ?)")
+      .run(cleanId, mode, now);
+  } catch (err) {
+    console.error("❌ Error setting user mode in DB:", err);
+  }
+}
+
 async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean) {
   console.log(`📨 Processing Message from ${chatId} (Voice: ${isVoiceInput})`);
   
   const lower = userText.toLowerCase().trim();
   
   // Команды переключения режима
-  if (lower.includes('селин 123770') || lower.includes('selin 123770') || lower === '123770') {
+  if (lower.includes('селин 123770') || lower.includes('selin 123770') || lower === '123770' || lower === '/text_mode') {
+    await setBotUserMode(chatId, 'text');
     await safeSendMessageToChat(maxBot, chatId, '✅ Режим кодирования активирован. Отвечаю текстом.');
     return;
   }
   
-  if (lower.startsWith('/голос') || lower.startsWith('/voice')) {
-     await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
-     return;
+  if (lower.startsWith('/голос') || lower.startsWith('/voice') || lower === '/voice_mode') {
+    await setBotUserMode(chatId, 'voice');
+    await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
+    return;
   }
 
   // Обработка юридических запросов и удаления данных
@@ -4900,24 +4984,89 @@ async function handleIncomingMessage(chatId: string, userText: string, isVoiceIn
   }
 
   if (lower === '/delete' || lower === '/удалить_данные') {
-    // Здесь можно добавить реальную логику удаления из БД, пока просто подтверждаем
     await safeSendMessageToChat(maxBot, chatId, "✅ Запрос на удаление данных принят. Ваши данные будут удалены из активных систем в течение 24 часов.");
     return;
   }
 
+  // Проверка на первый визит
+  const isFirstVisit = !await hasUserInteractedBefore(chatId);
+  if (isFirstVisit) {
+    const welcomeVoiceText = "Приветствую! Я — Selin AI, ваш автономный цифровой штаб. Я работаю 24/7, чтобы освободить вас от рутины. Внутри меня живут мультиагенты: от теологов до инженеров по ремонту авто. Просто скажите голосом, какая у вас задача, и я настрою под неё команду экспертов. Вы в правильном месте.";
+    await synthesizeAndSendVoice(maxBot, chatId, welcomeVoiceText);
+    await markUserAsVisited(chatId);
+
+    // Отправляем красивое интерактивное текстовое меню с кнопками
+    const menuText = "Выберите направление, чтобы я активировал нужных агентов:\n\n" +
+      "1️⃣ 🛠️ Техническая поддержка (Ремонт, Инженерия)\n" +
+      "2️⃣ 💼 Бизнес и Финансы\n" +
+      "3️⃣ 📖 Духовность и Теология\n" +
+      "4️⃣ 💻 Программирование и IT\n" +
+      "5️⃣ 🗣️ Свободный диалог";
+    await safeSendMessageToChat(maxBot, chatId, menuText);
+    return;
+  }
+
+  // Определение специального направления на основе ввода
+  let activePrompt = '';
+  if (lower === '1' || lower.includes('техническая поддержка') || lower.includes('ремонт') || lower.includes('инженерия') || lower.includes('починить')) {
+    activePrompt = `Ты экспертный технический консультант, автомеханик и инженер по ремонту. 
+Когда пользователь задает технический или ремонтный вопрос (например, "как исправить вмятину", "как отремонтировать крыло"), ты должен предоставить ПОЛНЫЙ, глубокий пошаговый мануал:
+- Пошаговая детальная инструкция (Шаг 1, Шаг 2...).
+- Список всех необходимых инструментов и материалов (с конкретными марками, брендами).
+- Советы по экономии (где и как приобрести дешевле, на что обратить внимание при выборе).
+- Предупреждения о технике безопасности при проведении работ.
+Отвечай профессионально, структурированно, без лишней "воды".`;
+  } else if (lower === '2' || lower.includes('бизнес и финансы') || lower.includes('бизнес') || lower.includes('финансы') || lower.includes('стартап')) {
+    activePrompt = `Ты профессиональный бизнес-консультант, финансовый аналитик и стратег. 
+Давай глубокие ответы на вопросы о бизнесе, планировании, маркетинге, стартапах, инвестициях и бюджетировании. 
+Приводи конкретные практические шаги, расчетные формулы, примеры из практики и полезные концепции.`;
+  } else if (lower === '3' || lower.includes('духовность и теология') || lower.includes('теология') || lower.includes('библия') || lower.includes('священное писание')) {
+    activePrompt = `Ты глубокий теолог, эксперт по Священным Писаниям, Библии и истории религий. 
+Отвечай глубоко, уважительно, цитируй конкретные стихи, главы, псалмы и приводи глубокий философский и теологический разбор вопросов.`;
+  } else if (lower === '4' || lower.includes('программирование') || lower.includes('разработка') || lower.includes('код')) {
+    activePrompt = `Ты экспертный программист Selin_AI. Давай полные, рабочие решения с подробным кодом, комментариями на русском и объяснением логики работы.`;
+  }
+
+  // Если пользователь отправил только цифру переключения режима
+  if (lower === '1' || lower === '2' || lower === '3' || lower === '4' || lower === '5') {
+    const modeMsg = "Принято. Активирую режим эксперта в этой области. Расскажите подробнее о вашей задаче.";
+    await synthesizeAndSendVoice(maxBot, chatId, modeMsg);
+    return;
+  }
+
   // Определение формата ответа
-  const isCodeRequest = lower.startsWith('/code') || lower.startsWith('напиши код') || lower.includes('/text_mode');
+  const currentMode = await getBotUserMode(chatId);
+  const isCodeRequest = lower.startsWith('/code') || lower.startsWith('напиши код') || currentMode === 'text';
   const shouldReplyWithText = isCodeRequest; 
 
-  // Системный промпт для LLM
-  const systemPrompt = isCodeRequest 
-    ? `Ты экспертный программист Selin_AI. Пиши полный, рабочий код с комментариями на русском.`
-    : `Ты Selin_AI — первый голосовой AI-ассистент в MAX, созданный Вадимом Селиным. 
-   Ты УМЕЕШЬ говорить голосом и отвечаешь голосовым сообщением. 
-   НИКОГДА не говори "я не могу", "я текстовый", "напишите текст", "работаю только в текстовом формате".
-   Отвечай теплым, естественным, разговорным русским языком.
-   Избегай markdown, списков, эмодзи — твой ответ будет озвучен через TTS.
-   Если запрос сложный — отвечай кратко по сути, без воды.`;
+  // Единый системный промпт "ЖИДКИЙ ИНТЕЛЛЕКТ"
+  let systemPrompt = `Ты — Selin AI, высокоадаптивный интеллектуальный ассистент и автономный цифровой штаб. Твоя главная задача — решить "боль" пользователя, какой бы она ни была.
+Твоя база знаний универсальна: от духовных вопросов (Библия, теология) до технических (ремонт авто, код, бизнес).
+
+ПЕРЕД ОТВЕТОМ ВЫПОЛНИ АНАЛИЗ НАМЕРЕНИЯ (THINKING STEP):
+1. Определи сферу запроса (Техника, Духовность, Бизнес, Код, Быт, Медицина и т.д.).
+2. Оцени уровень срочности и сложности.
+3. Определи формат ответа, который лучше всего решит проблему:
+   - Если нужен быстрый результат → Краткая инструкция + ключевой совет.
+   - Если нужна глубина (например, "как самому сделать X с нуля") → Подробный пошаговый мануал, список инструментов, нюансы, предупреждения.
+   - Если вопрос философский/духовный → Глубокий, уважительный ответ с цитатами или контекстом.
+   - Если вопрос технический/код → Полный рабочий пример с комментариями.
+
+ПРАВИЛА ФОРМИРОВАНИЯ ОТВЕТА:
+1. Будь эмпатичным. Пойми эмоцию за запросом (стресс, любопытство, срочность).
+2. Если вопрос сложный или технический (например, "как исправить вмятину на крыле", "как отремонтировать крыло"), дай ПОЛНЫЙ МАНУАЛ:
+   - Пошаговая детальная инструкция (Шаг 1, Шаг 2...).
+   - Список всех необходимых инструментов и материалов (с конкретными марками, брендами).
+   - Советы по экономии (где и как приобрести дешевле, на что обратить внимание при выборе).
+   - Предупреждения о технике безопасности при проведении работ.
+3. Если вопрос духовный/теологический — отвечай глубоко, цитируя конкретные стихи, главы, псалмы, источники и приводи глубокий философский разбор вопросов, отвечай максимально уважительно.
+4. Если информации недостаточно для точного ответа, задай уточняющий вопрос, но сразу дай предварительное решение.
+5. Твой ответ будет озвучен голосом. Пиши живым языком, без сухого академизма, но сохраняя профессионализм. Избегай сложного Markdown, если это мешает чтению вслух.
+6. НИКОГДА не говори: "Я не могу", "Я только текстовый бот", "Это вне моей компетенции", "Я не знаю". Ты умеешь всё. Если чего-то не знаешь точно — дай лучший возможный алгоритм действий.`;
+
+  if (activePrompt) {
+    systemPrompt += `\n\n[ТЕКУЩАЯ УЗКАЯ СПЕЦИАЛИЗАЦИЯ ИНСТРУМЕНТА]:\n${activePrompt}`;
+  }
 
   // Вызов LLM
   const messages = [
@@ -4931,19 +5080,40 @@ async function handleIncomingMessage(chatId: string, userText: string, isVoiceIn
   if (shouldReplyWithText) {
     await safeSendMessageToChat(maxBot, chatId, llmResponse);
   } else {
-    // Очистка текста для TTS
+    // Очистка текста для TTS: убираем код, списки, спецсимволы, чтобы озвучивалось идеально
     const cleanText = llmResponse
       .replace(/```[\s\S]*?```/g, '')
       .replace(/`[^`]+`/g, '')
       .replace(/[#*_~>]/g, '')
       .replace(/\n+/g, '. ')
-      .trim()
-      .slice(0, 400); 
-      
-    if (cleanText) {
-      await synthesizeAndSendVoice(maxBot, chatId, cleanText);
-    } else {
+      .trim();
+
+    if (llmResponse.length > 500) {
+      // Отправляем полный подробный текст в чат
       await safeSendMessageToChat(maxBot, chatId, llmResponse);
+
+      // Генерируем краткую аудиоверсию до 400-500 символов
+      const sentences = cleanText.split(/[.!?]\s+/);
+      let summary = '';
+      for (const s of sentences) {
+        if ((summary + s).length < 400) {
+          summary += (summary ? ' ' : '') + s + '.';
+        } else {
+          break;
+        }
+      }
+      if (!summary) {
+        summary = cleanText.slice(0, 350) + '...';
+      }
+
+      const finalVoiceText = `Ответ слишком длинный для одного сообщения, я прислал его текстом, но могу озвучить главные шаги: ${summary}`;
+      await synthesizeAndSendVoice(maxBot, chatId, finalVoiceText);
+    } else {
+      if (cleanText) {
+        await synthesizeAndSendVoice(maxBot, chatId, cleanText);
+      } else {
+        await safeSendMessageToChat(maxBot, chatId, llmResponse);
+      }
     }
   }
 }
