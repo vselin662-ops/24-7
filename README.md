@@ -115,3 +115,12 @@ docker run -d -p 3000:3000 --env-file .env selin-ai
 ## Лицензия
 
 Proprietary — Selin AI © 2026
+
+##  Legal & Contacts
+
+- **Author:** Selin Vadim Yurievich
+- **Email:** vselin662@gmail.com
+- **License:** Proprietary (See [LICENSE](docs/LICENSE.md))
+- **Privacy Policy:** See [PRIVACY_POLICY](docs/PRIVACY_POLICY.md)
+- **Architecture:** See [ARCHITECTURE](docs/ARCHITECTURE.md)
+

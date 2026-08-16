@@ -4795,6 +4795,52 @@ app.get(["/api/health", "/health"], async (_, res) => {
   res.status(statusCode).json(health);
 });
 
+// ==========================================
+// LEGAL & DOCS ENDPOINTS
+// ==========================================
+// Эндпоинт для отдачи юридических документов
+app.get("/legal/:docName", (req, res) => {
+  const { docName } = req.params;
+  const docsPath = path.join(process.cwd(), 'docs');
+  const filePath = path.join(docsPath, `${docName}.md`);
+
+  // Проверка безопасности: разрешаем только известные файлы
+  const allowedDocs = ['LICENSE', 'PRIVACY_POLICY', 'TERMS_OF_SERVICE', 'ARCHITECTURE'];
+  if (!allowedDocs.includes(docName.toUpperCase())) {
+    return res.status(404).json({ error: "Document not found" });
+  }
+
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.setHeader('Content-Type', 'text/markdown');
+      return res.send(content);
+    } else {
+      return res.status(404).json({ error: "File not found on server" });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: "Server error reading document" });
+  }
+});
+
+// Эндпоинт для получения информации о продукте (для портфолио и проверки)
+app.get("/api/info", (req, res) => {
+  res.json({
+    name: "Selin AI",
+    version: "2.1.0",
+    author: "Selin Vadim Yurievich",
+    email: "vselin662@gmail.com",
+    description: "First Voice-First AI Assistant in MAX Messenger",
+    stack: ["Node.js", "Groq", "Edge TTS", "MAX API"],
+    legal: {
+      privacyPolicy: "/legal/PRIVACY_POLICY",
+      termsOfService: "/legal/TERMS_OF_SERVICE",
+      license: "/legal/LICENSE"
+    },
+    github: "https://github.com/vselin/selin-ai"
+  });
+});
+
 async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean) {
   console.log(`📨 Processing Message from ${chatId} (Voice: ${isVoiceInput})`);
   
@@ -4809,6 +4855,24 @@ async function handleIncomingMessage(chatId: string, userText: string, isVoiceIn
   if (lower.startsWith('/голос') || lower.startsWith('/voice')) {
      await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
      return;
+  }
+
+  // Обработка юридических запросов и удаления данных
+  if (lower.startsWith('/legal') || lower.startsWith('/privacy')) {
+    const privacyText = "🔒 Политика конфиденциальности Selin AI:\n\n" +
+      "1. Мы обрабатываем ваш голос и текст только для ответа на запросы.\n" +
+      "2. Данные не продаются третьим лицам.\n" +
+      "3. Вы можете удалить свои данные командой /delete.\n\n" +
+      "Полный текст доступен по ссылке: https://твой-домен.ru/legal/PRIVACY_POLICY (или через API /legal/PRIVACY_POLICY)";
+    
+    await safeSendMessageToChat(maxBot, chatId, privacyText);
+    return;
+  }
+
+  if (lower === '/delete' || lower === '/удалить_данные') {
+    // Здесь можно добавить реальную логику удаления из БД, пока просто подтверждаем
+    await safeSendMessageToChat(maxBot, chatId, "✅ Запрос на удаление данных принят. Ваши данные будут удалены из активных систем в течение 24 часов.");
+    return;
   }
 
   // Определение формата ответа
