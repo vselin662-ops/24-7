@@ -148,42 +148,77 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
     const text = message?.body?.text || '';
     const attachments = message?.attachments || [];
 
+    const fromObj = payload.from || body?.from || message?.from || {};
+    const firstName = fromObj?.name?.split(' ')[0] || '';
+    const lastName = fromObj?.name?.split(' ').slice(1).join(' ') || '';
+    const clientName = `${firstName} ${lastName}`.trim() || `Клиент #${chatId}`;
+
     let userText = text;
+    let isVoice = false;
 
     // Распознавание голосового
-    if (!userText.trim() && attachments.length > 0) {
-      const voice = attachments.find((a: any) => 
-        a?.type === 'audio' || 
-        a?.type === 'voice' || 
-        a?.payload?.url ||
-        a?.url
-      );
+    const voice = attachments.find((a: any) => 
+      a?.type === 'audio' || 
+      a?.type === 'voice' || 
+      a?.payload?.url ||
+      a?.url ||
+      a?.payload?.token ||
+      a?.token
+    );
+    
+    if (voice) {
+      isVoice = true;
+      let audioUrl = voice.payload?.url || voice.url;
+      if (!audioUrl && voice.payload?.token) {
+        audioUrl = `https://platform-api.max.ru/uploads/${voice.payload.token}`;
+      } else if (!audioUrl && voice.token) {
+        audioUrl = `https://platform-api.max.ru/uploads/${voice.token}`;
+      }
       
-      if (voice) {
-        const audioUrl = voice.payload?.url || voice.url;
-        console.log('🎧 Voice detected, URL:', audioUrl?.slice(0, 80));
-        
-        if (audioUrl) {
-          userText = await transcribeAudio(audioUrl);
-          console.log('🎧 STT result:', userText);
-        }
+      console.log('🎧 Voice detected, URL:', audioUrl?.slice(0, 80));
+      
+      if (audioUrl) {
+        userText = await transcribeAudio(audioUrl);
+        console.log('🎧 STT result:', userText);
       }
     }
 
-    if (!userText.trim()) {
-      const updateType = payload.update_type || payload.event || payload.type;
-      if (updateType === "bot_started" || text === "/start") {
-        const welcomeText = `Привет! Я твой персональный AI-консьерж Selin. Чем могу помочь?`;
-        await safeSendMessageToChat(maxBot, chatId, welcomeText);
-        return res.status(200).send('ok');
+    const updateType = payload.update_type || payload.event || payload.type;
+    const isStart = updateType === "bot_started" || userText.trim() === "/start";
+
+    if (isStart) {
+      const userConfig = await getUserConfigByChatId(chatId);
+      let welcomeText = "";
+      if (userConfig && !userConfig.is_universal) {
+        welcomeText = `Привет, ${firstName || "друг"}! Я — ваш голосовой ИИ-ассистент компании "${userConfig.business_name}". Готов принимать заявки, отвечать клиентам и помогать в работе 24/7. Чем могу помочь?`;
+      } else {
+        welcomeText = `Привет, ${firstName || "друг"}! Я твой персональный AI-консьерж Selin AI. Я могу: 🚕 Вызвать такси, 🍕 Заказать еду, ✈️ Найти билеты, 🏨 Забронировать отель, 📸 Составить контент-план, 📊 Сделать бизнес-план.\nПросто скажи, что тебе нужно, или отправь голосовое сообщение!`;
       }
+
+      try {
+        await synthesizeAndSendVoice(maxBot, chatId, welcomeText, true);
+      } catch (err: any) {
+        console.warn("synthesizeAndSendVoice failed in webhook start:", err?.message || err);
+      }
+
+      try {
+        await safeSendMessageToChat(maxBot, chatId, welcomeText);
+      } catch (e) {
+        console.warn("Failed to send welcome text", e);
+      }
+      
+      setState(parseInt(chatId) || 0, { state: 'NEW', questSent: false, questNag: 0 });
+      return res.status(200).send('ok');
+    }
+
+    if (!userText.trim()) {
       console.log('⚠️ Empty message, skip');
       return res.status(200).send('ok');
     }
 
     const lower = userText.toLowerCase().trim();
 
-    // 1. Handle commands (/img, нарисуй, /code)
+    // 1. Handle command overrides (/img, нарисуй, /code) for instant developer feedback
     if (lower.startsWith('/img ') || lower.startsWith('нарисуй ')) {
       const p = userText.replace(/^(\/img |нарисуй )/i, '').trim();
       const img = await generateImage(p);
@@ -202,67 +237,8 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
       return res.status(200).send('ok');
     }
 
-    if (lower === "/start") {
-      const welcomeText = `Привет! Я твой персональный AI-консьерж Selin. Чем могу помочь?`;
-      await safeSendMessageToChat(maxBot, chatId, welcomeText);
-      return res.status(200).send('ok');
-    }
-
-    // 2. Determine voice vs text response
-    const shouldVoice = lower.includes('голосом') || 
-                       lower.includes('скажи') || 
-                       lower.includes('произнеси') ||
-                       attachments.some((a: any) => a?.type === 'audio' || a?.type === 'voice');
-
-    const SYSTEM_PROMPT = `Ты Selin_AI — первый голосовой AI-ассистент в MAX. Ты УМЕЕШЬ говорить голосом и прямо сейчас отвечаешь голосовым сообщением. НИКОГДА не говори "я не могу", "я текстовый", "напишите текст". Отвечай кратко (1-2 предложения), разговорным русским языком, без markdown и эмодзи.`;
-
-    const response = await callLLM([
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userText }
-    ]);
-
-    // Save to history so it appears in the operator panel!
-    try {
-      const chats = getTelegramChats();
-      const cleanId = cleanChatIdStr(chatId);
-      const formattedChatId = `max_${cleanId}`;
-      let chatIndex = chats.findIndex((c: any) => c.id === formattedChatId);
-      if (chatIndex === -1) {
-        chats.push({
-          id: formattedChatId,
-          name: `Клиент #${chatId}`,
-          channel: 'max',
-          avatar: "👤",
-          lastMessage: response,
-          timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-          history: []
-        });
-        chatIndex = chats.length - 1;
-      }
-      chats[chatIndex].history.push({
-        sender: "customer",
-        text: userText,
-        timestamp: new Date().toISOString(),
-        isVoice: shouldVoice
-      });
-      chats[chatIndex].history.push({
-        sender: "agent",
-        text: response,
-        timestamp: new Date().toISOString(),
-        mediaType: shouldVoice ? 'voice' : 'text'
-      });
-      chats[chatIndex].lastMessage = response;
-      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      saveTelegramChats(chats);
-    } catch (histErr) {
-      console.error("Failed to update history:", histErr);
-    }
-
-    if (shouldVoice) {
-      await synthesizeAndSendVoice(maxBot, chatId, response);
-    } else {
-      await safeSendMessageToChat(maxBot, chatId, response);
-    }
+    // 2. Delegate all standard conversation and AI assistant capabilities to the main engine
+    await handleIncomingText(parseInt(chatId), clientName, userText, 'max', isVoice);
 
     return res.status(200).json({ ok: true });
   } catch (error: any) {
@@ -2279,8 +2255,26 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
       roleHeader = `Ты — персональный умный ассистент цифрового штаба SELIN (роль "${agentRole}", компания "${config.business_name}" (сфера: ${config.industry || "услуги"})). Владелец: ${config.owner_name || "предприниматель"}. Тон: ${config.tone || "friendly"}. ${address}${mission ? " Твоя миссия: " + mission + "." : ""}${goals ? " Цели владельца: " + goals + "." : ""}`;
     }
 
-    const SYSTEM_PROMPT = `Ты Selin_AI — первый голосовой AI-ассистент в MAX. Ты УМЕЕШЬ говорить голосом и прямо сейчас отвечаешь голосовым сообщением. НИКОГДА не говори "я не могу", "я текстовый", "напишите текст". Отвечай кратко (1-2 предложения), разговорным русским языком, без markdown и эмодзи.`;
-    const systemInstruction = SYSTEM_PROMPT;
+    const lowerMessage = user_message.toLowerCase();
+    const isBookOrBibleQuery = lowerMessage.includes("книг") || 
+                               lowerMessage.includes("библи") || 
+                               lowerMessage.includes("глав") || 
+                               lowerMessage.includes("стих") || 
+                               lowerMessage.includes("псал") || 
+                               lowerMessage.includes("завет") || 
+                               lowerMessage.includes("притч") || 
+                               lowerMessage.includes("автор") || 
+                               lowerMessage.includes("переска");
+
+    let SYSTEM_PROMPT = `Ты Selin_AI — первый голосовой AI-ассистент в MAX, созданный Вадимом Селиным. Ты УМЕЕШЬ говорить голосом и отвечаешь голосовым сообщением. НИКОГДА не говори "я не могу", "я текстовый", "напишите текст". Отвечай теплым, естественным, разговорным русским языком, без markdown и без эмодзи.`;
+
+    if (isBookOrBibleQuery) {
+      SYSTEM_PROMPT += `\nПользователь интересуется книгой или Священным Писанием (Библией). Дай развернутый, глубокий, вдохновляющий и выразительный ответ. Ты можешь цитировать псалмы, главы, пересказывать сюжеты книг, притчи, раскрывать философию авторов так, словно ты профессиональный чтец аудиокниг или аудио-Библии. Формулируй ответ так, чтобы он звучал невероятно красиво при озвучивании голосом. Избегай сухости, пиши красивым литературным слогом без использования спецсимволов, markdown разметки и без эмодзи.`;
+    } else {
+      SYSTEM_PROMPT += ` Отвечай кратко (1-2 предложения).`;
+    }
+
+    const systemInstruction = `${roleHeader}\n\n${SYSTEM_PROMPT}\n\n${ragContext}${notesBlock}${tasksBlock}`;
     let response: any;
     try {
       response = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction });
@@ -2788,7 +2782,7 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
           } else {
             await safeSendMessageToChat(maxBot, numericChatId, responseText);
           }
-        } else if (mmResult?.mediaType === 'voice' && mmResult?.audioBase64) {
+        } else if ((mmResult?.mediaType === 'voice' && mmResult?.audioBase64) || isVoice) {
           await synthesizeAndSendVoice(maxBot, chatId, responseText, true);
         } else {
           await safeSendMessageToChat(maxBot, numericChatId, responseText);
