@@ -1640,7 +1640,7 @@ async function synthesizeAndSendVoice(
 ): Promise<void> {
   let chatId: string;
   let text: string;
-  let botInstance: Bot | null = maxBot;
+  let botInstance: any = maxBot;
 
   if (typeof botInstanceOrChatId === 'string' || typeof botInstanceOrChatId === 'number') {
     chatId = String(botInstanceOrChatId);
@@ -1649,13 +1649,13 @@ async function synthesizeAndSendVoice(
       skipFallbackText = textOrSkip;
     }
   } else {
-    botInstance = botInstanceOrChatId;
+    botInstance = botInstanceOrChatId || maxBot;
     chatId = String(chatIdOrText);
     text = String(textOrSkip);
   }
 
   try {
-    console.log('🎤 TTS Start:', text.slice(0, 50));
+    console.log('🎤 [TTS] Start synthesizing for chat:', chatId);
     
     // 1. Генерация аудио через Edge TTS
     const tts = new MsEdgeTTS();
@@ -1673,18 +1673,18 @@ async function synthesizeAndSendVoice(
     const audioBuffer = Buffer.concat(chunks);
     
     if (audioBuffer.length < 1000) {
-      console.warn('⚠️ TTS buffer too small');
+      console.warn('⚠️ [TTS] Audio buffer too small, sending text fallback');
       await safeSendMessageToChat(botInstance, chatId, text);
       return;
     }
     
-    console.log('📦 Audio generated:', audioBuffer.length, 'bytes');
+    console.log('📦 [TTS] Audio generated:', audioBuffer.length, 'bytes');
 
     // 2. Загрузка в MAX (Strict Two-Step Upload)
     const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
     if (!MAX_TOKEN) throw new Error('MAX_BOT_TOKEN missing');
 
-    // Шаг А: Инициализация загрузки
+    // Шаг А: Инициализация загрузки (REST)
     const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
       method: 'POST',
       headers: { 
@@ -1718,12 +1718,12 @@ async function synthesizeAndSendVoice(
       throw new Error(`File upload failed: ${uploadRes.status} ${errText}`);
     }
     
-    console.log('✅ File uploaded to MAX storage');
+    console.log('✅ [UPLOAD] File uploaded to MAX storage. Token:', initData.token.slice(0, 10));
 
     // Шаг В: Ожидание обработки (увеличиваем до 3 секунд для надежности)
     await new Promise(r => setTimeout(r, 3000));
 
-    // Шаг Г: Отправка сообщения с вложением
+    // Шаг Г: Отправка сообщения с вложением через SDK (PROTOBUF)
     // Очищаем chatId от любых префиксов перед конвертацией в число
     const cleanChatId = String(chatId).replace(/^[a-z_]+/, ''); 
     const numericChatId = parseInt(cleanChatId, 10);
@@ -1736,8 +1736,10 @@ async function synthesizeAndSendVoice(
     // MP3 48kbps mono ~ 6000 bytes per second
     const durationMs = Math.ceil((audioBuffer.length / 6000) * 1000);
 
-    const messagePayload = {
-      chat_id: numericChatId, // Передаем ТОЛЬКО чистое число
+    console.log('📤 [SDK] Sending voice message via SDK to chat:', numericChatId);
+
+    // Используем метод SDK, который сам формирует правильный protobuf запрос
+    await botInstance.api.sendMessageToChat(numericChatId, '', {
       attachments: [{
         type: 'audio',
         payload: {
@@ -1747,32 +1749,12 @@ async function synthesizeAndSendVoice(
           mime_type: 'audio/mpeg'       // Явное указание типа
         }
       }]
-    };
-
-    console.log('📤 Final Payload for MAX:', JSON.stringify({
-      chat_id: numericChatId,
-      token: initData.token.slice(0, 10) + '...'
-    }));
-    console.log(' Sending message payload:', JSON.stringify(messagePayload));
-
-    const sendRes = await fetch('https://platform-api.max.ru/messages', {
-      method: 'POST',
-      headers: {
-        'Authorization': MAX_TOKEN,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(messagePayload)
     });
 
-    if (!sendRes.ok) {
-      const errData = await sendRes.json().catch(() => ({}));
-      throw new Error(`Send message failed: ${sendRes.status} ${JSON.stringify(errData)}`);
-    }
-
-    console.log('✅ Voice Sent Successfully');
+    console.log('✅ [TTS] Voice message sent successfully via SDK');
 
   } catch (err: any) {
-    console.error('❌ Voice Error:', err?.message);
+    console.error('❌ [TTS] Critical Error:', err?.message, err?.stack?.slice(0, 200));
     if (!skipFallbackText) {
       // Fallback на текст
       await safeSendMessageToChat(botInstance, chatId, text);
