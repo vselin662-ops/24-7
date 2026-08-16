@@ -56,6 +56,13 @@ class AIOrchestrator {
         model: process.env.TOKENHARBOR_MODEL || 'deepseek-v4-flash:free',
         priority: 5,
       },
+      {
+        name: 'gemini',
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        apiKey: process.env.GEMINI_API_KEY || '',
+        model: 'gemini-2.5-flash',
+        priority: 6,
+      },
     ];
 
     // Сортируем по приоритету и фильтруем только с ключами
