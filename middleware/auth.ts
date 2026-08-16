@@ -32,6 +32,7 @@ export const PUBLIC_PATHS = [
   '/api/get-config',
   '/api/agent-respond',
   '/api/launch',
+  '/api/ai',
   '/api/telegram/webhook',
   '/telegram/webhook'
 ];
@@ -44,7 +45,7 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
 
   const isPublic = PUBLIC_PATHS.some(p => {
     const target = p.toLowerCase();
-    return (
+    const matches = (
       currentPath === target ||
       currentPath.startsWith(target + '/') ||
       originalUrl === target ||
@@ -54,7 +55,10 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
       fullPath === target ||
       fullPath.startsWith(target + '/')
     );
+    return matches;
   });
+
+  console.log(`🔍 [Auth] path: ${currentPath}, isPublic: ${isPublic}`);
 
   if (isPublic) {
     return next();

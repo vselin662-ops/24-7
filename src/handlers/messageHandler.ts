@@ -1,4 +1,5 @@
 import { hasUserInteractedBefore, markUserAsVisited } from '../database/sessions.db';
+import { getAIResponse } from '../services/aiOrchestrator';
 
 export async function handleIncomingMessage(
   chatId: string,
@@ -64,13 +65,9 @@ export async function handleIncomingMessage(
 3. Без markdown, списков, эмодзи и сложных символов.
 4. По существу вопроса. Если пользователь спрашивает про ремонт авто — дай краткий совет. Если про Библию — краткую мысль. Если про код — скажи "Лучше покажу кодом, напиши /текст", но по умолчанию старайся объяснить словами.`;
 
-  // Вызов LLM
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userText }
-  ];
-  
-  const llmResponse = await callLLM(messages);
+  // Вызов LLM через AI Orchestrator
+  const llmResponse = await getAIResponse(userText);
+  console.log('🤖 AI response:', llmResponse);
 
   // Отправка ответа
   if (shouldReplyWithText) {

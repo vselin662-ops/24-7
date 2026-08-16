@@ -202,31 +202,31 @@ app.get(["/api/max/webhook", "/max/webhook"], (req, res) => {
 
 // 1. AI Shield Middleware (Prompt Sanitization & Jailbreak Defense)
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   return aiShieldMiddleware(req, res, next);
 });
 
 // 2. Rate Limiting Middleware
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   return apiRateLimiter(req, res, next);
 });
 app.use('/api/tts', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   return expensiveOpLimiter(req, res, next);
 });
 app.use('/api/synthesize', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   return expensiveOpLimiter(req, res, next);
 });
 app.use('/api/voice-organism-dialogue', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   return expensiveOpLimiter(req, res, next);
 });
 
 // 3. Agent Monitor Middleware (Behavior Tracking & Anomaly Detection)
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || "default";
   trackUserRateAndAnomalies(tenantId);
   next();
@@ -234,7 +234,7 @@ app.use('/api', (req, res, next) => {
 
 // 4. Output Filter Middleware (Response Sanitization & Anti-Exfiltration)
 app.use((req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   const originalJson = res.json;
   const originalSend = res.send;
 
@@ -267,7 +267,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
   return authMiddleware(req, res, next);
 });
 app.use('/api/security', securityRouter);
@@ -4808,6 +4808,33 @@ app.get(["/api/health", "/health"], async (_, res) => {
   res.status(statusCode).json(health);
 });
 
+app.get('/api/ai/status', (req, res) => {
+  try {
+    const orchestrator = getOrchestrator();
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      ...orchestrator.getStatus(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/ai/switch', (req, res) => {
+  const { provider } = req.body;
+  if (!provider) {
+    return res.status(400).json({ error: 'Provider name required' });
+  }
+  const orchestrator = getOrchestrator();
+  const success = orchestrator.switchToProvider(provider);
+  if (success) {
+    res.json({ success: true, currentProvider: provider });
+  } else {
+    res.status(404).json({ error: `Provider "${provider}" not found. Available: ${orchestrator.getActiveProviders().join(', ')}` });
+  }
+});
+
 // ==========================================
 // LEGAL & DOCS ENDPOINTS
 // ==========================================
@@ -4854,7 +4881,7 @@ app.get("/api/info", (req, res) => {
   });
 });
 
-import { initSessionsDb, hasUserInteractedBefore, markUserAsVisited, closeDatabase } from './src/index';
+import { initSessionsDb, hasUserInteractedBefore, markUserAsVisited, closeDatabase, getOrchestrator } from './src/index';
 
 const userModes = new Map<string, string>(); // In-memory cache
 
