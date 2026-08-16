@@ -9,6 +9,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import Groq from 'groq-sdk';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import NodeFormData from 'form-data';
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -123,7 +124,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
   try {
     const payload = req.body || {};
-    const chatId = extractMaxChatId(payload);
+    
+    // Support both direct (flat) user webhook payload and nested Max Messenger SDK webhook payloads
+    const chatId = payload.chat_id || extractMaxChatId(payload);
     
     if (!chatId) {
       console.error('❌ No ChatID in payload');
@@ -132,13 +135,23 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
 
     const body = payload.body || payload;
     const message = body.message || {};
-    const text = message.body?.text || '';
+    const text = payload.text || message.body?.text || '';
     const attachments = message.attachments || [];
 
     let userText = text;
     let isVoiceInput = false;
 
-    // 1. Распознавание входящего голоса (STT)
+    // Check for explicit audio_url (flat payload)
+    if (payload.audio_url) {
+      isVoiceInput = true;
+      console.log('🎧 Incoming flat voice webhook detected, starting STT...');
+      const transcribed = await transcribeAudio(payload.audio_url);
+      if (transcribed) {
+        userText = transcribed;
+      }
+    }
+
+    // Check for attachments (standard payload)
     if (!userText.trim() && attachments.length > 0) {
       const voiceAtt = attachments.find((a: any) => 
         a.type === 'audio' || 
@@ -1633,132 +1646,73 @@ async function safeSendMessageToChat(
 
 // Helper to synthesize and send voice message to Max Bot
 async function synthesizeAndSendVoice(
-  botInstanceOrChatId: any,
+  chatIdOrBot: any,
   chatIdOrText: any,
   textOrSkip?: any,
-  skipFallbackText = false
+  extraArg?: any
 ): Promise<void> {
   let chatId: string;
   let text: string;
   let botInstance: any = maxBot;
 
-  if (typeof botInstanceOrChatId === 'string' || typeof botInstanceOrChatId === 'number') {
-    chatId = String(botInstanceOrChatId);
+  if (typeof chatIdOrBot === 'string' || typeof chatIdOrBot === 'number') {
+    chatId = String(chatIdOrBot);
     text = String(chatIdOrText);
-    if (typeof textOrSkip === 'boolean') {
-      skipFallbackText = textOrSkip;
-    }
   } else {
-    botInstance = botInstanceOrChatId || maxBot;
+    botInstance = chatIdOrBot || maxBot;
     chatId = String(chatIdOrText);
     text = String(textOrSkip);
   }
 
   try {
-    console.log('🎤 [TTS] Start synthesizing for chat:', chatId);
-    
-    // 1. Генерация аудио через Edge TTS
+    // 1. Генерируем аудио
     const tts = new MsEdgeTTS();
-    await tts.setMetadata(
-      process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
-      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
-    );
-    
-    const { audioStream } = tts.toStream(text);
+    await tts.setMetadata('ru-RU-SvetlanaNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    const streamRes = tts.toStream(text);
+    const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
+
     const chunks: Buffer[] = [];
-    for await (const chunk of audioStream) {
+    for await (const chunk of readable) {
       if (Buffer.isBuffer(chunk)) chunks.push(chunk);
       else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
     }
     const audioBuffer = Buffer.concat(chunks);
-    
-    if (audioBuffer.length < 1000) {
-      console.warn('⚠️ [TTS] Audio buffer too small, sending text fallback');
-      await safeSendMessageToChat(botInstance, chatId, text);
-      return;
-    }
-    
-    console.log('📦 [TTS] Audio generated:', audioBuffer.length, 'bytes');
 
-    // 2. Загрузка в MAX (Strict Two-Step Upload)
+    // 2. Загружаем в MAX Storage
     const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
-    if (!MAX_TOKEN) throw new Error('MAX_BOT_TOKEN missing');
-
-    // Шаг А: Инициализация загрузки (REST)
     const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
       method: 'POST',
-      headers: { 
-        'Authorization': MAX_TOKEN,
-        'Content-Type': 'application/json' 
-      }
+      headers: { 'Authorization': MAX_TOKEN || '' }
     });
-    
-    if (!initRes.ok) throw new Error(`Init upload failed: ${initRes.status}`);
-    const initData = await initRes.json();
-    
-    if (!initData.url || !initData.token) {
-      console.error('❌ Init response invalid:', initData);
-      throw new Error('Invalid init data from MAX');
-    }
+    const { token, url } = await initRes.json();
 
-    // Шаг Б: Загрузка файла (FormData)
-    const formData = new FormData();
-    formData.append('data', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'voice.mp3');
-    
-    const uploadRes = await fetch(initData.url, {
+    const form = new NodeFormData();
+    form.append('data', audioBuffer, { filename: 'voice.mp3', contentType: 'audio/mpeg' });
+    await fetch(url, {
       method: 'POST',
-      headers: { 
-        'Authorization': MAX_TOKEN 
-      },
-      body: formData
+      headers: { 'Authorization': MAX_TOKEN || '' },
+      body: form as any
     });
-    
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text().catch(() => '');
-      throw new Error(`File upload failed: ${uploadRes.status} ${errText}`);
-    }
-    
-    console.log('✅ [UPLOAD] File uploaded to MAX storage. Token:', initData.token.slice(0, 10));
 
-    // Шаг В: Ожидание обработки (увеличиваем до 3 секунд для надежности)
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise(r => setTimeout(r, 3000)); // ждём обработки
 
-    // Шаг Г: Отправка сообщения с вложением через SDK (PROTOBUF)
-    // Очищаем chatId от любых префиксов перед конвертацией в число
-    const cleanChatId = String(chatId).replace(/^[a-z_]+/, ''); 
-    const numericChatId = parseInt(cleanChatId, 10);
-
-    if (isNaN(numericChatId) || numericChatId <= 0) {
-      throw new Error('Invalid ChatID after cleaning');
-    }
-    
-    // Рассчитываем примерную длительность в миллисекундах для метаданных
-    // MP3 48kbps mono ~ 6000 bytes per second
-    const durationMs = Math.ceil((audioBuffer.length / 6000) * 1000);
-
-    console.log('📤 [SDK] Sending voice message via SDK to chat:', numericChatId);
-
-    // Используем метод SDK, который сам формирует правильный protobuf запрос
+    // 3. Отправляем через SDK (ГЛАВНОЕ ИСПРАВЛЕНИЕ!)
+    const numericChatId = parseInt(String(chatId).replace(/\D/g, ''), 10);
     await botInstance.api.sendMessageToChat(numericChatId, '', {
       attachments: [{
         type: 'audio',
-        payload: {
-          token: initData.token,
-          filename: 'voice.mp3',       // Явное указание имени
-          duration: durationMs,         // Явное указание длительности
-          mime_type: 'audio/mpeg'       // Явное указание типа
+        payload: { 
+          token: token, 
+          filename: 'voice.mp3' 
         }
       }]
     });
 
-    console.log('✅ [TTS] Voice message sent successfully via SDK');
-
-  } catch (err: any) {
-    console.error('❌ [TTS] Critical Error:', err?.message, err?.stack?.slice(0, 200));
-    if (!skipFallbackText) {
-      // Fallback на текст
-      await safeSendMessageToChat(botInstance, chatId, text);
-    }
+    console.log(`✅ Голос отправлен в чат ${numericChatId}`);
+  } catch (error) {
+    console.error('❌ Ошибка голоса:', error);
+    // Фолбэк: отправляем текст, если голос не прошёл
+    await safeSendMessageToChat(botInstance, chatId, text);
   }
 }
 
@@ -4386,6 +4340,89 @@ const mcpToolsRegistry: Record<string, Function> = {
   }
 };
 
+async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean) {
+  const lower = userText.toLowerCase().trim();
+  
+  // Команды переключения режима
+  if (lower.includes('селин 123770') || lower.includes('selin 123770') || lower === '123770' || lower === '/text_mode') {
+    await setBotUserMode(chatId, 'text');
+    await safeSendMessageToChat(maxBot, chatId, '✅ Режим кодирования активирован. Отвечаю текстом.');
+    return;
+  }
+  
+  if (lower.startsWith('/голос') || lower.startsWith('/voice') || lower === '/voice_mode') {
+    await setBotUserMode(chatId, 'voice');
+    await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
+    return;
+  }
+
+  // Обработка юридических запросов и удаления данных
+  if (lower.startsWith('/legal') || lower.startsWith('/privacy')) {
+    const privacyText = "🔒 Политика конфиденциальности Selin AI:\n\n" +
+      "1. Мы обрабатываем ваш голос и текст только для ответа на запросы.\n" +
+      "2. Данные не продаются третьим лицам.\n" +
+      "3. Вы можете удалить свои данные командой /delete.\n\n" +
+      "Полный текст доступен по ссылке: https://твой-домен.ru/legal/PRIVACY_POLICY";
+    
+    await safeSendMessageToChat(maxBot, chatId, privacyText);
+    return;
+  }
+
+  if (lower === '/delete' || lower === '/удалить_данные') {
+    await safeSendMessageToChat(maxBot, chatId, "✅ Запрос на удаление данных принят. Ваши данные будут удалены из активных систем в течение 24 часов.");
+    return;
+  }
+
+  // Проверка на первый визит
+  const isFirstVisit = !await hasUserInteractedBefore(chatId);
+  if (isFirstVisit) {
+    const WELCOME_VOICE = `Привет! Я Selin AI. Я слышу тебя и отвечу голосом. Просто скажи, что тебе нужно, или задай вопрос. Я здесь, чтобы помочь.`;
+    await synthesizeAndSendVoice(maxBot, chatId, WELCOME_VOICE);
+    await markUserAsVisited(chatId);
+    return; // После этого сразу выходим, ничего больше не пишем.
+  }
+
+  // Определение формата ответа
+  const currentMode = await getBotUserMode(chatId);
+  const isCodeRequest = lower.startsWith('/code') || lower.startsWith('напиши код') || currentMode === 'text';
+  const shouldReplyWithText = isCodeRequest; 
+
+  const SYSTEM_PROMPT = `Ты — Selin AI, голосовой ассистент. 
+Ты общаешься голосом, поэтому твои ответы должны быть:
+1. Краткими (1-3 предложения).
+2. Естественными, как у живого человека.
+3. Без markdown, списков, эмодзи и сложных символов.
+4. По существу вопроса. Если пользователь спрашивает про ремонт авто — дай краткий совет. Если про Библию — краткую мысль. Если про код — скажи "Лучше покажу кодом, напиши /текст", но по умолчанию старайся объяснить словами.`;
+
+  // Вызов LLM
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: userText }
+  ];
+  
+  const llmResponse = await callLLM(messages);
+
+  // Отправка ответа
+  if (shouldReplyWithText) {
+    await safeSendMessageToChat(maxBot, chatId, llmResponse);
+  } else {
+    // Очистка текста для TTS: убираем код, списки, спецсимволы, эмодзи, чтобы озвучивалось идеально
+    const cleanText = llmResponse
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]+`/g, '')
+      .replace(/[#*_~>]/g, '')
+      .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '') // убираем эмодзи
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (cleanText) {
+      await synthesizeAndSendVoice(maxBot, chatId, cleanText);
+    } else {
+      await safeSendMessageToChat(maxBot, chatId, llmResponse);
+    }
+  }
+}
+
 // API Endpoint: List Registered MCP Tools
 app.get("/api/mcp/tools", (_, res) => {
   return res.json({
@@ -4884,12 +4921,26 @@ app.get("/api/info", (req, res) => {
   });
 });
 
+import Database from 'better-sqlite3';
+
+const sessionsDbPath = path.join(process.cwd(), 'data/sessions.sqlite');
+const sessionsDb = new Database(sessionsDbPath, { verbose: console.log });
+sessionsDb.pragma('journal_mode = WAL');
+
+// Создаём таблицу, если нет
+sessionsDb.exec(`
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    chat_id TEXT PRIMARY KEY,
+    first_visit_done INTEGER DEFAULT 0,
+    last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 async function hasUserInteractedBefore(chatId: string): Promise<boolean> {
-  if (!sqliteDb) return true; // fallback to prevent infinite greeting loops if DB is not ready
   try {
     const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-    const row = sqliteDb.prepare("SELECT id FROM chats WHERE id = ?").get(cleanId);
-    return !!row;
+    const row = sessionsDb.prepare('SELECT first_visit_done FROM user_sessions WHERE chat_id = ?').get(cleanId);
+    return row ? row.first_visit_done === 1 : false;
   } catch (err) {
     console.error("❌ Error in hasUserInteractedBefore:", err);
     return true; // safe fallback
@@ -4897,12 +4948,15 @@ async function hasUserInteractedBefore(chatId: string): Promise<boolean> {
 }
 
 async function markUserAsVisited(chatId: string): Promise<void> {
-  if (!sqliteDb) return;
   try {
     const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-    const now = new Date().toISOString();
-    sqliteDb.prepare("INSERT OR REPLACE INTO chats (id, tenant_id, data, updated_at) VALUES (?, ?, ?, ?)")
-      .run(cleanId, 'default', JSON.stringify({ visited: true }), now);
+    sessionsDb.prepare(`
+      INSERT INTO user_sessions (chat_id, first_visit_done, last_active) 
+      VALUES (?, 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(chat_id) DO UPDATE SET 
+        first_visit_done = 1, 
+        last_active = CURRENT_TIMESTAMP
+    `).run(cleanId);
   } catch (err) {
     console.error("❌ Error in markUserAsVisited:", err);
   }
@@ -4932,171 +4986,6 @@ async function setBotUserMode(chatId: string, mode: string): Promise<void> {
       .run(cleanId, mode, now);
   } catch (err) {
     console.error("❌ Error setting user mode in DB:", err);
-  }
-}
-
-async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean) {
-  console.log(`📨 Processing Message from ${chatId} (Voice: ${isVoiceInput})`);
-  
-  const lower = userText.toLowerCase().trim();
-  
-  // Команды переключения режима
-  if (lower.includes('селин 123770') || lower.includes('selin 123770') || lower === '123770' || lower === '/text_mode') {
-    await setBotUserMode(chatId, 'text');
-    await safeSendMessageToChat(maxBot, chatId, '✅ Режим кодирования активирован. Отвечаю текстом.');
-    return;
-  }
-  
-  if (lower.startsWith('/голос') || lower.startsWith('/voice') || lower === '/voice_mode') {
-    await setBotUserMode(chatId, 'voice');
-    await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
-    return;
-  }
-
-  // Обработка юридических запросов и удаления данных
-  if (lower.startsWith('/legal') || lower.startsWith('/privacy')) {
-    const privacyText = "🔒 Политика конфиденциальности Selin AI:\n\n" +
-      "1. Мы обрабатываем ваш голос и текст только для ответа на запросы.\n" +
-      "2. Данные не продаются третьим лицам.\n" +
-      "3. Вы можете удалить свои данные командой /delete.\n\n" +
-      "Полный текст доступен по ссылке: https://твой-домен.ru/legal/PRIVACY_POLICY (или через API /legal/PRIVACY_POLICY)";
-    
-    await safeSendMessageToChat(maxBot, chatId, privacyText);
-    return;
-  }
-
-  if (lower === '/delete' || lower === '/удалить_данные') {
-    await safeSendMessageToChat(maxBot, chatId, "✅ Запрос на удаление данных принят. Ваши данные будут удалены из активных систем в течение 24 часов.");
-    return;
-  }
-
-  // Проверка на первый визит
-  const isFirstVisit = !await hasUserInteractedBefore(chatId);
-  if (isFirstVisit) {
-    const welcomeVoiceText = "Приветствую! Я — Selin AI, ваш автономный цифровой штаб. Я работаю 24/7, чтобы освободить вас от рутины. Внутри меня живут мультиагенты: от теологов до инженеров по ремонту авто. Просто скажите голосом, какая у вас задача, и я настрою под неё команду экспертов. Вы в правильном месте.";
-    await synthesizeAndSendVoice(maxBot, chatId, welcomeVoiceText);
-    await markUserAsVisited(chatId);
-
-    // Отправляем красивое интерактивное текстовое меню с кнопками
-    const menuText = "Выберите направление, чтобы я активировал нужных агентов:\n\n" +
-      "1️⃣ 🛠️ Техническая поддержка (Ремонт, Инженерия)\n" +
-      "2️⃣ 💼 Бизнес и Финансы\n" +
-      "3️⃣ 📖 Духовность и Теология\n" +
-      "4️⃣ 💻 Программирование и IT\n" +
-      "5️⃣ 🗣️ Свободный диалог";
-    await safeSendMessageToChat(maxBot, chatId, menuText);
-    return;
-  }
-
-  // Определение специального направления на основе ввода
-  let activePrompt = '';
-  if (lower === '1' || lower.includes('техническая поддержка') || lower.includes('ремонт') || lower.includes('инженерия') || lower.includes('починить')) {
-    activePrompt = `Ты экспертный технический консультант, автомеханик и инженер по ремонту. 
-Когда пользователь задает технический или ремонтный вопрос (например, "как исправить вмятину", "как отремонтировать крыло"), ты должен предоставить ПОЛНЫЙ, глубокий пошаговый мануал:
-- Пошаговая детальная инструкция (Шаг 1, Шаг 2...).
-- Список всех необходимых инструментов и материалов (с конкретными марками, брендами).
-- Советы по экономии (где и как приобрести дешевле, на что обратить внимание при выборе).
-- Предупреждения о технике безопасности при проведении работ.
-Отвечай профессионально, структурированно, без лишней "воды".`;
-  } else if (lower === '2' || lower.includes('бизнес и финансы') || lower.includes('бизнес') || lower.includes('финансы') || lower.includes('стартап')) {
-    activePrompt = `Ты профессиональный бизнес-консультант, финансовый аналитик и стратег. 
-Давай глубокие ответы на вопросы о бизнесе, планировании, маркетинге, стартапах, инвестициях и бюджетировании. 
-Приводи конкретные практические шаги, расчетные формулы, примеры из практики и полезные концепции.`;
-  } else if (lower === '3' || lower.includes('духовность и теология') || lower.includes('теология') || lower.includes('библия') || lower.includes('священное писание')) {
-    activePrompt = `Ты глубокий теолог, эксперт по Священным Писаниям, Библии и истории религий. 
-Отвечай глубоко, уважительно, цитируй конкретные стихи, главы, псалмы и приводи глубокий философский и теологический разбор вопросов.`;
-  } else if (lower === '4' || lower.includes('программирование') || lower.includes('разработка') || lower.includes('код')) {
-    activePrompt = `Ты экспертный программист Selin_AI. Давай полные, рабочие решения с подробным кодом, комментариями на русском и объяснением логики работы.`;
-  }
-
-  // Если пользователь отправил только цифру переключения режима
-  if (lower === '1' || lower === '2' || lower === '3' || lower === '4' || lower === '5') {
-    const modeMsg = "Принято. Активирую режим эксперта в этой области. Расскажите подробнее о вашей задаче.";
-    await synthesizeAndSendVoice(maxBot, chatId, modeMsg);
-    return;
-  }
-
-  // Определение формата ответа
-  const currentMode = await getBotUserMode(chatId);
-  const isCodeRequest = lower.startsWith('/code') || lower.startsWith('напиши код') || currentMode === 'text';
-  const shouldReplyWithText = isCodeRequest; 
-
-  // Единый системный промпт "ЖИДКИЙ ИНТЕЛЛЕКТ"
-  let systemPrompt = `Ты — Selin AI, высокоадаптивный интеллектуальный ассистент и автономный цифровой штаб. Твоя главная задача — решить "боль" пользователя, какой бы она ни была.
-Твоя база знаний универсальна: от духовных вопросов (Библия, теология) до технических (ремонт авто, код, бизнес).
-
-ПЕРЕД ОТВЕТОМ ВЫПОЛНИ АНАЛИЗ НАМЕРЕНИЯ (THINKING STEP):
-1. Определи сферу запроса (Техника, Духовность, Бизнес, Код, Быт, Медицина и т.д.).
-2. Оцени уровень срочности и сложности.
-3. Определи формат ответа, который лучше всего решит проблему:
-   - Если нужен быстрый результат → Краткая инструкция + ключевой совет.
-   - Если нужна глубина (например, "как самому сделать X с нуля") → Подробный пошаговый мануал, список инструментов, нюансы, предупреждения.
-   - Если вопрос философский/духовный → Глубокий, уважительный ответ с цитатами или контекстом.
-   - Если вопрос технический/код → Полный рабочий пример с комментариями.
-
-ПРАВИЛА ФОРМИРОВАНИЯ ОТВЕТА:
-1. Будь эмпатичным. Пойми эмоцию за запросом (стресс, любопытство, срочность).
-2. Если вопрос сложный или технический (например, "как исправить вмятину на крыле", "как отремонтировать крыло"), дай ПОЛНЫЙ МАНУАЛ:
-   - Пошаговая детальная инструкция (Шаг 1, Шаг 2...).
-   - Список всех необходимых инструментов и материалов (с конкретными марками, брендами).
-   - Советы по экономии (где и как приобрести дешевле, на что обратить внимание при выборе).
-   - Предупреждения о технике безопасности при проведении работ.
-3. Если вопрос духовный/теологический — отвечай глубоко, цитируя конкретные стихи, главы, псалмы, источники и приводи глубокий философский разбор вопросов, отвечай максимально уважительно.
-4. Если информации недостаточно для точного ответа, задай уточняющий вопрос, но сразу дай предварительное решение.
-5. Твой ответ будет озвучен голосом. Пиши живым языком, без сухого академизма, но сохраняя профессионализм. Избегай сложного Markdown, если это мешает чтению вслух.
-6. НИКОГДА не говори: "Я не могу", "Я только текстовый бот", "Это вне моей компетенции", "Я не знаю". Ты умеешь всё. Если чего-то не знаешь точно — дай лучший возможный алгоритм действий.`;
-
-  if (activePrompt) {
-    systemPrompt += `\n\n[ТЕКУЩАЯ УЗКАЯ СПЕЦИАЛИЗАЦИЯ ИНСТРУМЕНТА]:\n${activePrompt}`;
-  }
-
-  // Вызов LLM
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userText }
-  ];
-  
-  const llmResponse = await callLLM(messages);
-
-  // Отправка ответа
-  if (shouldReplyWithText) {
-    await safeSendMessageToChat(maxBot, chatId, llmResponse);
-  } else {
-    // Очистка текста для TTS: убираем код, списки, спецсимволы, чтобы озвучивалось идеально
-    const cleanText = llmResponse
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`[^`]+`/g, '')
-      .replace(/[#*_~>]/g, '')
-      .replace(/\n+/g, '. ')
-      .trim();
-
-    if (llmResponse.length > 500) {
-      // Отправляем полный подробный текст в чат
-      await safeSendMessageToChat(maxBot, chatId, llmResponse);
-
-      // Генерируем краткую аудиоверсию до 400-500 символов
-      const sentences = cleanText.split(/[.!?]\s+/);
-      let summary = '';
-      for (const s of sentences) {
-        if ((summary + s).length < 400) {
-          summary += (summary ? ' ' : '') + s + '.';
-        } else {
-          break;
-        }
-      }
-      if (!summary) {
-        summary = cleanText.slice(0, 350) + '...';
-      }
-
-      const finalVoiceText = `Ответ слишком длинный для одного сообщения, я прислал его текстом, но могу озвучить главные шаги: ${summary}`;
-      await synthesizeAndSendVoice(maxBot, chatId, finalVoiceText);
-    } else {
-      if (cleanText) {
-        await synthesizeAndSendVoice(maxBot, chatId, cleanText);
-      } else {
-        await safeSendMessageToChat(maxBot, chatId, llmResponse);
-      }
-    }
   }
 }
 

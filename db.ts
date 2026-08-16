@@ -220,6 +220,12 @@ try {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      chat_id TEXT PRIMARY KEY,
+      first_visit_done INTEGER DEFAULT 0,
+      last_active TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_chats_tenant ON chats(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_tenant ON knowledge_base(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_docs_tenant ON kb_documents(tenant_id);

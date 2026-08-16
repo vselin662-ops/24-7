@@ -105,8 +105,8 @@ export class PureDatabase {
 
     return {
       run: (...params: any[]) => {
-        if (upper.startsWith("INSERT INTO")) {
-          const match = cleanSql.match(/INSERT INTO ([a-zA-Z0-9_]+)\s*\(([^)]+)\)/i);
+        if (upper.includes("INSERT INTO") || upper.includes("INSERT OR REPLACE INTO")) {
+          const match = cleanSql.match(/INSERT\s+(?:OR\s+REPLACE\s+)?INTO\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)/i);
           if (match) {
             const tableName = match[1];
             const cols = match[2].split(",").map(c => c.trim().toLowerCase());
@@ -120,9 +120,9 @@ export class PureDatabase {
             cols.forEach((col, idx) => {
               row[col] = params[idx] !== undefined ? params[idx] : null;
             });
-            if (!row.tenant_id) row.tenant_id = "default";
+            if (!row.tenant_id && tableName !== "user_sessions") row.tenant_id = "default";
 
-            const rowId = String(row.id || Object.keys(row)[0] || Math.random());
+            const rowId = String(row.id || row.chat_id || Object.keys(row)[0] || Math.random());
             const existing = table.get(rowId);
             if (existing) {
               table.set(rowId, { ...existing, ...row });
@@ -215,6 +215,9 @@ export class PureDatabase {
     }
     if (cleanWhere.includes("id = ?")) {
       return String(row.id) === String(params[0]);
+    }
+    if (cleanWhere.includes("chat_id = ?")) {
+      return String(row.chat_id) === String(params[0]);
     }
     return true;
   }
