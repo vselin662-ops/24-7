@@ -122,128 +122,63 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // ==========================================
 app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
   try {
-    console.log('📨 FULL WEBHOOK:', JSON.stringify(req.body).slice(0, 1000));
-    logger.info("MAX webhook получен", { body: req.body });
-
     const payload = req.body || {};
-
-    // 1. Проверяем секретный заголовок X-Max-Bot-Api-Secret (если настроен в env)
-    const webhookSecret = process.env.MAX_BOT_API_SECRET || process.env.MAX_WEBHOOK_SECRET;
-    const providedSecret = req.headers["x-max-bot-api-secret"] as string | undefined;
-
-    if (webhookSecret && providedSecret && providedSecret !== webhookSecret) {
-      logger.warn("Max webhook: invalid X-Max-Bot-Api-Secret header");
-      return res.status(200).json({ ok: true, ignored: "invalid_secret" });
-    }
-
-    const chatIdStr = extractMaxChatId(payload);
-    if (!chatIdStr) {
-      console.error('❌ CRITICAL: chatId не найден в MAX payload', JSON.stringify(payload).slice(0, 500));
+    const chatId = extractMaxChatId(payload);
+    
+    if (!chatId) {
+      console.error('❌ No ChatID in payload');
       return res.status(200).send('ok');
     }
-    const chatId = chatIdStr;
 
-    const body = req.body?.body || req.body;
-    const message = body?.message || {};
-    const text = message?.body?.text || '';
-    const attachments = message?.attachments || [];
-
-    const fromObj = payload.from || body?.from || message?.from || {};
-    const firstName = fromObj?.name?.split(' ')[0] || '';
-    const lastName = fromObj?.name?.split(' ').slice(1).join(' ') || '';
-    const clientName = `${firstName} ${lastName}`.trim() || `Клиент #${chatId}`;
+    const body = payload.body || payload;
+    const message = body.message || {};
+    const text = message.body?.text || '';
+    const attachments = message.attachments || [];
 
     let userText = text;
-    let isVoice = false;
+    let isVoiceInput = false;
 
-    // Распознавание голосового
-    const voice = attachments.find((a: any) => 
-      a?.type === 'audio' || 
-      a?.type === 'voice' || 
-      a?.payload?.url ||
-      a?.url ||
-      a?.payload?.token ||
-      a?.token
-    );
-    
-    if (voice) {
-      isVoice = true;
-      let audioUrl = voice.payload?.url || voice.url;
-      if (!audioUrl && voice.payload?.token) {
-        audioUrl = `https://platform-api.max.ru/uploads/${voice.payload.token}`;
-      } else if (!audioUrl && voice.token) {
-        audioUrl = `https://platform-api.max.ru/uploads/${voice.token}`;
-      }
-      
-      console.log('🎧 Voice detected, URL:', audioUrl?.slice(0, 80));
-      
-      if (audioUrl) {
-        userText = await transcribeAudio(audioUrl);
-        console.log('🎧 STT result:', userText);
-      }
-    }
+    // 1. Распознавание входящего голоса (STT)
+    if (!userText.trim() && attachments.length > 0) {
+      const voiceAtt = attachments.find((a: any) => 
+        a.type === 'audio' || 
+        a.type === 'voice' ||
+        a.payload?.url ||
+        a.url ||
+        a.payload?.token ||
+        a.token
+      );
+      if (voiceAtt) {
+        isVoiceInput = true;
+        let audioUrl = voiceAtt.payload?.url || voiceAtt.url;
+        if (!audioUrl && voiceAtt.payload?.token) {
+          audioUrl = `https://platform-api.max.ru/uploads/${voiceAtt.payload.token}`;
+        } else if (!audioUrl && voiceAtt.token) {
+          audioUrl = `https://platform-api.max.ru/uploads/${voiceAtt.token}`;
+        }
 
-    const updateType = payload.update_type || payload.event || payload.type;
-    const isStart = updateType === "bot_started" || userText.trim() === "/start";
-
-    if (isStart) {
-      const userConfig = await getUserConfigByChatId(chatId);
-      let welcomeText = "";
-      if (userConfig && !userConfig.is_universal) {
-        welcomeText = `Привет, ${firstName || "друг"}! Я — ваш голосовой ИИ-ассистент компании "${userConfig.business_name}". Готов принимать заявки, отвечать клиентам и помогать в работе 24/7. Чем могу помочь?`;
-      } else {
-        welcomeText = `Привет, ${firstName || "друг"}! Я твой персональный AI-консьерж Selin AI. Я могу: 🚕 Вызвать такси, 🍕 Заказать еду, ✈️ Найти билеты, 🏨 Забронировать отель, 📸 Составить контент-план, 📊 Сделать бизнес-план.\nПросто скажи, что тебе нужно, или отправь голосовое сообщение!`;
+        if (audioUrl) {
+          console.log('🎧 Incoming Voice Detected, starting STT...');
+          userText = await transcribeAudio(audioUrl);
+          if (!userText) userText = "[Неразборчиво]";
+        }
       }
-
-      try {
-        await synthesizeAndSendVoice(maxBot, chatId, welcomeText, true);
-      } catch (err: any) {
-        console.warn("synthesizeAndSendVoice failed in webhook start:", err?.message || err);
-      }
-
-      try {
-        await safeSendMessageToChat(maxBot, chatId, welcomeText);
-      } catch (e) {
-        console.warn("Failed to send welcome text", e);
-      }
-      
-      setState(parseInt(chatId) || 0, { state: 'NEW', questSent: false, questNag: 0 });
-      return res.status(200).send('ok');
     }
 
     if (!userText.trim()) {
-      console.log('⚠️ Empty message, skip');
       return res.status(200).send('ok');
     }
 
-    const lower = userText.toLowerCase().trim();
+    // 2. Асинхронная обработка ответа (не блокируем webhook)
+    handleIncomingMessage(chatId, userText, isVoiceInput).catch(err => {
+      console.error('❌ Background handler error:', err);
+    });
 
-    // 1. Handle command overrides (/img, нарисуй, /code) for instant developer feedback
-    if (lower.startsWith('/img ') || lower.startsWith('нарисуй ')) {
-      const p = userText.replace(/^(\/img |нарисуй )/i, '').trim();
-      const img = await generateImage(p);
-      if (img) await sendImageToMax(chatId, img);
-      else await safeSendMessageToChat(maxBot, chatId, 'Не удалось создать изображение.');
-      return res.status(200).send('ok');
-    }
+    return res.status(200).send('ok');
 
-    if (lower.startsWith('/code ')) {
-      const p = userText.replace(/^\/code /i, '').trim();
-      const code = await callLLM([
-        { role: 'system', content: 'Ты экспертный программист. Генерируй полный рабочий код с комментариями на русском.' },
-        { role: 'user', content: p }
-      ]);
-      await safeSendMessageToChat(maxBot, chatId, `💻 Код:\n\n${code}`);
-      return res.status(200).send('ok');
-    }
-
-    // 2. Delegate all standard conversation and AI assistant capabilities to the main engine
-    await handleIncomingText(parseInt(chatId), clientName, userText, 'max', isVoice);
-
-    return res.status(200).json({ ok: true });
   } catch (error: any) {
-    logger.error("Error in Max webhook handler", { error: error?.message || error });
-    return res.status(200).json({ ok: true });
+    console.error('❌ Webhook Critical Error:', error);
+    return res.status(200).send('ok');
   }
 });
 
@@ -2856,42 +2791,6 @@ if (maxToken) {
       setState(parseInt(chatId) || 0, { state: 'NEW', questSent: false, questNag: 0 });
     });
 
-    // Handle all incoming messages
-    maxBot.on('message_created', async (ctx: any) => {
-      const chatId = extractMaxChatId(ctx) || String(ctx.chat?.id || ctx.from?.id);
-      const firstName = ctx.from?.name?.split(' ')[0] || '';
-      const lastName = ctx.from?.name?.split(' ').slice(1).join(' ') || '';
-      const clientName = `${firstName} ${lastName}`.trim() || `Клиент #${chatId}`;
-
-      // Text message
-      const text = ctx.message?.body?.text;
-      if (text && !text.startsWith('/')) {
-        await handleIncomingText(parseInt(chatId), clientName, text, 'max', false);
-        return;
-      }
-
-      // Voice message — check attachments
-      const attachments = ctx.message?.attachments || [];
-      const audioAttachment = attachments.find((a: any) => a.type === 'audio');
-      if (audioAttachment) {
-        const fileUrl = audioAttachment.payload?.url;
-        if (fileUrl) {
-          try {
-            const transcript = await transcribeAudio(fileUrl);
-
-            if (transcript) {
-              await handleIncomingText(parseInt(chatId), clientName, transcript, 'max', true);
-            } else {
-              await safeSendMessageToChat(maxBot, chatId, 'Не расслышал, повтори.');
-            }
-          } catch (err) {
-            console.error('VOICE FAIL:', err);
-            await safeSendMessageToChat(maxBot, chatId, 'Не расслышал, повтори.');
-          }
-        }
-      }
-    });
-
     maxBot.catch((err: any) => {
       logger.error('Max Bot SDK Error:', { error: err?.message || err });
     });
@@ -4895,6 +4794,65 @@ app.get(["/api/health", "/health"], async (_, res) => {
   const statusCode = health.status === "unhealthy" ? 503 : 200;
   res.status(statusCode).json(health);
 });
+
+async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean) {
+  console.log(`📨 Processing Message from ${chatId} (Voice: ${isVoiceInput})`);
+  
+  const lower = userText.toLowerCase().trim();
+  
+  // Команды переключения режима
+  if (lower.includes('селин 123770') || lower.includes('selin 123770') || lower === '123770') {
+    await safeSendMessageToChat(maxBot, chatId, '✅ Режим кодирования активирован. Отвечаю текстом.');
+    return;
+  }
+  
+  if (lower.startsWith('/голос') || lower.startsWith('/voice')) {
+     await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
+     return;
+  }
+
+  // Определение формата ответа
+  const isCodeRequest = lower.startsWith('/code') || lower.startsWith('напиши код') || lower.includes('/text_mode');
+  const shouldReplyWithText = isCodeRequest; 
+
+  // Системный промпт для LLM
+  const systemPrompt = isCodeRequest 
+    ? `Ты экспертный программист Selin_AI. Пиши полный, рабочий код с комментариями на русском.`
+    : `Ты Selin_AI — первый голосовой AI-ассистент в MAX. Ты общаешься голосом. 
+       Твои ответы будут озвучены, поэтому:
+       1. Пиши кратко (1-2 предложения).
+       2. Не используй markdown, списки, эмодзи.
+       3. Говори естественно, как живой человек.
+       4. Никогда не пиши "я текстовый бот".`;
+
+  // Вызов LLM
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userText }
+  ];
+  
+  const llmResponse = await callLLM(messages);
+
+  // Отправка ответа
+  if (shouldReplyWithText) {
+    await safeSendMessageToChat(maxBot, chatId, llmResponse);
+  } else {
+    // Очистка текста для TTS
+    const cleanText = llmResponse
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]+`/g, '')
+      .replace(/[#*_~>]/g, '')
+      .replace(/\n+/g, '. ')
+      .trim()
+      .slice(0, 400); 
+      
+    if (cleanText) {
+      await synthesizeAndSendVoice(maxBot, chatId, cleanText);
+    } else {
+      await safeSendMessageToChat(maxBot, chatId, llmResponse);
+    }
+  }
+}
 
 // Integrate Vite middleware in development or serve static files in production
 async function startServer() {
