@@ -4340,87 +4340,20 @@ const mcpToolsRegistry: Record<string, Function> = {
   }
 };
 
-async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean) {
-  const lower = userText.toLowerCase().trim();
-  
-  // Команды переключения режима
-  if (lower.includes('селин 123770') || lower.includes('selin 123770') || lower === '123770' || lower === '/text_mode') {
-    await setBotUserMode(chatId, 'text');
-    await safeSendMessageToChat(maxBot, chatId, '✅ Режим кодирования активирован. Отвечаю текстом.');
-    return;
-  }
-  
-  if (lower.startsWith('/голос') || lower.startsWith('/voice') || lower === '/voice_mode') {
-    await setBotUserMode(chatId, 'voice');
-    await safeSendMessageToChat(maxBot, chatId, '🎤 Голосовой режим восстановлен.');
-    return;
-  }
+import { handleIncomingMessage as externalHandleIncomingMessage } from './src/index';
 
-  // Обработка юридических запросов и удаления данных
-  if (lower.startsWith('/legal') || lower.startsWith('/privacy')) {
-    const privacyText = "🔒 Политика конфиденциальности Selin AI:\n\n" +
-      "1. Мы обрабатываем ваш голос и текст только для ответа на запросы.\n" +
-      "2. Данные не продаются третьим лицам.\n" +
-      "3. Вы можете удалить свои данные командой /delete.\n\n" +
-      "Полный текст доступен по ссылке: https://твой-домен.ru/legal/PRIVACY_POLICY";
-    
-    await safeSendMessageToChat(maxBot, chatId, privacyText);
-    return;
-  }
-
-  if (lower === '/delete' || lower === '/удалить_данные') {
-    await safeSendMessageToChat(maxBot, chatId, "✅ Запрос на удаление данных принят. Ваши данные будут удалены из активных систем в течение 24 часов.");
-    return;
-  }
-
-  // Проверка на первый визит
-  const isFirstVisit = !await hasUserInteractedBefore(chatId);
-  if (isFirstVisit) {
-    const WELCOME_VOICE = `Привет! Я Selin AI. Я слышу тебя и отвечу голосом. Просто скажи, что тебе нужно, или задай вопрос. Я здесь, чтобы помочь.`;
-    await synthesizeAndSendVoice(maxBot, chatId, WELCOME_VOICE);
-    await markUserAsVisited(chatId);
-    return; // После этого сразу выходим, ничего больше не пишем.
-  }
-
-  // Определение формата ответа
-  const currentMode = await getBotUserMode(chatId);
-  const isCodeRequest = lower.startsWith('/code') || lower.startsWith('напиши код') || currentMode === 'text';
-  const shouldReplyWithText = isCodeRequest; 
-
-  const SYSTEM_PROMPT = `Ты — Selin AI, голосовой ассистент. 
-Ты общаешься голосом, поэтому твои ответы должны быть:
-1. Краткими (1-3 предложения).
-2. Естественными, как у живого человека.
-3. Без markdown, списков, эмодзи и сложных символов.
-4. По существу вопроса. Если пользователь спрашивает про ремонт авто — дай краткий совет. Если про Библию — краткую мысль. Если про код — скажи "Лучше покажу кодом, напиши /текст", но по умолчанию старайся объяснить словами.`;
-
-  // Вызов LLM
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userText }
-  ];
-  
-  const llmResponse = await callLLM(messages);
-
-  // Отправка ответа
-  if (shouldReplyWithText) {
-    await safeSendMessageToChat(maxBot, chatId, llmResponse);
-  } else {
-    // Очистка текста для TTS: убираем код, списки, спецсимволы, эмодзи, чтобы озвучивалось идеально
-    const cleanText = llmResponse
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`[^`]+`/g, '')
-      .replace(/[#*_~>]/g, '')
-      .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '') // убираем эмодзи
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (cleanText) {
-      await synthesizeAndSendVoice(maxBot, chatId, cleanText);
-    } else {
-      await safeSendMessageToChat(maxBot, chatId, llmResponse);
-    }
-  }
+async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean): Promise<void> {
+  return externalHandleIncomingMessage(
+    chatId,
+    userText,
+    isVoiceInput,
+    maxBot,
+    setBotUserMode,
+    getBotUserMode,
+    safeSendMessageToChat,
+    synthesizeAndSendVoice,
+    callLLM
+  );
 }
 
 // API Endpoint: List Registered MCP Tools
@@ -4921,46 +4854,7 @@ app.get("/api/info", (req, res) => {
   });
 });
 
-import Database from 'better-sqlite3';
-
-const sessionsDbPath = path.join(process.cwd(), 'data/sessions.sqlite');
-const sessionsDb = new Database(sessionsDbPath, { verbose: console.log });
-sessionsDb.pragma('journal_mode = WAL');
-
-// Создаём таблицу, если нет
-sessionsDb.exec(`
-  CREATE TABLE IF NOT EXISTS user_sessions (
-    chat_id TEXT PRIMARY KEY,
-    first_visit_done INTEGER DEFAULT 0,
-    last_active DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
-async function hasUserInteractedBefore(chatId: string): Promise<boolean> {
-  try {
-    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-    const row = sessionsDb.prepare('SELECT first_visit_done FROM user_sessions WHERE chat_id = ?').get(cleanId);
-    return row ? row.first_visit_done === 1 : false;
-  } catch (err) {
-    console.error("❌ Error in hasUserInteractedBefore:", err);
-    return true; // safe fallback
-  }
-}
-
-async function markUserAsVisited(chatId: string): Promise<void> {
-  try {
-    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-    sessionsDb.prepare(`
-      INSERT INTO user_sessions (chat_id, first_visit_done, last_active) 
-      VALUES (?, 1, CURRENT_TIMESTAMP)
-      ON CONFLICT(chat_id) DO UPDATE SET 
-        first_visit_done = 1, 
-        last_active = CURRENT_TIMESTAMP
-    `).run(cleanId);
-  } catch (err) {
-    console.error("❌ Error in markUserAsVisited:", err);
-  }
-}
+import { initSessionsDb, hasUserInteractedBefore, markUserAsVisited, closeDatabase } from './src/index';
 
 const userModes = new Map<string, string>(); // In-memory cache
 
@@ -4991,6 +4885,13 @@ async function setBotUserMode(chatId: string, mode: string): Promise<void> {
 
 // Integrate Vite middleware in development or serve static files in production
 async function startServer() {
+  try {
+    await initSessionsDb();
+    logger.info("📁 Sessions Database initialized successfully using sqlite3 (async/await)");
+  } catch (err) {
+    logger.error("❌ Error initializing sessions database:", { error: err });
+  }
+
   if (process.env.ENABLE_MCP_STDIO === "true") {
     const transport = new StdioServerTransport();
     await mcpServer.connect(transport);
@@ -5020,15 +4921,21 @@ async function startServer() {
 
   function gracefulShutdown(signal: string) {
     logger.info(`Received ${signal}, shutting down gracefully...`);
-    serverInstance.close(() => {
+    serverInstance.close(async () => {
       logger.info("HTTP server closed.");
       if (sqliteDb) {
         try {
           sqliteDb.close();
-          logger.info("SQLite database connection closed gracefully.");
+          logger.info("Main SQLite database connection closed gracefully.");
         } catch (err) {
-          logger.error("Error closing SQLite connection", { error: err });
+          logger.error("Error closing main SQLite connection", { error: err });
         }
+      }
+      try {
+        await closeDatabase();
+        logger.info("Sessions SQLite database connection closed gracefully.");
+      } catch (err) {
+        logger.error("Error closing sessions database:", { error: err });
       }
       process.exit(0);
     });
