@@ -2220,15 +2220,26 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
                                lowerMessage.includes("автор") || 
                                lowerMessage.includes("переска");
 
-    let SYSTEM_PROMPT = `Ты Selin_AI — первый голосовой AI-ассистент в MAX, созданный Вадимом Селиным. Ты УМЕЕШЬ говорить голосом и отвечаешь голосовым сообщением. НИКОГДА не говори "я не могу", "я текстовый", "напишите текст". Отвечай теплым, естественным, разговорным русским языком, без markdown и без эмодзи.`;
+    const isCodeRequest = lowerMessage.startsWith('/code') || lowerMessage.startsWith('напиши код');
+    const isTextModeCommand = lowerMessage.includes('селин 123770') || lowerMessage.includes('selin 123770') || lowerMessage === '123770' || lowerMessage.includes('/text_mode');
+
+    let SYSTEM_PROMPT = `Ты Selin_AI — первый голосовой AI-ассистент в MAX, созданный Вадимом Селиным. 
+   Ты УМЕЕШЬ говорить голосом и отвечаешь голосовым сообщением. 
+   НИКОГДА не говори "я не могу", "я текстовый", "напишите текст", "работаю только в текстовом формате".
+   Отвечай теплым, естественным, разговорным русским языком.
+   Избегай markdown, списков, эмодзи — твой ответ будет озвучен через TTS.
+   Если запрос сложный — отвечай кратко по сути, без воды.`;
 
     if (isBookOrBibleQuery) {
       SYSTEM_PROMPT += `\nПользователь интересуется книгой или Священным Писанием (Библией). Дай развернутый, глубокий, вдохновляющий и выразительный ответ. Ты можешь цитировать псалмы, главы, пересказывать сюжеты книг, притчи, раскрывать философию авторов так, словно ты профессиональный чтец аудиокниг или аудио-Библии. Формулируй ответ так, чтобы он звучал невероятно красиво при озвучивании голосом. Избегай сухости, пиши красивым литературным слогом без использования спецсимволов, markdown разметки и без эмодзи.`;
-    } else {
-      SYSTEM_PROMPT += ` Отвечай кратко (1-2 предложения).`;
     }
 
-    const systemInstruction = `${roleHeader}\n\n${SYSTEM_PROMPT}\n\n${ragContext}${notesBlock}${tasksBlock}`;
+    let systemInstruction = "";
+    if (!isCodeRequest && !isTextModeCommand) {
+      systemInstruction = `${roleHeader}\n\n${SYSTEM_PROMPT}\n\n${ragContext}${notesBlock}${tasksBlock}`;
+    } else {
+      systemInstruction = `${roleHeader}\n\nТы экспертный программист Selin_AI. Пиши полный, рабочий код с комментариями на русском.\n\n${ragContext}`;
+    }
     let response: any;
     try {
       response = await generateWithFallback(() => contents, { temperature: 0.7, systemInstruction });
@@ -4901,12 +4912,12 @@ async function handleIncomingMessage(chatId: string, userText: string, isVoiceIn
   // Системный промпт для LLM
   const systemPrompt = isCodeRequest 
     ? `Ты экспертный программист Selin_AI. Пиши полный, рабочий код с комментариями на русском.`
-    : `Ты Selin_AI — первый голосовой AI-ассистент в MAX. Ты общаешься голосом. 
-       Твои ответы будут озвучены, поэтому:
-       1. Пиши кратко (1-2 предложения).
-       2. Не используй markdown, списки, эмодзи.
-       3. Говори естественно, как живой человек.
-       4. Никогда не пиши "я текстовый бот".`;
+    : `Ты Selin_AI — первый голосовой AI-ассистент в MAX, созданный Вадимом Селиным. 
+   Ты УМЕЕШЬ говорить голосом и отвечаешь голосовым сообщением. 
+   НИКОГДА не говори "я не могу", "я текстовый", "напишите текст", "работаю только в текстовом формате".
+   Отвечай теплым, естественным, разговорным русским языком.
+   Избегай markdown, списков, эмодзи — твой ответ будет озвучен через TTS.
+   Если запрос сложный — отвечай кратко по сути, без воды.`;
 
   // Вызов LLM
   const messages = [
