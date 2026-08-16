@@ -1632,7 +1632,9 @@ async function safeSendMessageToChat(
 // Helper to synthesize and send voice message to Max Bot
 async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | string, text: string, skipFallbackText = false): Promise<void> {
   try {
-    console.log('🎤 Edge TTS:', text.slice(0, 50));
+    console.log('🎤 TTS Start:', text.slice(0, 50));
+    
+    // 1. Генерация аудио через Edge TTS
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
       process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
@@ -1646,87 +1648,104 @@ async function synthesizeAndSendVoice(botInstance: Bot | null, chatId: number | 
       else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
     }
     const audioBuffer = Buffer.concat(chunks);
-    console.log('📦 TTS ready:', audioBuffer.length, 'bytes');
     
     if (audioBuffer.length < 1000) {
+      console.warn('⚠️ TTS buffer too small');
       await safeSendMessageToChat(botInstance, chatId, text);
       return;
     }
     
-    const MAX_TOKEN = process.env.MAX_BOT_TOKEN!;
+    console.log('📦 Audio generated:', audioBuffer.length, 'bytes');
+
+    // 2. Загрузка в MAX (Strict Two-Step Upload)
+    const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
+    if (!MAX_TOKEN) throw new Error('MAX_BOT_TOKEN missing');
+
+    // Шаг А: Инициализация загрузки
     const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
       method: 'POST',
-      headers: { 'Authorization': MAX_TOKEN }
+      headers: { 
+        'Authorization': MAX_TOKEN,
+        'Content-Type': 'application/json' 
+      }
     });
-    const { url, token } = await initRes.json();
     
+    if (!initRes.ok) throw new Error(`Init upload failed: ${initRes.status}`);
+    const initData = await initRes.json();
+    
+    if (!initData.url || !initData.token) {
+      console.error('❌ Init response invalid:', initData);
+      throw new Error('Invalid init data from MAX');
+    }
+
+    // Шаг Б: Загрузка файла (FormData)
     const formData = new FormData();
+    // ВАЖНО: Используем тип audio/mpeg и расширение .mp3
     formData.append('data', new Blob([audioBuffer], { type: 'audio/mpeg' }), 'voice.mp3');
-    await fetch(url, { method: 'POST', headers: { 'Authorization': MAX_TOKEN }, body: formData });
     
-    await new Promise(r => setTimeout(r, 2500)); // пауза для обработки файла
+    const uploadRes = await fetch(initData.url, {
+      method: 'POST',
+      headers: { 
+        'Authorization': MAX_TOKEN 
+        // Не указываем Content-Type для FormData, браузер сам поставит boundary
+      },
+      body: formData
+    });
     
-    console.log('📤 MAX SEND PAYLOAD:', JSON.stringify({
-      chat_id: parseInt(String(chatId)),
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text().catch(() => '');
+      throw new Error(`File upload failed: ${uploadRes.status} ${errText}`);
+    }
+    
+    console.log('✅ File uploaded to MAX storage');
+
+    // Шаг В: Ожидание обработки (увеличиваем до 3 секунд для надежности)
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Шаг Г: Отправка сообщения с вложением
+    const numericChatId = parseInt(String(chatId), 10);
+    
+    // Рассчитываем примерную длительность в миллисекундах для метаданных
+    // MP3 48kbps mono ~ 6000 bytes per second
+    const durationMs = Math.ceil((audioBuffer.length / 6000) * 1000);
+
+    const messagePayload = {
+      chat_id: numericChatId,
       attachments: [{
         type: 'audio',
         payload: {
-          token,
-          filename: 'voice.mp3',
-          duration: Math.ceil(audioBuffer.length / 6000)
+          token: initData.token,
+          filename: 'voice.mp3',       // Явное указание имени
+          duration: durationMs,         // Явное указание длительности
+          mime_type: 'audio/mpeg'       // Явное указание типа
         }
       }]
-    }, null, 2));
+    };
 
-    const activeBot = botInstance || maxBot;
+    console.log(' Sending message payload:', JSON.stringify(messagePayload));
 
-    try {
-      if (activeBot) {
-        await activeBot.api.sendMessageToChat(parseInt(String(chatId)), '', {
-          attachments: [{
-            type: 'audio',
-            payload: {
-              token,
-              filename: 'voice.mp3',
-              duration: Math.ceil(audioBuffer.length / 6000)
-            } as any
-          }]
-        } as any);
-        console.log('✅ Voice sent via SDK with full payload');
-      } else {
-        throw new Error('No active bot instance available');
-      }
-    } catch (sdkErr: any) {
-      console.warn('⚠️ SDK send failed, trying REST API:', sdkErr?.message);
-      
-      const sendRes = await fetch('https://platform-api.max.ru/messages', {
-        method: 'POST',
-        headers: {
-          'Authorization': MAX_TOKEN,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          chat_id: parseInt(String(chatId)),
-          attachments: [{
-            type: 'audio',
-            payload: {
-              token,
-              filename: 'voice.mp3'
-            }
-          }]
-        })
-      });
-      
-      const sendData = await sendRes.json();
-      if (!sendRes.ok) {
-        console.error('❌ REST API send failed:', sendRes.status, JSON.stringify(sendData));
-        throw new Error(`MAX send error: ${sendRes.status}`);
-      }
-      console.log('✅ Voice sent via REST API');
+    const sendRes = await fetch('https://platform-api.max.ru/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': MAX_TOKEN,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(messagePayload)
+    });
+
+    if (!sendRes.ok) {
+      const errData = await sendRes.json().catch(() => ({}));
+      throw new Error(`Send message failed: ${sendRes.status} ${JSON.stringify(errData)}`);
     }
+
+    console.log('✅ Voice message delivered successfully');
+
   } catch (err: any) {
-    console.error('❌ TTS failed:', err?.message);
-    await safeSendMessageToChat(botInstance, chatId, text);
+    console.error('❌ Voice Pipeline Critical Error:', err?.message);
+    if (!skipFallbackText) {
+      // Fallback на текст
+      await safeSendMessageToChat(botInstance, chatId, text);
+    }
   }
 }
 
