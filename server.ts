@@ -72,6 +72,29 @@ function checkRequiredEnvVars() {
     logger.error(`❌ CRITICAL: Missing required env vars: ${missing.join(", ")}`);
     process.exit(1);
   }
+
+  // Проверка и автоматическая корректировка URL-адресов OpenAI-совместимых роутеров (Teamo, Agent Router, и т.д.)
+  const urlVars = [
+    { name: "OPENAI_BASE_URL", val: process.env.OPENAI_BASE_URL },
+    { name: "TEAMO_BASE_URL", val: process.env.TEAMO_BASE_URL },
+    { name: "AGENT_ROUTER_BASE_URL", val: process.env.AGENT_ROUTER_BASE_URL },
+    { name: "ORCA_BASE_URL", val: process.env.ORCA_BASE_URL },
+    { name: "NARA_BASE_URL", val: process.env.NARA_BASE_URL },
+    { name: "TOKENHARBOR_BASE_URL", val: process.env.TOKENHARBOR_BASE_URL }
+  ];
+
+  urlVars.forEach(v => {
+    if (v.val) {
+      let url = v.val.trim();
+      if (!url.endsWith('/v1') && !url.endsWith('/v1beta') && !url.includes('/v1/') && !url.includes('/v1beta/')) {
+        const corrected = url.replace(/\/$/, '') + '/v1';
+        logger.warn(`⚠️ [API URL Check] Переменная ${v.name} не заканчивается на /v1. Корректируем автоматически с "${url}" на "${corrected}"`);
+        process.env[v.name] = corrected;
+      } else {
+        logger.info(`✅ [API URL Check] Переменная ${v.name} валидна: "${url}"`);
+      }
+    }
+  });
 }
 checkRequiredEnvVars();
 
@@ -1664,56 +1687,158 @@ async function synthesizeAndSendVoice(
     text = String(textOrSkip);
   }
 
-  try {
-    // 1. Генерируем аудио
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata('ru-RU-SvetlanaNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    const streamRes = tts.toStream(text);
-    const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
-
-    const chunks: Buffer[] = [];
-    for await (const chunk of readable) {
-      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
-    }
-    const audioBuffer = Buffer.concat(chunks);
-
-    // 2. Загружаем в MAX Storage
-    const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
-    const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
-      method: 'POST',
-      headers: { 'Authorization': MAX_TOKEN || '' }
-    });
-    const { token, url } = await initRes.json();
-
-    const form = new NodeFormData();
-    form.append('data', audioBuffer, { filename: 'voice.mp3', contentType: 'audio/mpeg' });
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Authorization': MAX_TOKEN || '' },
-      body: form as any
-    });
-
-    await new Promise(r => setTimeout(r, 3000)); // ждём обработки
-
-    // 3. Отправляем через SDK (ГЛАВНОЕ ИСПРАВЛЕНИЕ!)
-    const numericChatId = parseInt(String(chatId).replace(/\D/g, ''), 10);
-    await botInstance.api.sendMessageToChat(numericChatId, '', {
-      attachments: [{
-        type: 'audio',
-        payload: { 
-          token: token, 
-          filename: 'voice.mp3' 
-        }
-      }]
-    });
-
-    console.log(`✅ Голос отправлен в чат ${numericChatId}`);
-  } catch (error) {
-    console.error('❌ Ошибка голоса:', error);
-    // Фолбэк: отправляем текст, если голос не прошёл
-    await safeSendMessageToChat(botInstance, chatId, text);
+  // Обрезаем лишнее и логируем начало задачи
+  text = String(text).trim();
+  if (!text) {
+    console.warn("⚠️ synthesizeAndSendVoice: Текст для синтеза пуст.");
+    return;
   }
+
+  logger.info(`🎙️ Запуск синтеза голоса для чата ${chatId} (длина текста: ${text.length})`);
+
+  let audioBuffer: Buffer | null = null;
+  let voiceMethodUsed = "None";
+
+  // ПОРЯДОК СИНТЕЗА:
+  // 1. Попытка через основной API-роутер (TeamoRouter / Agent Router / OpenAI / и т.д.), если он настроен
+  const ttsBaseUrl = process.env.OPENAI_BASE_URL || process.env.TEAMO_BASE_URL || process.env.AGENT_ROUTER_BASE_URL;
+  const ttsApiKey = process.env.OPENAI_API_KEY || process.env.TEAMO_API_KEY || process.env.AGENT_ROUTER_API_KEY;
+  const ttsModel = process.env.OPENAI_TTS_MODEL || 'tts-1';
+  const ttsVoice = process.env.OPENAI_TTS_VOICE || 'alloy';
+
+  if (ttsBaseUrl && ttsApiKey) {
+    try {
+      let formattedUrl = ttsBaseUrl.trim();
+      if (!formattedUrl.endsWith('/v1') && !formattedUrl.endsWith('/v1beta') && !formattedUrl.includes('/v1/') && !formattedUrl.includes('/v1beta/')) {
+        formattedUrl = formattedUrl.replace(/\/$/, '') + '/v1';
+      }
+
+      console.log(`🎙️ Попытка генерации через API-роутер TTS (${formattedUrl}/audio/speech)...`);
+      const response = await fetch(`${formattedUrl}/audio/speech`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ttsApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: ttsModel,
+          input: text,
+          voice: ttsVoice,
+          response_format: 'mp3'
+        }),
+        signal: AbortSignal.timeout(15000) // 15 секунд таймаут для Railway
+      });
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok || contentType.includes("text/html")) {
+        const errText = await response.text();
+        console.error(`❌ [API Router TTS Error] Сервер вернул ошибку. Статус: ${response.status}. Content-Type: ${contentType}. Первая часть ответа (до 200 симв):`);
+        console.error(errText.slice(0, 200));
+        throw new Error(`OpenAI-TTS failed with status ${response.status}`);
+      }
+
+      const arrayBuf = await response.arrayBuffer();
+      audioBuffer = Buffer.from(arrayBuf);
+      voiceMethodUsed = "OpenAI/Teamo TTS";
+      console.log(`✅ Успешно сгенерирован голос через API-роутер (${voiceMethodUsed})`);
+    } catch (err: any) {
+      console.warn(`⚠️ Сбой генерации через API-роутер TTS: ${err?.message || err}. Переключаемся на резервный Edge TTS...`);
+    }
+  }
+
+  // 2. Резервный вариант №1 (Edge TTS): если основной API дал сбой или не настроен
+  if (!audioBuffer) {
+    try {
+      console.log("🎙️ Запуск резервного Edge TTS для синтеза...");
+      const tts = new MsEdgeTTS();
+      const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural';
+      await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+      const streamRes = tts.toStream(text);
+      const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of readable) {
+        if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
+      }
+      audioBuffer = Buffer.concat(chunks);
+      voiceMethodUsed = "Edge TTS";
+      console.log(`✅ Успешно сгенерирован голос через резервный Edge TTS`);
+    } catch (err: any) {
+      console.error(`❌ Ошибка резервного Edge TTS: ${err?.message || err}`);
+    }
+  }
+
+  // 3. Загрузка в MAX Storage и отправка (с защитой от HTML-ошибок и падений)
+  if (audioBuffer && audioBuffer.length > 0) {
+    try {
+      const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
+      console.log("💾 Загрузка аудио в MAX Storage...");
+      const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
+        method: 'POST',
+        headers: { 'Authorization': MAX_TOKEN || '' },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      const initContentType = initRes.headers.get("content-type") || "";
+      if (!initRes.ok || initContentType.includes("text/html")) {
+        const initErrText = await initRes.text();
+        console.error(`❌ [MAX Storage Init HTML Error] Статус: ${initRes.status}. Content-Type: ${initContentType}. Ответ (до 200 симв):`);
+        console.error(initErrText.slice(0, 200));
+        throw new Error(`MAX Storage Init returned HTTP ${initRes.status}`);
+      }
+
+      const initData = await initRes.json();
+      const token = initData.token;
+      const url = initData.url;
+
+      if (!token || !url) {
+        throw new Error("MAX Storage response missing token or url");
+      }
+
+      const form = new NodeFormData();
+      form.append('data', audioBuffer, { filename: 'voice.mp3', contentType: 'audio/mpeg' });
+      
+      const uploadRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': MAX_TOKEN || '' },
+        body: form as any,
+        signal: AbortSignal.timeout(20000)
+      });
+
+      const uploadContentType = uploadRes.headers.get("content-type") || "";
+      if (!uploadRes.ok || uploadContentType.includes("text/html")) {
+        const uploadErrText = await uploadRes.text();
+        console.error(`❌ [MAX Storage Upload HTML Error] Статус: ${uploadRes.status}. Content-Type: ${uploadContentType}. Ответ (до 200 симв):`);
+        console.error(uploadErrText.slice(0, 200));
+        throw new Error(`MAX Storage Upload returned HTTP ${uploadRes.status}`);
+      }
+
+      await new Promise(r => setTimeout(r, 3000)); // Ждём индексации на сервере MAX
+
+      // 4. Отправляем через SDK
+      const numericChatId = parseInt(String(chatId).replace(/\D/g, ''), 10);
+      await botInstance.api.sendMessageToChat(numericChatId, '', {
+        attachments: [{
+          type: 'audio',
+          payload: { 
+            token: token, 
+            filename: 'voice.mp3' 
+          }
+        }]
+      });
+
+      console.log(`✅ Голос успешно отправлен в чат ${numericChatId} (Метод: ${voiceMethodUsed})`);
+      return; // Полный успех!
+    } catch (uploadErr: any) {
+      console.error(`❌ Сбой при загрузке или отправке аудио через MAX Storage: ${uploadErr?.message || uploadErr}`);
+    }
+  }
+
+  // ПОРЯДОК СИНТЕЗА - РЕЗЕРВНЫЙ ВАР No2 (Полный фолбэк на Текст):
+  // Если все методы аудиосинтеза или отправка файла дали сбой, отправляем обычное текстовое сообщение
+  console.warn(`⚠️ ПОЛНЫЙ ФОЛБЭК: Отправляем обычный текст в чат ${chatId}, так как аудиосинтез не удался.`);
+  await safeSendMessageToChat(botInstance, chatId, text);
 }
 
 async function transcribeAudioBuffer(buf: Buffer): Promise<string> {
