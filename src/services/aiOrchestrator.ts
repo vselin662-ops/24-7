@@ -88,12 +88,15 @@ class AIOrchestrator {
   }
 
   private getSystemPrompt(): string {
-    return `Ты — Selin AI, голосовой ассистент в MAX Messenger.
-Отвечай кратко (1-3 предложения), естественно, без markdown и эмодзи.
-Твой ответ будет озвучен голосом.`;
+    return `Ты голосовой ассистент Selin AI. Отвечай на вопросы пользователя ПОДРОБНО и РАЗВЕРНУТО. Твой ответ должен звучать как естественная речь живого человека, продолжительностью 20-40 секунд. 
+СТРОГИЕ ПРАВИЛА ДЛЯ ОЗВУЧКИ:
+- НИКОГДА не используй Markdown (никаких звездочек, решеток, тире для списков, обратных кавычек).
+- НИКОГДА не используй смайлики и эмодзи.
+- Не используй нумерованные списки (1., 2., 3.). Если нужно перечислить, используй слова 'во-первых', 'во-вторых'.
+- Пиши только сплошным текстом, используя обычные знаки препинания (точки, запятые, вопросительные знаки), чтобы синтезатор речи (TTS) делал правильные паузы.`;
   }
 
-  async getResponse(userMessage: string): Promise<string> {
+  async getResponse(userMessage: string, customSystemPrompt?: string): Promise<string> {
     if (this.providers.length === 0) {
       return 'Нет доступных AI-провайдеров. Проверь настройки API.';
     }
@@ -112,11 +115,11 @@ class AIOrchestrator {
         const completion = await provider.client!.chat.completions.create({
           model: provider.model,
           messages: [
-            { role: 'system', content: this.getSystemPrompt() },
+            { role: 'system', content: customSystemPrompt || this.getSystemPrompt() },
             { role: 'user', content: userMessage }
           ],
           temperature: 0.7,
-          max_tokens: 150,
+          max_tokens: 1500,
         });
 
         const response = completion.choices[0]?.message?.content || 'Извини, не понял.';
@@ -181,9 +184,9 @@ export function getOrchestrator(): AIOrchestrator {
   return orchestratorInstance;
 }
 
-export async function getAIResponse(userMessage: string): Promise<string> {
+export async function getAIResponse(userMessage: string, customSystemPrompt?: string): Promise<string> {
   const orchestrator = getOrchestrator();
-  return orchestrator.getResponse(userMessage);
+  return orchestrator.getResponse(userMessage, customSystemPrompt);
 }
 
 export const aiOrchestrator = getOrchestrator();

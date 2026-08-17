@@ -230,25 +230,13 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
 
         console.log(`✅ Текст успешно распознан через Groq Whisper: "${transcribedText}"`);
         
-        // Импортируем AI Orchestrator динамически и генерируем ответ
-        const { getAIResponse } = await import('./src/index');
-        const aiResponse = await getAIResponse(transcribedText);
-        console.log(`🤖 Ответ AI Orchestrator на голосовой ввод: "${aiResponse}"`);
-
-        // Очищаем ответ от markdown перед отправкой в TTS
-        const cleanReply = aiResponse
-          .replace(/```[\s\S]*?```/g, '')
-          .replace(/`[^`]+`/g, '')
-          .replace(/[#*_~>]/g, '')
-          .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        if (cleanReply) {
-          await synthesizeAndSendVoice(maxBot, chatId, cleanReply);
-        } else {
-          await safeSendMessageToChat(maxBot, chatId, aiResponse);
-        }
+        // Передаем распознанный текст в умную логику цифрового штаба (RAG, Debate, Wake-words)
+        const cleanId = cleanChatIdStr(chatId);
+        const numericChatId = parseInt(cleanId) || 0;
+        
+        handleIncomingText(numericChatId, "Клиент", transcribedText, "max", true).catch(err => {
+          console.error('❌ Error handling incoming voice text inside webhook:', err);
+        });
 
         return res.status(200).send('ok');
 
@@ -263,9 +251,12 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
       return res.status(200).send('ok');
     }
 
-    // Обычное текстовое сообщение
-    handleIncomingMessage(chatId, text, false).catch(err => {
-      console.error('❌ Background handler error:', err);
+    // Обычное текстовое сообщение - также направляем через умную логику (RAG, Debate, Wake-words)
+    const cleanId = cleanChatIdStr(chatId);
+    const numericChatId = parseInt(cleanId) || 0;
+    
+    handleIncomingText(numericChatId, "Клиент", text, "max", false).catch(err => {
+      console.error('❌ Error handling incoming text message inside webhook:', err);
     });
 
     return res.status(200).send('ok');
@@ -1745,14 +1736,21 @@ async function synthesizeAndSendVoice(
     text = String(textOrSkip);
   }
 
-  // Обрезаем лишнее и логируем начало задачи
-  text = String(text).trim();
+  // Обрезаем лишнее, очищаем от разметки Markdown, смайликов и эмодзи для идеального голосового синтеза
+  text = String(text)
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]+`/g, '')
+    .replace(/[#*_~>]/g, '')
+    .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   if (!text) {
-    console.warn("⚠️ synthesizeAndSendVoice: Текст для синтеза пуст.");
+    console.warn("⚠️ synthesizeAndSendVoice: Текст для синтеза пуст после очистки.");
     return;
   }
 
-  logger.info(`🎙️ Запуск синтеза голоса для чата ${chatId} (длина текста: ${text.length})`);
+  logger.info(`🎙️ Запуск синтеза голоса для чата ${chatId} (длина очищенного текста: ${text.length})`);
 
   let audioBuffer: Buffer | null = null;
   let voiceMethodUsed = "None";
@@ -2197,10 +2195,8 @@ async function processMultimodalMessage(
           parameters: {
             type: Type.OBJECT,
             properties: {
-              text_response: { type: Type.STRING, description: "Тёплый, естественный ответ по существу, подхватывающий фразу собеседника" },
               wants_voice: { type: Type.BOOLEAN, description: "Запросил ли собеседник явно голосовой ответ или прислал голосовое" }
-            },
-            required: ["text_response"]
+            }
           }
         }
       ]
@@ -2332,7 +2328,7 @@ async function processMultimodalMessage(
   }
 
   // Capability 4: ANSWER VOICE / TEXT
-  const textResponse = args.text_response || await generateAgentResponseHelper(userMessage, "receiver", chatHistory, config);
+  const textResponse = await generateAgentResponseHelper(userMessage, "receiver", chatHistory, config);
   const wantsVoice = args.wants_voice || isVoice || userMessage.toLowerCase().includes("голос") || userMessage.toLowerCase().includes("скажи") || userMessage.toLowerCase().includes("расскажи");
 
   if (wantsVoice) {
@@ -2431,12 +2427,12 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
     const isCodeRequest = lowerMessage.startsWith('/code') || lowerMessage.startsWith('напиши код');
     const isTextModeCommand = lowerMessage.includes('селин 123770') || lowerMessage.includes('selin 123770') || lowerMessage === '123770' || lowerMessage.includes('/text_mode');
 
-    let SYSTEM_PROMPT = `Ты Selin_AI — первый голосовой AI-ассистент в MAX, созданный Вадимом Селиным. 
-   Ты УМЕЕШЬ говорить голосом и отвечаешь голосовым сообщением. 
-   НИКОГДА не говори "я не могу", "я текстовый", "напишите текст", "работаю только в текстовом формате".
-   Отвечай теплым, естественным, разговорным русским языком.
-   Избегай markdown, списков, эмодзи — твой ответ будет озвучен через TTS.
-   Если запрос сложный — отвечай кратко по сути, без воды.`;
+    let SYSTEM_PROMPT = `Ты голосовой ассистент Selin AI. Отвечай на вопросы пользователя ПОДРОБНО и РАЗВЕРНУТО. Твой ответ должен звучать как естественная речь живого человека, продолжительностью 20-40 секунд. 
+   СТРОГИЕ ПРАВИЛА ДЛЯ ОЗВУЧКИ:
+   - НИКОГДА не используй Markdown (никаких звездочек, решеток, тире для списков, обратных кавычек).
+   - НИКОГДА не используй смайлики и эмодзи.
+   - Не используй нумерованные списки (1., 2., 3.). Если нужно перечислить, используй слова 'во-первых', 'во-вторых'.
+   - Пиши только сплошным текстом, используя обычные знаки препинания (точки, запятые, вопросительные знаки), чтобы синтезатор речи (TTS) делал правильные паузы.`;
 
     if (isBookOrBibleQuery) {
       SYSTEM_PROMPT += `\nПользователь интересуется книгой или Священным Писанием (Библией). Дай развернутый, глубокий, вдохновляющий и выразительный ответ. Ты можешь цитировать псалмы, главы, пересказывать сюжеты книг, притчи, раскрывать философию авторов так, словно ты профессиональный чтец аудиокниг или аудио-Библии. Формулируй ответ так, чтобы он звучал невероятно красиво при озвучивании голосом. Избегай сухости, пиши красивым литературным слогом без использования спецсимволов, markdown разметки и без эмодзи.`;
