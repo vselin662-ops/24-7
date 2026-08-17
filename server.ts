@@ -1796,13 +1796,21 @@ async function synthesizeAndSendVoice(
         throw new Error("MAX Storage response missing token or url");
       }
 
-      const form = new NodeFormData();
-      form.append('data', audioBuffer, { filename: 'voice.mp3', contentType: 'audio/mpeg' });
+      // Использование встроенного в Node.js 18+ стандартного FormData и Blob.
+      // Это автоматически и корректно формирует multipart/form-data со всеми нужными boundary,
+      // предотвращая ошибку 412 (Precondition Failed) на сервере MAX.
+      const form = new FormData();
+      const fileBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+      form.append('data', fileBlob, 'voice.mp3');
+
+      // Логируем параметры отправки для диагностики (без конфиденциальных токенов)
+      console.log(`🌐 [MAX Storage Upload] Отправка файла на URL: ${url.substring(0, 70)}... (размер: ${audioBuffer.length} байт)`);
       
       const uploadRes = await fetch(url, {
         method: 'POST',
-        headers: { 'Authorization': MAX_TOKEN || '' },
-        body: form as any,
+        // Убираем ручное указание заголовка Content-Type (чтобы fetch сам прописал boundary)
+        // и убираем Authorization для upload URL (так как ссылка url уже содержит все одноразовые токены)
+        body: form,
         signal: AbortSignal.timeout(20000)
       });
 
