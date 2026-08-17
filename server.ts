@@ -146,11 +146,11 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // ==========================================
 app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
   try {
+    // Немедленный лог входящего запроса для глубокой диагностики в Railway
+    console.log('MAX Webhook Payload:', JSON.stringify(req.body));
+
     const payload = req.body || {};
-    
-    // Support both direct (flat) user webhook payload and nested Max Messenger SDK webhook payloads
     const chatId = payload.chat_id || extractMaxChatId(payload);
-    
     if (!chatId) {
       console.error('❌ No ChatID in payload');
       return res.status(200).send('ok');
@@ -159,54 +159,112 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
     const body = payload.body || payload;
     const message = body.message || {};
     const text = payload.text || message.body?.text || '';
-    const attachments = message.attachments || [];
 
-    let userText = text;
+    // Собираем вложения со всех уровней вложенности
+    let allAttachments: any[] = [];
+    if (Array.isArray(payload.attachments)) allAttachments.push(...payload.attachments);
+    if (Array.isArray(payload.body?.attachments)) allAttachments.push(...payload.body.attachments);
+    if (Array.isArray(payload.body?.message?.attachments)) allAttachments.push(...payload.body.message.attachments);
+    if (Array.isArray(payload.body?.message?.body?.attachments)) allAttachments.push(...payload.body.message.body.attachments);
+    if (Array.isArray(payload.message?.attachments)) allAttachments.push(...payload.message.attachments);
+    if (Array.isArray(payload.message?.body?.attachments)) allAttachments.push(...payload.message.body.attachments);
+    if (Array.isArray(message.attachments)) allAttachments.push(...message.attachments);
+    if (Array.isArray(message.body?.attachments)) allAttachments.push(...message.body.attachments);
+
     let isVoiceInput = false;
+    let voiceUrlOrId = "";
 
-    // Check for explicit audio_url (flat payload)
+    // 1. Прямая ссылка на аудио из плоского payload
     if (payload.audio_url) {
       isVoiceInput = true;
-      console.log('🎧 Incoming flat voice webhook detected, starting STT...');
-      const transcribed = await transcribeAudio(payload.audio_url);
-      if (transcribed) {
-        userText = transcribed;
-      }
+      voiceUrlOrId = payload.audio_url;
     }
 
-    // Check for attachments (standard payload)
-    if (!userText.trim() && attachments.length > 0) {
-      const voiceAtt = attachments.find((a: any) => 
-        a.type === 'audio' || 
-        a.type === 'voice' ||
-        a.payload?.url ||
-        a.url ||
-        a.payload?.token ||
-        a.token
-      );
-      if (voiceAtt) {
+    // 2. Проверка типов сообщения
+    if (
+      payload.type === 'voice' || 
+      payload.type === 'audio' ||
+      message.type === 'voice' || 
+      message.type === 'audio' ||
+      body.type === 'voice' ||
+      body.type === 'audio'
+    ) {
+      isVoiceInput = true;
+    }
+
+    // 3. Сканирование вложений
+    for (const att of allAttachments) {
+      if (
+        att.type === 'audio' || 
+        att.type === 'voice' || 
+        att.media_type === 'voice' ||
+        att.media_type === 'audio' ||
+        String(att.type).toLowerCase().includes('audio') ||
+        String(att.type).toLowerCase().includes('voice')
+      ) {
         isVoiceInput = true;
-        let audioUrl = voiceAtt.payload?.url || voiceAtt.url;
-        if (!audioUrl && voiceAtt.payload?.token) {
-          audioUrl = `https://platform-api.max.ru/uploads/${voiceAtt.payload.token}`;
-        } else if (!audioUrl && voiceAtt.token) {
-          audioUrl = `https://platform-api.max.ru/uploads/${voiceAtt.token}`;
-        }
-
-        if (audioUrl) {
-          console.log('🎧 Incoming Voice Detected, starting STT...');
-          userText = await transcribeAudio(audioUrl);
-          if (!userText) userText = "[Неразборчиво]";
+        const candidate = att.payload?.url || att.url || att.payload?.token || att.token || att.file_url || att.fileId || att.file_id;
+        if (candidate) {
+          voiceUrlOrId = String(candidate);
+          break;
         }
       }
     }
 
-    if (!userText.trim()) {
+    // Обработка голосового сообщения
+    if (isVoiceInput) {
+      console.log(`🎙️ Обнаружен голосовой поток (ID/URL): "${voiceUrlOrId || 'не указан'}"`);
+      try {
+        if (!voiceUrlOrId) {
+          throw new Error("Не удалось найти ссылку или токен аудио в полезной нагрузке вебхука.");
+        }
+
+        const audioBuffer = await downloadMaxAudio(voiceUrlOrId);
+        const transcribedText = await transcribeAudio(audioBuffer, 'voice.ogg');
+        
+        if (!transcribedText || !transcribedText.trim()) {
+          console.warn("⚠️ Речь не распознана. Отправляем голосовой ответ.");
+          await synthesizeAndSendVoice(maxBot, chatId, "Я не расслышала, повторите, пожалуйста.");
+          return res.status(200).send('ok');
+        }
+
+        console.log(`✅ Текст успешно распознан через Groq Whisper: "${transcribedText}"`);
+        
+        // Импортируем AI Orchestrator динамически и генерируем ответ
+        const { getAIResponse } = await import('./src/index');
+        const aiResponse = await getAIResponse(transcribedText);
+        console.log(`🤖 Ответ AI Orchestrator на голосовой ввод: "${aiResponse}"`);
+
+        // Очищаем ответ от markdown перед отправкой в TTS
+        const cleanReply = aiResponse
+          .replace(/```[\s\S]*?```/g, '')
+          .replace(/`[^`]+`/g, '')
+          .replace(/[#*_~>]/g, '')
+          .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (cleanReply) {
+          await synthesizeAndSendVoice(maxBot, chatId, cleanReply);
+        } else {
+          await safeSendMessageToChat(maxBot, chatId, aiResponse);
+        }
+
+        return res.status(200).send('ok');
+
+      } catch (err: any) {
+        console.error("❌ Ошибка обработки голосового ввода:", err?.message || err);
+        await synthesizeAndSendVoice(maxBot, chatId, "Произошла ошибка при обработке вашего голосового сообщения. Пожалуйста, повторите.");
+        return res.status(200).send('ok');
+      }
+    }
+
+    if (!text || !text.trim()) {
       return res.status(200).send('ok');
     }
 
-    // 2. Асинхронная обработка ответа (не блокируем webhook)
-    handleIncomingMessage(chatId, userText, isVoiceInput).catch(err => {
+    // Обычное текстовое сообщение
+    handleIncomingMessage(chatId, text, false).catch(err => {
       console.error('❌ Background handler error:', err);
     });
 
@@ -1849,41 +1907,91 @@ async function synthesizeAndSendVoice(
   await safeSendMessageToChat(botInstance, chatId, text);
 }
 
-async function transcribeAudioBuffer(buf: Buffer): Promise<string> {
+async function transcribeAudio(audioBuffer: Buffer, filename: string = 'voice.ogg'): Promise<string> {
   try {
-    const fsPromises = await import('fs/promises');
-    const tmp = `/tmp/voice_${Date.now()}.ogg`;
-    await fsPromises.writeFile(tmp, buf);
-    
-    const fileContent = await fsPromises.readFile(tmp);
-    const groq = getGroq();
-    const textObj = await groq.audio.transcriptions.create({
-      file: fileContent as any,
-      model: 'whisper-large-v3',
-      language: 'ru',
+    const key = process.env.GROQ_API_KEY;
+    if (!key) {
+      console.warn("⚠️ GROQ_API_KEY не задан в окружении! Возвращаем пустую строку.");
+      return "";
+    }
+
+    const form = new FormData();
+    const fileBlob = new Blob([audioBuffer], { type: 'audio/ogg' });
+    form.append('file', fileBlob, filename);
+    form.append('model', 'whisper-large-v3');
+    form.append('language', 'ru'); // Явно задаем русский язык для точности
+
+    console.log(`🎙️ [Groq Whisper STT] Отправка запроса (размер: ${audioBuffer.length} байт)...`);
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${key}`
+      },
+      body: form,
+      signal: AbortSignal.timeout(25000)
     });
-    
-    const textStr = (textObj as any).text || String(textObj);
-    await fsPromises.unlink(tmp).catch(()=>{});
-    return textStr;
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok || contentType.includes("text/html")) {
+      const errText = await response.text();
+      console.error(`❌ [Groq Whisper STT Error] HTTP статус: ${response.status}. Content-Type: ${contentType}. Ответ (до 200 симв):`);
+      console.error(errText.slice(0, 200));
+      return "";
+    }
+
+    const data = await response.json() as any;
+    const text = data.text || "";
+    console.log(`✅ [Groq Whisper STT Success] Распознанный текст: "${text}"`);
+    return text;
   } catch (err: any) {
-    console.error('❌ STT buffer failed:', err?.message);
-    return '';
+    console.error(`❌ [Groq Whisper STT Failed] Ошибка при распознавании речи: ${err?.message || err}`);
+    return "";
   }
 }
 
-async function transcribeAudio(audioUrl: string): Promise<string> {
+async function downloadMaxAudio(fileUrlOrId: string): Promise<Buffer> {
   try {
-    console.log('🎧 STT download:', audioUrl.slice(0, 80));
-    const res = await fetch(audioUrl);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const textStr = await transcribeAudioBuffer(buf);
-    console.log('🎧 STT result:', textStr.slice(0, 100));
-    return textStr;
+    let url = fileUrlOrId.trim();
+    // Если передан только UUID/токен, формируем полный URL для загрузки
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `https://platform-api.max.ru/uploads/${url}`;
+    }
+
+    console.log(`💾 [downloadMaxAudio] Скачивание файла с URL: ${url.slice(0, 85)}...`);
+    
+    const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
+    const headers: Record<string, string> = {};
+    if (MAX_TOKEN) {
+      headers['Authorization'] = MAX_TOKEN;
+    }
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(20000)
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    if (!res.ok || contentType.includes("text/html")) {
+      const errText = await res.text();
+      console.error(`❌ [downloadMaxAudio Error] HTTP статус: ${res.status}. Content-Type: ${contentType}. Ответ (до 200 симв):`);
+      console.error(errText.slice(0, 200));
+      throw new Error(`MAX Storage download returned HTTP ${res.status}`);
+    }
+
+    const arrayBuf = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    console.log(`✅ [downloadMaxAudio Success] Файл успешно загружен. Размер: ${buffer.length} байт.`);
+    return buffer;
   } catch (err: any) {
-    console.error('❌ STT failed:', err?.message);
-    return '';
+    console.error(`❌ [downloadMaxAudio Failed] Ошибка при скачивании аудио из MAX: ${err?.message || err}`);
+    throw err;
   }
+}
+
+async function transcribeAudioBuffer(buf: Buffer): Promise<string> {
+  // Для обратной совместимости с другими эндпоинтами используем новый асинхронный метод
+  return transcribeAudio(buf, 'voice.ogg');
 }
 
 async function generateImage(prompt: string): Promise<Buffer | null> {

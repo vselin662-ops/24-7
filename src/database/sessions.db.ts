@@ -110,7 +110,7 @@ export async function markUserAsVisited(chatId: string): Promise<void> {
   try {
     const cleanId = String(chatId).replace(/^[a-z_]+/, '');
     await queryRun(`
-      INSERT INTO user_sessions (chat_id, first_visit_done, last_active) 
+      INSERT OR REPLACE INTO user_sessions (chat_id, first_visit_done, last_active) 
       VALUES (?, 1, CURRENT_TIMESTAMP)
     `, [cleanId]);
   } catch (err) {
