@@ -146,54 +146,148 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // ==========================================
 app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
   try {
-    const payload = req.body;
-    const chatId = extractMaxChatId(payload);
-    if (!chatId) return res.status(200).send('ok');
+    const raw = req.body || {};
+    console.log('MAX Webhook Payload:', JSON.stringify(raw));
 
-    let userText = '';
-    const attachments = payload.body?.message?.attachments || [];
-
-    // 1. Если есть аудио — распознаём
-    const audioAtt = attachments.find((a: any) => a.type === 'audio' || a.type === 'voice');
-    if (audioAtt && audioAtt.payload?.url) {
-      userText = await transcribeAudioFromUrl(audioAtt.payload.url);
-    } else {
-      // 2. Иначе берём текст
-      userText = payload.body?.message?.text || '';
+    // 1. Извлекаем chatId с максимальной устойчивостью к вложенности
+    let chatId = raw.chat_id || raw.payload?.chat_id || raw.body?.chat_id;
+    if (!chatId) {
+      chatId = extractMaxChatId(raw) || extractMaxChatId(raw.payload) || extractMaxChatId(raw.body);
+    }
+    if (!chatId && raw.message) {
+      chatId = raw.message.chat_id || raw.message.recipient?.chat_id;
+    }
+    if (!chatId && raw.payload?.message) {
+      chatId = raw.payload.message.chat_id || raw.payload.message.recipient?.chat_id;
+    }
+    if (!chatId && raw.body?.message) {
+      chatId = raw.body.message.chat_id || raw.body.message.recipient?.chat_id;
     }
 
-    if (!userText.trim()) {
+    if (!chatId) {
+      console.error('❌ No ChatID found in raw payload:', JSON.stringify(raw));
       return res.status(200).send('ok');
     }
 
-    // 3. Генерируем ответ через LLM с корректным контекстом
-    const systemPrompt = `Ты — Selin AI, голосовой ассистент. Отвечай на вопрос пользователя естественно, как живой человек. 
-Не используй Markdown, списки, эмодзи. Пиши сплошным текстом для озвучки.`;
-
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userText }
+    // 2. Извлекаем текст сообщения из любых возможных путей
+    let text = '';
+    const textCandidates = [
+      raw.text,
+      raw.payload?.text,
+      raw.body?.text,
+      raw.message?.text,
+      raw.message?.body?.text,
+      raw.payload?.message?.text,
+      raw.payload?.message?.body?.text,
+      raw.body?.message?.text,
+      raw.body?.message?.body?.text,
     ];
+    for (const cand of textCandidates) {
+      if (cand !== undefined && cand !== null && String(cand).trim() !== '') {
+        text = String(cand).trim();
+        break;
+      }
+    }
 
-    // 4. Вызываем LLM напрямую (без обёрток)
-    const groq = getGroq();
-    const completion = await groq.chat.completions.create({
-      messages: messages as any,
-      model: 'llama-3.1-70b-versatile',
-      temperature: 0.7,
-      max_tokens: 1500
+    // 3. Собираем вложения со всех уровней вложенности
+    const allAttachments: any[] = [];
+    const collectFrom = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj.attachments)) {
+        allAttachments.push(...obj.attachments);
+      }
+      if (obj.payload && typeof obj.payload === 'object') collectFrom(obj.payload);
+      if (obj.body && typeof obj.body === 'object') collectFrom(obj.body);
+      if (obj.message && typeof obj.message === 'object') collectFrom(obj.message);
+    };
+    collectFrom(raw);
+
+    let isVoiceInput = false;
+    let voiceUrlOrId = '';
+
+    // Check flat payload for audio URL
+    if (raw.audio_url || raw.payload?.audio_url || raw.body?.audio_url) {
+      isVoiceInput = true;
+      voiceUrlOrId = raw.audio_url || raw.payload?.audio_url || raw.body?.audio_url || '';
+    }
+
+    // Check message type
+    const checkType = (obj: any): boolean => {
+      if (!obj) return false;
+      return obj.type === 'voice' || obj.type === 'audio';
+    };
+    if (checkType(raw) || checkType(raw.payload) || checkType(raw.body) || checkType(raw.message) || checkType(raw.payload?.message) || checkType(raw.body?.message)) {
+      isVoiceInput = true;
+    }
+
+    // Scan attachments for audio/voice content
+    for (const att of allAttachments) {
+      const typeStr = String(att?.type || '').toLowerCase();
+      const mediaTypeStr = String(att?.media_type || '').toLowerCase();
+      if (
+        typeStr.includes('audio') || 
+        typeStr.includes('voice') || 
+        mediaTypeStr.includes('voice') || 
+        mediaTypeStr.includes('audio')
+      ) {
+        isVoiceInput = true;
+        const candidate = att.payload?.url || att.url || att.payload?.token || att.token || att.file_url || att.fileId || att.file_id;
+        if (candidate) {
+          voiceUrlOrId = String(candidate);
+          break;
+        }
+      }
+    }
+
+    const cleanId = cleanChatIdStr(chatId);
+    const numericChatId = parseInt(cleanId) || 0;
+
+    // Handle voice message transcription and processing
+    if (isVoiceInput) {
+      console.log(`🎙️ Voice input stream detected (ID/URL): "${voiceUrlOrId || 'none'}"`);
+      try {
+        if (!voiceUrlOrId) {
+          throw new Error("Audio URL or token not found in payload attachments.");
+        }
+
+        const audioBuffer = await downloadMaxAudio(voiceUrlOrId);
+        const transcribedText = await transcribeAudio(audioBuffer, 'voice.ogg');
+        
+        if (!transcribedText || !transcribedText.trim()) {
+          console.warn("⚠️ Voice transcription produced empty string.");
+          await synthesizeAndSendVoice(maxBot, chatId, "Я не расслышала, повторите, пожалуйста.");
+          return res.status(200).send('ok');
+        }
+
+        console.log(`✅ Voice successfully transcribed: "${transcribedText}"`);
+        
+        // Non-blocking call to the smart features workflow
+        handleIncomingText(numericChatId, "Клиент", transcribedText, "max", true).catch(err => {
+          console.error('❌ Error in voice handleIncomingText:', err);
+        });
+
+        return res.status(200).send('ok');
+      } catch (err: any) {
+        console.error("❌ Voice message processing failed:", err?.message || err);
+        await synthesizeAndSendVoice(maxBot, chatId, "Произошла ошибка при обработке вашего голосового сообщения. Пожалуйста, повторите.");
+        return res.status(200).send('ok');
+      }
+    }
+
+    // Handle text input
+    if (!text || !text.trim()) {
+      return res.status(200).send('ok');
+    }
+
+    // Non-blocking call to the smart features workflow for text
+    handleIncomingText(numericChatId, "Клиент", text, "max", false).catch(err => {
+      console.error('❌ Error in text handleIncomingText:', err);
     });
 
-    const responseText = completion.choices[0]?.message?.content?.trim() || 
-                         'Привет! Я — Selin AI, ваш голосовой ассистент. Скажите, чем могу помочь?';
-
-    // 5. Озвучиваем и отправляем
-    await synthesizeAndSendVoice(chatId, responseText);
-
-    res.status(200).send('ok');
-  } catch (err) {
-    console.error('[WEBHOOK ERROR]', err);
-    res.status(200).send('ok');
+    return res.status(200).send('ok');
+  } catch (error: any) {
+    console.error('❌ Webhook handler critical error:', error);
+    return res.status(200).send('ok');
   }
 });
 
