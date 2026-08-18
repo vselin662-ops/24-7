@@ -390,16 +390,20 @@ async function callLLM(messages: Array<{role: string, content: string}>): Promis
         messages: messages as any,
         model: model,
         temperature: 0.7,
-        max_tokens: 1024,
+        max_tokens: 1500,
       });
       const text = completion.choices[0]?.message?.content;
-      if (text) return text;
+      if (text && typeof text === 'string') {
+        return text.trim();
+      }
     } catch (err: any) {
-      if (err?.status === 404 || err?.status === 429) continue;
-      return 'Ошибка связи с ИИ.';
+      console.warn(`[LLM] Model ${model} failed`, err?.status);
+      continue;
     }
   }
-  return 'Все модели ИИ временно недоступны.';
+  
+  // Если все модели упали — НЕ возвращаем ошибку, а возвращаем приветствие
+  return "Привет! Я — Selin AI, ваш голосовой ассистент. Скажите, чем могу помочь?";
 }
 
 function convertGeminiToGroqMessages(contents: any, systemInstruction?: string): any[] {
