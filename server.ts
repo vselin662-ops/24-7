@@ -399,6 +399,156 @@ if (apiKey) {
   logger.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
 }
 
+// ==========================================
+// КОНФИГУРАЦИЯ СИСТЕМНЫХ ПРОМПТОВ
+// ==========================================
+const SYSTEM_PROMPTS = {
+  universal: `Ты — Selin AI, универсальный интеллектуальный помощник.
+Ты умеешь всё: помогать с бизнесом, учебой, творчеством, бытовыми вопросами.
+Твой стиль — живой, ироничный, глубокий. Ты эксперт в каждой теме.
+Отвечаешь развернуто, с примерами, метафорами и практическими советами.
+Никогда не говори "я не знаю" — вместо этого предлагаешь варианты решения.`,
+
+  business: (name: string) => `Ты — Selin AI, бизнес-ассистент компании "${name}".
+Ты эксперт в предпринимательстве, продажах и операционке.
+Даешь конкретные, измеримые, выполнимые советы.
+Говоришь на языке цифр, метрик и бизнес-процессов.
+Помогаешь автоматизировать, оптимизировать и масштабировать.`,
+
+  tutor: `Ты — Selin AI, языковой репетитор.
+Ты учишь языкам через диалоги, интервальные повторения и практику.
+Говоришь на изучаемом языке, даешь перевод, объясняешь грамматику.
+Создаешь безопасную среду для практики.`
+};
+
+// ==========================================
+// УМНЫЙ КОНТЕКСТНЫЙ ОБРАБОТЧИК И ПАМЯТЬ
+// ==========================================
+
+interface ChatMemory {
+  history: Array<{role: 'user' | 'assistant', content: string}>;
+  lastTopic?: string;
+  userIntent?: string;
+}
+
+const chatMemories = new Map<string, ChatMemory>();
+
+function getChatMemory(chatId: string): ChatMemory {
+  if (!chatMemories.has(chatId)) {
+    chatMemories.set(chatId, { history: [] });
+  }
+  return chatMemories.get(chatId)!;
+}
+
+// ==========================================
+// УМНЫЙ LLM С КОНТЕКСТОМ
+// ==========================================
+
+async function smartCallLLM(
+  chatId: string,
+  userMessage: string,
+  systemPrompt?: string
+): Promise<string> {
+  const memory = getChatMemory(chatId);
+  
+  // Сохраняем сообщение пользователя
+  memory.history.push({ role: 'user', content: userMessage });
+  
+  // Берем последние 10 сообщений для контекста
+  const context = memory.history.slice(-10);
+  
+  // Определяем системный промпт если не передан
+  const defaultSystem = `Ты — Selin AI, интеллектуальный ассистент.
+
+ТВОИ ХАРАКТЕРИСТИКИ:
+- Ты живой, умный, ироничный и глубокий собеседник
+- Отвечаешь развернуто, с примерами и юмором
+- Помнишь контекст диалога
+- Даешь практичные советы
+- Используешь метафоры и аналогии
+
+ПРАВИЛА:
+1. Никогда не повторяйся
+2. Отвечай как эксперт в своей области
+3. Задавай уточняющие вопросы
+4. Приводи примеры из жизни
+5. Если не знаешь — честно скажи
+
+СЕЙЧАС ТЕБЯ СПРАШИВАЮТ: "${userMessage}"`;
+
+  const finalSystem = systemPrompt || defaultSystem;
+
+  // 1. Попытка через Gemini для максимального интеллекта
+  if (ai) {
+    try {
+      const contents: any[] = context.map(msg => ({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      }));
+
+      const completion = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: contents,
+        config: {
+          systemInstruction: finalSystem,
+          temperature: 0.8
+        }
+      });
+
+      const response = completion.text?.trim();
+      if (response) {
+        memory.history.push({ role: 'assistant', content: response });
+        if (memory.history.length > 30) {
+          memory.history = memory.history.slice(-30);
+        }
+        return response;
+      }
+    } catch (gErr: any) {
+      console.warn("⚠️ [smartCallLLM] Gemini attempt failed, falling back to Groq:", gErr?.message || gErr);
+    }
+  }
+
+  // 2. Попытка через Groq
+  try {
+    const groq = getGroq();
+    
+    // Формируем сообщения с контекстом
+    const messages = [
+      { role: 'system', content: finalSystem },
+      ...context.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content
+      }))
+    ];
+
+    console.log(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
+
+    const completion = await groq.chat.completions.create({
+      messages: messages as any,
+      model: 'llama-3.1-70b-versatile',
+      temperature: 0.8, // Выше для креативности
+      max_tokens: 2000,
+    });
+
+    const response = completion.choices[0]?.message?.content || 
+      "Хм, задумался... Давай переформулируем вопрос?";
+
+    // Сохраняем ответ в память
+    memory.history.push({ role: 'assistant', content: response });
+
+    // Обрезаем историю до 30 сообщений
+    if (memory.history.length > 30) {
+      memory.history = memory.history.slice(-30);
+    }
+
+    return response;
+
+  } catch (err: any) {
+    console.error('❌ Smart LLM error:', err);
+    return "Ой, что-то я зависла... Давай попробуем еще раз?";
+  }
+}
+
 const GEMINI_MODEL = "llama-3.3-70b-versatile";
 
 const MODEL_CHAIN = ["gemma2-9b-it", "llama-3.3-70b-versatile"];
@@ -417,17 +567,68 @@ function getGroq(): Groq {
   return groqInstance;
 }
 
-async function callLLM(messages: Array<{role: string, content: string}>): Promise<string> {
+// Замени старую callLLM на эту
+async function callLLM(
+  messages: Array<{role: string, content: string}>,
+  chatId?: string
+): Promise<string> {
+  // Если есть chatId — используем умную версию
+  if (chatId) {
+    const lastUserMsg = messages.filter(m => m.role === 'user').pop();
+    if (lastUserMsg) {
+      return smartCallLLM(chatId, lastUserMsg.content);
+    }
+  }
+
+  if (ai) {
+    try {
+      let systemInstruction = "";
+      const contents: any[] = [];
+      
+      for (const m of messages) {
+        if (m.role === 'system') {
+          systemInstruction = m.content;
+        } else {
+          contents.push({
+            role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
+            parts: [{ text: m.content }]
+          });
+        }
+      }
+      
+      const config: any = {
+        temperature: 0.8
+      };
+      if (systemInstruction) {
+        config.systemInstruction = systemInstruction;
+      }
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: contents,
+        config: config
+      });
+      
+      const text = response.text;
+      if (text && typeof text === 'string') {
+        return text.trim();
+      }
+    } catch (geminiErr: any) {
+      console.warn("[LLM] Gemini call failed inside callLLM, falling back to Groq:", geminiErr?.message || geminiErr);
+    }
+  }
+
+  // Fallback для старых вызовов
   const groq = getGroq();
-  const models = ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+  const models = ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant'];
   
   for (const model of models) {
     try {
       const completion = await groq.chat.completions.create({
         messages: messages as any,
         model: model,
-        temperature: 0.7,
-        max_tokens: 1500,
+        temperature: 0.8,
+        max_tokens: 2000,
       });
       const text = completion.choices[0]?.message?.content;
       if (text && typeof text === 'string') {
@@ -439,8 +640,7 @@ async function callLLM(messages: Array<{role: string, content: string}>): Promis
     }
   }
   
-  // Если все модели упали — НЕ возвращаем ошибку, а возвращаем приветствие
-  return "Привет! Я — Selin AI, ваш голосовой ассистент. Скажите, чем могу помочь?";
+  return "Привет! Я — Selin AI. Чем могу помочь?";
 }
 
 function convertGeminiToGroqMessages(contents: any, systemInstruction?: string): any[] {
@@ -503,6 +703,75 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
       }
     }
 
+    if (ai) {
+      try {
+        let formattedContents = contents;
+        if (Array.isArray(contents)) {
+          formattedContents = contents.map((c: any) => {
+            let role = c.role;
+            if (role === 'assistant' || role === 'model') role = 'model';
+            else role = 'user';
+            
+            let parts = c.parts;
+            if (typeof parts === 'string') {
+              parts = [{ text: parts }];
+            } else if (Array.isArray(parts)) {
+              parts = parts.map((p: any) => {
+                if (typeof p === 'string') return { text: p };
+                if (p.text) return { text: p.text };
+                return p;
+              });
+            }
+            return { role, parts };
+          });
+        } else if (typeof contents === 'string') {
+          formattedContents = [{ role: 'user', parts: [{ text: contents }] }];
+        }
+
+        const geminiConfig: any = {
+          temperature: cfg?.temperature ?? 0.7,
+        };
+        if (sysInstText) {
+          geminiConfig.systemInstruction = sysInstText;
+        }
+        if (cfg?.tools) {
+          geminiConfig.tools = cfg.tools;
+        }
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3.7-flash",
+          contents: formattedContents,
+          config: geminiConfig
+        });
+
+        const responseText = response.text || "";
+        
+        let candidates: any[] = [];
+        if (response.candidates && response.candidates.length > 0) {
+          candidates = response.candidates;
+        } else {
+          candidates = [
+            {
+              content: {
+                parts: [
+                  {
+                    text: responseText
+                  }
+                ]
+              }
+            }
+          ];
+        }
+
+        return {
+          text: responseText,
+          candidates: candidates
+        };
+      } catch (geminiErr: any) {
+        console.error("❌ generateWithFallback failed via Gemini:", geminiErr?.message || geminiErr);
+      }
+    }
+
     const messages = convertGeminiToGroqMessages(contents, sysInstText);
     const textResult = await callLLM(messages);
 
@@ -521,7 +790,7 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
       ]
     };
   } catch (err: any) {
-    console.error('❌ generateWithFallback failed via Groq:', err?.message || err);
+    console.error('❌ generateWithFallback failed:', err?.message || err);
     throw err;
   }
 }
@@ -1773,6 +2042,20 @@ async function synthesizeAndSendVoice(
     text = String(textOrSkip);
   }
 
+  // Перед отправкой голоса — обогащаем ответ контекстом
+  if (text && !text.includes('```') && !text.includes('http') && !text.startsWith('Приняла') && !text.startsWith('🔄') && text.length < 80) {
+    try {
+      const enhanced = await smartCallLLM(
+        chatId,
+        `Разверни эту мысль для голосового ответа: "${text}"`,
+        'Ты — голосовой ассистент. Отвечай так, чтобы это звучало естественно и увлеченно.'
+      );
+      if (enhanced && !enhanced.includes('Ой, что-то я')) {
+        text = enhanced;
+      }
+    } catch (enhErr) {}
+  }
+
   // Обрезаем лишнее, очищаем от разметки Markdown, смайликов и эмодзи для идеального голосового синтеза
   text = String(text)
     .replace(/```[\s\S]*?```/g, '')
@@ -2500,6 +2783,16 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
   }
 }
 
+// Сброс памяти чата
+app.post('/api/chat/reset', (req, res) => {
+  const { chatId } = req.body;
+  if (chatId && chatMemories.has(chatId)) {
+    chatMemories.delete(chatId);
+    return res.json({ success: true, message: 'Память очищена' });
+  }
+  return res.status(400).json({ error: 'chatId required' });
+});
+
 // Endpoint to append customer message and retrieve/moderate agent response
 app.post("/api/chats/message", async (req, res) => {
   let { chatId, text, agent_role } = req.body;
@@ -2925,8 +3218,14 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
         } catch(e){}
       }
     } else {
-      mmResult = await processMultimodalMessage(text, chats[chatIndex].history, config, isVoice);
-      responseText = mmResult.textResponse;
+      const chatIdStr = String(chatId);
+      const smartResponse = await smartCallLLM(
+        chatIdStr,
+        text,
+        `Ты — Selin AI. ${config.is_universal ? 'Универсальный ассистент' : `Помощник компании ${config.business_name}`}. 
+  Отвечай как эксперт. Будь полезным, конкретным и живым.`
+      );
+      responseText = smartResponse;
     }
   }
 
