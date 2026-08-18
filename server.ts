@@ -9,7 +9,6 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import Groq from 'groq-sdk';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
-import NodeFormData from 'form-data';
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -55,11 +54,19 @@ import {
   weeklyReview,
   salesRoleplay
 } from "./src/connectors/business-plan.connector";
+import {
+  initSessionsDb,
+  hasUserInteractedBefore,
+  markUserAsVisited,
+  closeDatabase,
+  getOrchestrator,
+  handleIncomingMessage as externalHandleIncomingMessage
+} from './src/index';
 
 dotenv.config();
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-// Временный обход TLS для MAX API. TODO: заменить на NODE_EXTRA_CA_CERTS
+let maxBot: Bot | null = null;
+let db: any = null;
 
 const execFileAsync = promisify(execFile);
 
@@ -337,7 +344,10 @@ app.use((req, res, next) => {
   const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || "default";
   const userPrompt = req.body?.user_message || req.body?.prompt || req.body?.text || "";
 
+  let isJsonCalled = false;
+
   res.json = function (body: any) {
+    isJsonCalled = true;
     if (body && typeof body === "object") {
       if (typeof body.text === "string") {
         body.text = filterAIOutput(body.text, { tenantId, userPrompt });
@@ -353,8 +363,11 @@ app.use((req, res, next) => {
   };
 
   res.send = function (body: any) {
-    if (typeof body === "string") {
-      body = filterAIOutput(body, { tenantId, userPrompt });
+    if (!isJsonCalled && typeof body === "string") {
+      const contentType = res.get('Content-Type');
+      if (!contentType || !contentType.includes('application/json')) {
+        body = filterAIOutput(body, { tenantId, userPrompt });
+      }
     }
     return originalSend.call(this, body);
   };
@@ -612,7 +625,7 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 2, delayMs = 1200):
 // ==========================================
 // FIREBASE / FIRESTORE STORAGE INTEGRATION
 // ==========================================
-let db: any = null;
+db = null;
 let isFirestoreAvailable = false;
 
 try {
@@ -3001,7 +3014,6 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
 
 // Initialize Max Bot
 const maxToken = process.env.MAX_BOT_TOKEN;
-let maxBot: Bot | null = null;
 
 // State management for chat user sessions
 const userStates = new Map<number, { questSent: boolean; questNag: number; state: 'NEW' | 'QUESTING' | 'ACTIVE' }>();
@@ -4606,8 +4618,6 @@ const mcpToolsRegistry: Record<string, Function> = {
   }
 };
 
-import { handleIncomingMessage as externalHandleIncomingMessage } from './src/index';
-
 async function handleIncomingMessage(chatId: string, userText: string, isVoiceInput: boolean): Promise<void> {
   return externalHandleIncomingMessage(
     chatId,
@@ -5076,11 +5086,11 @@ app.get(["/api/health", "/health"], async (_, res) => {
 
 app.get('/api/ai/status', (req, res) => {
   try {
-    const orchestrator = getOrchestrator();
+    const aiOrchestrator = getOrchestrator();
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      ...orchestrator.getStatus(),
+      ...aiOrchestrator.getStatus(),
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -5092,12 +5102,12 @@ app.post('/api/ai/switch', (req, res) => {
   if (!provider) {
     return res.status(400).json({ error: 'Provider name required' });
   }
-  const orchestrator = getOrchestrator();
-  const success = orchestrator.switchToProvider(provider);
+  const aiOrchestrator = getOrchestrator();
+  const success = aiOrchestrator.switchToProvider(provider);
   if (success) {
     res.json({ success: true, currentProvider: provider });
   } else {
-    res.status(404).json({ error: `Provider "${provider}" not found. Available: ${orchestrator.getActiveProviders().join(', ')}` });
+    res.status(404).json({ error: `Provider "${provider}" not found. Available: ${aiOrchestrator.getActiveProviders().join(', ')}` });
   }
 });
 
@@ -5146,8 +5156,6 @@ app.get("/api/info", (req, res) => {
     github: "https://github.com/vselin/selin-ai"
   });
 });
-
-import { initSessionsDb, hasUserInteractedBefore, markUserAsVisited, closeDatabase, getOrchestrator } from './src/index';
 
 const userModes = new Map<string, string>(); // In-memory cache
 
