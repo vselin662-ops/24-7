@@ -381,29 +381,25 @@ function getGroq(): Groq {
 }
 
 async function callLLM(messages: Array<{role: string, content: string}>): Promise<string> {
-  // Если запрос требует актуальных данных (цены, наличие товаров), LLM должен предупредить об этом или дать общие рекомендации по проверке цен на агрегаторах.
-  try {
-    const groq = getGroq();
-    const completion = await groq.chat.completions.create({
-      messages: messages as any,
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0.7,
-      max_tokens: 2048,
-    });
-    return completion.choices[0]?.message?.content || 'Извините, ошибка генерации.';
-  } catch (err: any) {
-    console.error('❌ Groq LLM:', err?.status, err?.message);
-    if (err?.status === 429) {
-      const groq = getGroq();
-      const fb = await groq.chat.completions.create({
+  const groq = getGroq();
+  const models = ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+  
+  for (const model of models) {
+    try {
+      const completion = await groq.chat.completions.create({
         messages: messages as any,
-        model: 'gemma2-9b-it',
+        model: model,
+        temperature: 0.7,
         max_tokens: 1024,
       });
-      return fb.choices[0]?.message?.content || 'Сервис временно перегружен.';
+      const text = completion.choices[0]?.message?.content;
+      if (text) return text;
+    } catch (err: any) {
+      if (err?.status === 404 || err?.status === 429) continue;
+      return 'Ошибка связи с ИИ.';
     }
-    return 'Извините, временная ошибка.';
   }
+  return 'Все модели ИИ временно недоступны.';
 }
 
 function convertGeminiToGroqMessages(contents: any, systemInstruction?: string): any[] {
