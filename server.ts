@@ -36,6 +36,9 @@ import { injectCanaryInstruction } from "./src/services/canary-tokens";
 import { orchestrator } from "./src/core/orchestrator";
 import { MaxAdapter } from "./src/adapters/max.adapter";
 import { RobotAdapter } from "./src/adapters/robot.adapter";
+import { LLMService, llmService } from "./src/core/LLMService";
+import { SelinCore } from "./src/core/SelinCore";
+import { MaxAdapter as ModernMaxAdapter } from "./src/adapters/MaxAdapter";
 import {
   startLearning,
   generateLesson,
@@ -149,12 +152,32 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // ==========================================
+// Selin AI Core Services Initialization
+// ==========================================
+export const selinLLMService = llmService;
+export const selinCore = new SelinCore(selinLLMService);
+export const modernMaxAdapter = new ModernMaxAdapter(selinCore, process.env.MAX_BOT_TOKEN);
+modernMaxAdapter.connect().catch((err) => logger.error("Failed to connect modernMaxAdapter", { error: err }));
+
+// ==========================================
 // Max Messenger Webhook Route (Registered BEFORE all /api middlewares)
 // ==========================================
 app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
   try {
+    await modernMaxAdapter.handleWebhook(req, res);
+  } catch (error: any) {
+    logger.error("❌ MaxAdapter webhook error:", error);
+    return res.status(200).send("ok");
+  }
+});
+
+/* ==========================================
+ * LEGACY: Old Max Messenger Webhook Route (Preserved for rollback)
+ * ==========================================
+async function legacyHandleMaxWebhook(req: any, res: any) {
+  try {
     const raw = req.body || {};
-    console.log('MAX Webhook Payload:', JSON.stringify(raw));
+    console.log('MAX Webhook Payload (Legacy):', JSON.stringify(raw));
 
     // 1. Извлекаем chatId с максимальной устойчивостью к вложенности
     let chatId = raw.chat_id || raw.payload?.chat_id || raw.body?.chat_id;
@@ -296,7 +319,8 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
     console.error('❌ Webhook handler critical error:', error);
     return res.status(200).send('ok');
   }
-});
+}
+*/
 
 app.get(["/api/max/webhook", "/max/webhook"], (req, res) => {
   logger.info("MAX webhook получен (GET проверка)");
@@ -2786,8 +2810,11 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
 // Сброс памяти чата
 app.post('/api/chat/reset', (req, res) => {
   const { chatId } = req.body;
-  if (chatId && chatMemories.has(chatId)) {
-    chatMemories.delete(chatId);
+  if (chatId) {
+    selinLLMService.clearMemory(chatId);
+    if (chatMemories.has(chatId)) {
+      chatMemories.delete(chatId);
+    }
     return res.json({ success: true, message: 'Память очищена' });
   }
   return res.status(400).json({ error: 'chatId required' });
@@ -5370,7 +5397,8 @@ async function getHealthStatus() {
       sqlite: { status: sqliteStatus, latencyMs: sqliteLatency },
       gemini_api: { status: geminiStatus, circuitBreaker: circuitState },
       max_bot: { status: maxStatus },
-      firestore: { status: firestoreStatus }
+      firestore: { status: firestoreStatus },
+      selin_core: selinCore.getStatus()
     },
     version: "2.1.0",
     uptime: Math.round(process.uptime())
