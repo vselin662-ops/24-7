@@ -511,7 +511,7 @@ async function smartCallLLM(
       }));
 
       const completion = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
+        model: "gemini-2.5-flash",
         contents: contents,
         config: {
           systemInstruction: finalSystem,
@@ -578,15 +578,13 @@ const GEMINI_MODEL = "llama-3.3-70b-versatile";
 const MODEL_CHAIN = ["gemma2-9b-it", "llama-3.3-70b-versatile"];
 
 let groqInstance: Groq | null = null;
-function getGroq(): Groq {
+function getGroq(): Groq | null {
   if (!groqInstance) {
     const key = process.env.GROQ_API_KEY;
-    if (!key) {
-      console.warn("⚠️ GROQ_API_KEY is not defined in the environment. Creating a placeholder client.");
-      groqInstance = new Groq({ apiKey: "missing_api_key" });
-    } else {
-      groqInstance = new Groq({ apiKey: key });
+    if (!key || key.includes('your_') || key.includes('placeholder') || key.length < 10) {
+      return null;
     }
+    groqInstance = new Groq({ apiKey: key });
   }
   return groqInstance;
 }
@@ -604,7 +602,10 @@ async function callLLM(
     }
   }
 
-  if (ai) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const isGeminiKeyValid = geminiKey && !geminiKey.includes('your_') && !geminiKey.includes('placeholder') && geminiKey.length > 10;
+
+  if (ai && isGeminiKeyValid) {
     try {
       let systemInstruction = "";
       const contents: any[] = [];
@@ -628,7 +629,7 @@ async function callLLM(
       }
       
       const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
+        model: "gemini-2.5-flash",
         contents: contents,
         config: config
       });
@@ -638,29 +639,31 @@ async function callLLM(
         return text.trim();
       }
     } catch (geminiErr: any) {
-      console.warn("[LLM] Gemini call failed inside callLLM, falling back to Groq:", geminiErr?.message || geminiErr);
+      logger.warn(`[LLM] Gemini call failed inside callLLM, falling back to Groq: ${geminiErr?.message || geminiErr}`);
     }
   }
 
   // Fallback для старых вызовов
   const groq = getGroq();
-  const models = ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant'];
-  
-  for (const model of models) {
-    try {
-      const completion = await groq.chat.completions.create({
-        messages: messages as any,
-        model: model,
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
-      const text = completion.choices[0]?.message?.content;
-      if (text && typeof text === 'string') {
-        return text.trim();
+  if (groq) {
+    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    
+    for (const model of models) {
+      try {
+        const completion = await groq.chat.completions.create({
+          messages: messages as any,
+          model: model,
+          temperature: 0.8,
+          max_tokens: 2000,
+        });
+        const text = completion.choices[0]?.message?.content;
+        if (text && typeof text === 'string') {
+          return text.trim();
+        }
+      } catch (err: any) {
+        logger.warn(`[LLM] Model ${model} failed: ${err?.message || err}`);
+        continue;
       }
-    } catch (err: any) {
-      console.warn(`[LLM] Model ${model} failed`, err?.status);
-      continue;
     }
   }
   
@@ -712,6 +715,7 @@ function convertGeminiToGroqMessages(contents: any, systemInstruction?: string):
 }
 
 async function generateWithFallback(buildContents: () => any, cfg: any): Promise<any> {
+  const isJsonExpected = cfg?.responseMimeType === "application/json" || !!cfg?.responseSchema;
   try {
     const contents = buildContents();
     let sysInstText = '';
@@ -727,7 +731,10 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
       }
     }
 
-    if (ai) {
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const isGeminiKeyValid = geminiKey && !geminiKey.includes('your_') && !geminiKey.includes('placeholder') && geminiKey.length > 10;
+
+    if (ai && isGeminiKeyValid) {
       try {
         let formattedContents = contents;
         if (Array.isArray(contents)) {
@@ -758,12 +765,18 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
         if (sysInstText) {
           geminiConfig.systemInstruction = sysInstText;
         }
+        if (cfg?.responseMimeType) {
+          geminiConfig.responseMimeType = cfg.responseMimeType;
+        }
+        if (cfg?.responseSchema) {
+          geminiConfig.responseSchema = cfg.responseSchema;
+        }
         if (cfg?.tools) {
           geminiConfig.tools = cfg.tools;
         }
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: "gemini-2.5-flash",
           contents: formattedContents,
           config: geminiConfig
         });
@@ -792,12 +805,37 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
           candidates: candidates
         };
       } catch (geminiErr: any) {
-        console.error("❌ generateWithFallback failed via Gemini:", geminiErr?.message || geminiErr);
+        logger.warn(`⚠️ [generateWithFallback] Gemini call failed: ${geminiErr?.message || geminiErr}`);
       }
     }
 
     const messages = convertGeminiToGroqMessages(contents, sysInstText);
-    const textResult = await callLLM(messages);
+    let textResult = await callLLM(messages);
+
+    if (isJsonExpected) {
+      try {
+        const cleaned = textResult.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        JSON.parse(cleaned);
+        textResult = cleaned;
+      } catch {
+        if (sysInstText.includes("Интеллектуальный Голосовой Агент") || sysInstText.includes("nextStep")) {
+          textResult = JSON.stringify({
+            speech: textResult.replace(/["\n\r]/g, ' ') || "Приветствую вас! Я готов помочь вам в решении ваших задач.",
+            userName: null,
+            extractedGoal: null,
+            nextStep: "EXPLAIN_PLATFORM"
+          });
+        } else if (cfg?.responseSchema?.type === Type.ARRAY || textResult.startsWith('[')) {
+          textResult = "[]";
+        } else {
+          textResult = JSON.stringify({
+            speech: textResult,
+            message: textResult,
+            status: "ok"
+          });
+        }
+      }
+    }
 
     return {
       text: textResult,
@@ -814,8 +852,17 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
       ]
     };
   } catch (err: any) {
-    console.error('❌ generateWithFallback failed:', err?.message || err);
-    throw err;
+    logger.error('❌ generateWithFallback failed:', err?.message || err);
+    if (isJsonExpected) {
+      return {
+        text: "{}",
+        candidates: [{ content: { parts: [{ text: "{}" }] } }]
+      };
+    }
+    return {
+      text: "Привет! Я — Selin AI. Чем могу помочь?",
+      candidates: [{ content: { parts: [{ text: "Привет! Я — Selin AI. Чем могу помочь?" }] } }]
+    };
   }
 }
 
@@ -3767,7 +3814,27 @@ app.post("/api/voice-organism-dialogue", async (req, res) => {
       }
     );
 
-    const data = JSON.parse(response.text || "{}");
+    let data: any = {};
+    const rawText = (response.text || "").trim();
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      data = JSON.parse(cleaned);
+    } catch {
+      data = {
+        speech: rawText || "Приветствую вас! Я готов помочь вам в решении ваших задач.",
+        userName: sanitizeVoiceName(userName) || null,
+        extractedGoal: userInput || null,
+        nextStep: step || "EXPLAIN_PLATFORM"
+      };
+    }
+
+    if (!data.speech) {
+      data.speech = "Приветствую вас! Я ваш интеллектуальный помощник Selin AI.";
+    }
+    if (!data.nextStep) {
+      data.nextStep = step || "EXPLAIN_PLATFORM";
+    }
+
     const cleanName = sanitizeVoiceName(data.userName) || sanitizeVoiceName(userName);
     const currentVoice = await getVoiceForChat(chatId);
 
@@ -3780,8 +3847,16 @@ app.post("/api/voice-organism-dialogue", async (req, res) => {
       wakeDetected: !!wakeWordInfo
     });
   } catch (error: any) {
-    console.error("Voice Organism Error:", error);
-    return res.status(500).json({ error: error.message || "Voice Organism dialogue error" });
+    logger.warn("Voice Organism Warning (using fallback):", error?.message || error);
+    const currentVoice = await getVoiceForChat(chatId);
+    return res.json({
+      speech: "Приветствую вас! Я ваш интеллектуальный помощник Selin AI. Чем могу помочь вам сегодня?",
+      userName: sanitizeVoiceName(userName) || null,
+      extractedGoal: userInput || null,
+      nextStep: step || "EXPLAIN_PLATFORM",
+      voice: currentVoice,
+      wakeDetected: !!wakeWordInfo
+    });
   }
 });
 
