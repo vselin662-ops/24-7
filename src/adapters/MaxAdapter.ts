@@ -1,17 +1,19 @@
 import { Bot } from "@maxhub/max-bot-api";
-import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { SelinCore } from "../core/SelinCore";
 import { AIResponse, MessageContext, ChannelType } from "../core/types";
+import { TTSService } from "../services/TTSService";
 import { logger } from "../logger";
 
 export class MaxAdapter {
   private bot: Bot | null = null;
   private core: SelinCore;
   private token: string | undefined;
+  private ttsService: TTSService;
 
-  constructor(core: SelinCore, token?: string) {
+  constructor(core: SelinCore, token?: string, ttsService?: TTSService) {
     this.core = core;
     this.token = token || process.env.MAX_BOT_TOKEN;
+    this.ttsService = ttsService || new TTSService();
   }
 
   /**
@@ -81,132 +83,36 @@ export class MaxAdapter {
    * Синтез и отправка голосового сообщения в чат MAX
    */
   public async synthesizeAndSendVoice(chatId: string | number, text: string): Promise<void> {
-    const cleanIdStr = String(chatId).replace(/^[a-z_]+/, '');
-    const numericId = parseInt(cleanIdStr, 10);
+    try {
+      // 1. Генерация MP3 через TTS
+      const audioBuffer = await this.ttsService.synthesize(text);
 
-    // Очистка текста от Markdown и спецсимволов для чистого синтеза речи
-    let cleanText = String(text)
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`[^`]+`/g, '')
-      .replace(/[#*_~>]/g, '')
-      .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+      // 2. Загрузка в MAX Storage
+      const MAX_TOKEN = this.token || process.env.MAX_BOT_TOKEN;
+      const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
+        method: 'POST',
+        headers: { 'Authorization': MAX_TOKEN || '' }
+      });
+      const { token, url } = await initRes.json();
 
-    if (!cleanText) {
-      logger.warn("⚠️ [MaxAdapter] synthesizeAndSendVoice: text is empty after cleaning.");
-      return;
-    }
+      const form = new FormData();
+      const fileBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+      form.append('data', fileBlob, 'voice.mp3');
+      await fetch(url, { method: 'POST', body: form });
 
-    logger.info(`🎙️ [MaxAdapter] Starting voice synthesis for chat ${numericId} (${cleanText.length} chars)`);
-
-    let audioBuffer: Buffer | null = null;
-
-    // 1. Попытка через внешний TTS API (OpenAI / Teamo)
-    const ttsBaseUrl = process.env.OPENAI_BASE_URL || process.env.TEAMO_BASE_URL || process.env.AGENT_ROUTER_BASE_URL;
-    const ttsApiKey = process.env.OPENAI_API_KEY || process.env.TEAMO_API_KEY || process.env.AGENT_ROUTER_API_KEY;
-    const ttsModel = process.env.OPENAI_TTS_MODEL || 'tts-1';
-    const ttsVoice = process.env.OPENAI_TTS_VOICE || 'alloy';
-
-    if (ttsBaseUrl && ttsApiKey) {
-      try {
-        let formattedUrl = ttsBaseUrl.trim();
-        if (!formattedUrl.endsWith('/v1') && !formattedUrl.endsWith('/v1beta') && !formattedUrl.includes('/v1/') && !formattedUrl.includes('/v1beta/')) {
-          formattedUrl = formattedUrl.replace(/\/$/, '') + '/v1';
-        }
-
-        const response = await fetch(`${formattedUrl}/audio/speech`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ttsApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: ttsModel,
-            input: cleanText,
-            voice: ttsVoice,
-            response_format: 'mp3'
-          }),
-          signal: AbortSignal.timeout(15000)
+      // 3. Отправка в MAX
+      const numericChatId = parseInt(String(chatId).replace(/\D/g, ''), 10);
+      if (this.bot && !isNaN(numericChatId)) {
+        await this.bot.api.sendMessageToChat(numericChatId, '', {
+          attachments: [{ type: 'audio', payload: { token } } as any]
         });
-
-        if (response.ok) {
-          const arrayBuf = await response.arrayBuffer();
-          audioBuffer = Buffer.from(arrayBuf);
-        }
-      } catch (err: any) {
-        logger.warn(`⚠️ [MaxAdapter] OpenAI TTS failed, fallback to Edge TTS: ${err?.message || err}`);
+        logger.info(`✅ [MaxAdapter] Voice message successfully sent to chat ${numericChatId}`);
       }
+    } catch (err: any) {
+      logger.error(`❌ [MaxAdapter] synthesizeAndSendVoice error: ${err?.message || err}`);
+      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+      await this.safeSendMessageToChat(cleanId, text);
     }
-
-    // 2. Резервный синтез через MsEdgeTTS
-    if (!audioBuffer) {
-      try {
-        const tts = new MsEdgeTTS();
-        const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural';
-        await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-        const streamRes = tts.toStream(cleanText);
-        const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
-
-        const chunks: Buffer[] = [];
-        for await (const chunk of readable) {
-          if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-          else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
-        }
-        audioBuffer = Buffer.concat(chunks);
-      } catch (err: any) {
-        logger.error(`❌ [MaxAdapter] Edge TTS failed: ${err?.message || err}`);
-      }
-    }
-
-    // 3. Загрузка в MAX Storage и отправка
-    if (audioBuffer && audioBuffer.length > 0 && this.bot) {
-      try {
-        const maxToken = this.token || process.env.MAX_BOT_TOKEN;
-        const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
-          method: 'POST',
-          headers: { 'Authorization': maxToken || '' },
-          signal: AbortSignal.timeout(15000)
-        });
-
-        if (initRes.ok) {
-          const initData = await initRes.json();
-          const token = initData.token;
-          const url = initData.url;
-
-          if (token && url) {
-            const form = new FormData();
-            const fileBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
-            form.append('data', fileBlob, 'voice.mp3');
-
-            const uploadRes = await fetch(url, {
-              method: 'POST',
-              body: form,
-              signal: AbortSignal.timeout(20000)
-            });
-
-            if (uploadRes.ok) {
-              await new Promise(r => setTimeout(r, 2000));
-              await this.bot.api.sendMessageToChat(numericId, '', {
-                attachments: [{
-                  type: 'audio',
-                  payload: {
-                    token: token
-                  } as any
-                }]
-              });
-              logger.info(`✅ [MaxAdapter] Voice successfully sent to chat ${numericId}`);
-              return;
-            }
-          }
-        }
-      } catch (uploadErr: any) {
-        logger.error(`❌ [MaxAdapter] Storage upload error: ${uploadErr?.message || uploadErr}`);
-      }
-    }
-
-    // Фолбэк на текстовое сообщение
-    await this.safeSendMessageToChat(numericId, cleanText);
   }
 
   /**
@@ -265,22 +171,22 @@ export class MaxAdapter {
     return data?.text || "";
   }
 
-  /**
-   * Отправка ответа пользователю
-   */
+  // ==========================================
+  // ОТПРАВКА ОТВЕТА В MAX — ВСЕГДА ГОЛОСОМ
+  // ==========================================
   public async sendMessage(chatId: string, response: AIResponse): Promise<void> {
     const cleanId = chatId.replace(/^[a-z_]+/, '');
-
-    if (response.voice && response.text) {
-      try {
-        await this.synthesizeAndSendVoice(cleanId, response.text);
-        return;
-      } catch (err: any) {
-        logger.warn(`⚠️ [MaxAdapter] synthesizeAndSendVoice failed, falling back to text: ${err?.message || err}`);
-      }
+    
+    // ✅ ВСЕГДА отправляем голос, даже если пришёл текст
+    try {
+      await this.synthesizeAndSendVoice(cleanId, response.text);
+      logger.info(`🎤 Voice sent to ${cleanId}`);
+      return;
+    } catch (err: any) {
+      logger.warn(`⚠️ Voice failed, fallback to text: ${err?.message || err}`);
+      // Если голос упал — отправляем текст
+      await this.safeSendMessageToChat(cleanId, response.text);
     }
-
-    await this.safeSendMessageToChat(cleanId, response.text);
   }
 
   /**
