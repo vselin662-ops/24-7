@@ -428,44 +428,44 @@ export class MaxAdapter {
         }
       }
 
-      // 3. Проверяем аудиовложения
+      // 3. Определяем, голосовое ли сообщение
       let isVoiceInput = false;
-      let voiceUrlOrId = raw.audio_url || raw.payload?.audio_url || '';
+      let voiceToken = '';
 
-      const allAttachments: any[] = [];
-      if (Array.isArray(raw.attachments)) allAttachments.push(...raw.attachments);
-      if (Array.isArray(raw.payload?.attachments)) allAttachments.push(...raw.payload.attachments);
-      if (Array.isArray(raw.message?.attachments)) allAttachments.push(...raw.message.attachments);
-
-      for (const att of allAttachments) {
-        const typeStr = String(att?.type || '').toLowerCase();
-        if (typeStr.includes('audio') || typeStr.includes('voice')) {
+      // Проверяем attachments
+      const attachments = raw.attachments || raw.message?.attachments || raw.payload?.attachments || [];
+      for (const att of attachments) {
+        if (att.type === 'audio' || att.type === 'voice') {
           isVoiceInput = true;
-          voiceUrlOrId = att.payload?.url || att.url || att.payload?.token || att.token || att.file_url || voiceUrlOrId;
+          voiceToken = att.payload?.token || att.token || att.payload?.url || att.url || '';
           break;
         }
       }
 
       if (raw.type === 'voice' || raw.type === 'audio') {
         isVoiceInput = true;
+        if (!voiceToken) {
+          voiceToken = raw.audio_url || raw.payload?.audio_url || raw.voice_token || '';
+        }
+      }
+
+      // Если это голосовое сообщение
+      if (isVoiceInput && voiceToken) {
+        try {
+          // Скачиваем аудио
+          const audioBuffer = await this.downloadAudio(voiceToken);
+          // Распознаём речь
+          const transcribedText = await this.transcribeAudio(audioBuffer);
+          if (transcribedText) {
+            text = transcribedText;
+          }
+        } catch (err) {
+          logger.error('Voice recognition failed:', err);
+          // Если распознать не удалось — ничего не делаем
+        }
       }
 
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-
-      // 4. Если голосовое сообщение — скачиваем и транскрибируем
-      if (isVoiceInput && voiceUrlOrId) {
-        try {
-          const audioBuffer = await this.downloadAudio(voiceUrlOrId);
-          const transcribedText = await this.transcribeAudio(audioBuffer);
-          if (transcribedText && transcribedText.trim()) {
-            text = transcribedText.trim();
-            logger.info(`📝 [MaxAdapter] Voice message transcribed: "${text.slice(0, 50)}..."`);
-          }
-        } catch (vErr: unknown) {
-          const errorMsg = vErr instanceof Error ? vErr.message : String(vErr);
-          logger.error(`❌ [MaxAdapter] Voice transcription error: ${errorMsg}`);
-        }
-      }
 
       if (!text || !text.trim()) {
         logger.warn(`⚠️ [MaxAdapter] Empty text after processing webhook for chatId ${cleanId}`);
