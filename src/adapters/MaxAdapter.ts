@@ -308,38 +308,51 @@ export class MaxAdapter {
   /**
    * Скачивание аудиофайла из MAX Messenger
    */
-  private async downloadAudio(fileUrlOrId: string): Promise<Buffer> {
-    let url = fileUrlOrId.trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = `https://platform-api.max.ru/uploads/${url}`;
-    }
-
-    const maxToken = this.token || process.env.MAX_BOT_TOKEN;
+  private async downloadAudio(token: string): Promise<Buffer> {
+    const url = token.startsWith('http://') || token.startsWith('https://')
+      ? token
+      : `https://platform-api.max.ru/uploads/${token}`;
+    const MAX_TOKEN = process.env.MAX_BOT_TOKEN || this.token;
     const response = await fetch(url, {
-      headers: maxToken ? { 'Authorization': maxToken } : {},
-      signal: AbortSignal.timeout(25000)
+      headers: { 'Authorization': MAX_TOKEN || '' },
+      signal: AbortSignal.timeout(15000)
     });
-
     if (!response.ok) {
-      throw new Error(`Failed to download audio from MAX. Status: ${response.status}`);
+      throw new Error(`Failed to download audio: ${response.status}`);
     }
-
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
   }
 
   /**
-   * Транскрибация аудио через Whisper STT
+   * Транскрибация аудио через Whisper STT (Groq API)
    */
   private async transcribeAudio(audioBuffer: Buffer): Promise<string> {
-    try {
-      const text = await this.voiceService.transcribe(audioBuffer, 'ru');
-      return text.trim();
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.error(`❌ [MaxAdapter] Transcription failed in transcribeAudio: ${errorMsg}`);
-      return "";
+    const key = process.env.GROQ_API_KEY;
+    if (!key) {
+      logger.warn('⚠️ GROQ_API_KEY не задан');
+      return '';
     }
+
+    const form = new FormData();
+    const fileBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+    form.append('file', fileBlob, 'voice.mp3');
+    form.append('model', 'whisper-large-v3');
+    form.append('language', 'ru');
+
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}` },
+      body: form,
+      signal: AbortSignal.timeout(25000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`STT failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data?.text || '';
   }
 
   /**
@@ -348,45 +361,22 @@ export class MaxAdapter {
    * 2. TEXT_TO_VOICE: синтез и отправка голосового сообщения (с фолбэком на текст)
    * 3. VOICE_TO_VOICE: полный голосовой диалог (синтез голоса с фолбэком на текст)
    */
-  public async sendMessage(
-    chatId: string | number,
-    response: AIResponse,
-    explicitMode?: VoiceMode
-  ): Promise<void> {
+  public async sendMessage(chatId: string, response: AIResponse, isVoiceInput: boolean = false): Promise<void> {
     const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-    const currentMode = explicitMode || (response.metadata?.voiceMode as VoiceMode) || this.getVoiceMode(cleanId);
 
-    logger.info(`📤 [MaxAdapter] Sending message to ${cleanId} using mode: "${currentMode}"`);
-
-    switch (currentMode) {
-      case VoiceMode.TEXT_TO_TEXT: {
-        // Режим 1: Текст → Текст (обычный чат)
-        if (response.text) {
-          await this.safeSendMessageToChat(cleanId, response.text);
-          logger.info(`💬 [MaxAdapter] Plain text sent to ${cleanId}`);
-        }
-        break;
-      }
-
-      case VoiceMode.TEXT_TO_VOICE:
-      case VoiceMode.VOICE_TO_VOICE:
-      default: {
-        // Режим 2 (Текст → Голос) и Режим 3 (Голос → Голос): синтез и отправка голоса
-        if (response.text) {
-          try {
-            await this.synthesizeAndSendVoice(cleanId, response.text);
-            logger.info(`🎤 [MaxAdapter] Voice reply sent to ${cleanId} (mode: ${currentMode})`);
-            return;
-          } catch (err: unknown) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            logger.warn(`⚠️ [MaxAdapter] Voice failed, fallback to text: ${errorMsg}`);
-            await this.safeSendMessageToChat(cleanId, response.text);
-            return;
-          }
-        }
-        break;
+    // Если пришло голосовое → отвечаем голосом
+    if (isVoiceInput) {
+      try {
+        await this.synthesizeAndSendVoice(cleanId, response.text);
+        logger.info(`🎤 Голосовой ответ на голосовое сообщение`);
+        return;
+      } catch (err) {
+        logger.warn('⚠️ Голос упал, отправляем текст');
       }
     }
+
+    // Если текст → текст (по умолчанию)
+    await this.safeSendMessageToChat(cleanId, response.text);
   }
 
   /**
@@ -449,6 +439,8 @@ export class MaxAdapter {
         }
       }
 
+      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+
       // Если это голосовое сообщение
       if (isVoiceInput && voiceToken) {
         try {
@@ -456,16 +448,23 @@ export class MaxAdapter {
           const audioBuffer = await this.downloadAudio(voiceToken);
           // Распознаём речь
           const transcribedText = await this.transcribeAudio(audioBuffer);
-          if (transcribedText) {
-            text = transcribedText;
+          if (!transcribedText || transcribedText.trim() === '') {
+            // Отвечаем голосом: "Не расслышал, повторите"
+            await this.synthesizeAndSendVoice(cleanId, 'Извините, я не расслышала. Повторите, пожалуйста.');
+            return res.status(200).send('ok');
           }
+          text = transcribedText;
         } catch (err) {
           logger.error('Voice recognition failed:', err);
-          // Если распознать не удалось — ничего не делаем
+          // Если распознать не удалось — отвечаем голосом с просьбой повторить
+          try {
+            await this.synthesizeAndSendVoice(cleanId, 'Извините, возникла ошибка при обработке аудио. Повторите, пожалуйста.');
+          } catch {
+            await this.safeSendMessageToChat(cleanId, 'Извините, не удалось распознать голосовое сообщение.');
+          }
+          return res.status(200).send('ok');
         }
       }
-
-      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
 
       if (!text || !text.trim()) {
         logger.warn(`⚠️ [MaxAdapter] Empty text after processing webhook for chatId ${cleanId}`);
@@ -539,12 +538,13 @@ export class MaxAdapter {
       };
 
       // 6. Передача в SelinCore и отправка ответа
-      this.core.processMessage(text, context).then(async (aiResponse) => {
-        await this.sendMessage(cleanId, aiResponse, currentChatMode);
-      }).catch(err => {
+      try {
+        const response = await this.core.processMessage(text, context);
+        await this.sendMessage(cleanId, response, isVoiceInput);
+      } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.error(`❌ [MaxAdapter] Error processing message in SelinCore: ${errorMsg}`);
-      });
+      }
 
       return res.status(200).send('ok');
     } catch (err: unknown) {
