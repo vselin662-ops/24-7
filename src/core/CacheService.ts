@@ -1,152 +1,96 @@
 // src/core/CacheService.ts
-import Redis from 'ioredis';
 import { logger } from '../logger';
+import { PureDatabase as Database } from '../lib/pure-sqlite';
+import path from 'path';
 
 export class CacheService {
-  private redis: Redis | null = null;
+  private db: Database | any;
   private isConnected: boolean = false;
 
   constructor() {
-    const redisUrl = process.env.REDIS_URL;
-    
-    // Lazy initialization & fail-safe if Redis URL is not provided or fails to connect
     try {
-      this.redis = new Redis(redisUrl || 'redis://localhost:6379', {
-        maxRetriesPerRequest: 3,
-        lazyConnect: true,
-        enableOfflineQueue: false,
-        retryStrategy: (times) => {
-          if (times > 5) {
-            return null; // Stop retrying after 5 attempts to avoid flooding logs
-          }
-          return Math.min(times * 100, 2000);
-        }
-      });
-
-      this.redis.on('connect', () => {
-        this.isConnected = true;
-        logger.info('✅ Redis connected');
-      });
-
-      this.redis.on('ready', () => {
-        this.isConnected = true;
-        logger.info('✅ Redis ready');
-      });
-
-      this.redis.on('close', () => {
-        this.isConnected = false;
-      });
-
-      this.redis.on('error', (err) => {
-        this.isConnected = false;
-        logger.warn(`⚠️ Redis error: ${err instanceof Error ? err.message : String(err)}`);
-      });
-
-      // Attempt non-blocking connection
-      this.redis.connect().catch((err) => {
-        this.isConnected = false;
-        logger.warn(`⚠️ Redis connection could not be established: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      const dbPath = path.join(process.cwd(), 'cache.db');
+      this.db = new Database(dbPath);
+      
+      // Создаём таблицы
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS cache (
+          key TEXT PRIMARY KEY,
+          value TEXT,
+          expires INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+          chatId TEXT PRIMARY KEY,
+          data TEXT,
+          updated INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          chatId TEXT,
+          message TEXT,
+          timestamp INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_history_chatId ON history(chatId);
+        CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires);
+      `);
+      
+      this.isConnected = true;
+      logger.info('✅ SQLite cache initialized');
     } catch (err) {
+      logger.error('❌ SQLite cache error:', err);
       this.isConnected = false;
-      logger.warn(`⚠️ Redis initialization failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   // Кэширование ответов LLM
   async getCachedResponse(chatId: string, message: string): Promise<string | null> {
-    if (!this.isConnected || !this.redis) return null;
-    try {
-      const key = `llm:${chatId}:${message.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
-      return await this.redis.get(key);
-    } catch (err) {
-      logger.warn(`⚠️ Cache getCachedResponse error: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
+    if (!this.isConnected || !this.db) return null;
+    const key = `llm:${chatId}:${message.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const now = Date.now();
+    const row = this.db.prepare('SELECT value FROM cache WHERE key = ? AND expires > ?').get(key, now);
+    return row ? row.value : null;
   }
 
   async setCachedResponse(chatId: string, message: string, response: string): Promise<void> {
-    if (!this.isConnected || !this.redis) return;
-    try {
-      const key = `llm:${chatId}:${message.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
-      await this.redis.setex(key, 3600, response);
-    } catch (err) {
-      logger.warn(`⚠️ Cache setCachedResponse error: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    if (!this.isConnected || !this.db) return;
+    const key = `llm:${chatId}:${message.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const expires = Date.now() + 3600000; // 1 час
+    this.db.prepare('INSERT OR REPLACE INTO cache (key, value, expires) VALUES (?, ?, ?)')
+      .run(key, response, expires);
   }
 
   // Сессии пользователей
   async getSession(chatId: string): Promise<any> {
-    if (!this.isConnected || !this.redis) return null;
-    try {
-      const data = await this.redis.get(`session:${chatId}`);
-      return data ? JSON.parse(data) : null;
-    } catch (err) {
-      logger.warn(`⚠️ Cache getSession error: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
+    if (!this.isConnected || !this.db) return null;
+    const row = this.db.prepare('SELECT data FROM sessions WHERE chatId = ?').get(chatId);
+    return row ? JSON.parse(row.data) : null;
   }
 
   async setSession(chatId: string, data: any): Promise<void> {
-    if (!this.isConnected || !this.redis) return;
-    try {
-      await this.redis.setex(`session:${chatId}`, 86400, JSON.stringify(data));
-    } catch (err) {
-      logger.warn(`⚠️ Cache setSession error: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    if (!this.isConnected || !this.db) return;
+    this.db.prepare('INSERT OR REPLACE INTO sessions (chatId, data, updated) VALUES (?, ?, ?)')
+      .run(chatId, JSON.stringify(data), Date.now());
   }
 
   // История диалога
   async pushMessage(chatId: string, message: any): Promise<void> {
-    if (!this.isConnected || !this.redis) return;
-    try {
-      const key = `history:${chatId}`;
-      await this.redis.rpush(key, JSON.stringify(message));
-      await this.redis.ltrim(key, -20, -1);
-    } catch (err) {
-      logger.warn(`⚠️ Cache pushMessage error: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    if (!this.isConnected || !this.db) return;
+    this.db.prepare('INSERT INTO history (chatId, message, timestamp) VALUES (?, ?, ?)')
+      .run(chatId, JSON.stringify(message), Date.now());
   }
 
   async getHistory(chatId: string, limit: number = 10): Promise<any[]> {
-    if (!this.isConnected || !this.redis) return [];
-    try {
-      const items = await this.redis.lrange(`history:${chatId}`, -limit, -1);
-      return items.map(item => JSON.parse(item));
-    } catch (err) {
-      logger.warn(`⚠️ Cache getHistory error: ${err instanceof Error ? err.message : String(err)}`);
-      return [];
-    }
-  }
-
-  // Голосовые очереди
-  async pushVoice(chatId: string, audio: string): Promise<void> {
-    if (!this.isConnected || !this.redis) return;
-    try {
-      await this.redis.rpush(`voice:${chatId}`, audio);
-    } catch (err) {
-      logger.warn(`⚠️ Cache pushVoice error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  async popVoice(chatId: string): Promise<string | null> {
-    if (!this.isConnected || !this.redis) return null;
-    try {
-      return await this.redis.lpop(`voice:${chatId}`);
-    } catch (err) {
-      logger.warn(`⚠️ Cache popVoice error: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
+    if (!this.isConnected || !this.db) return [];
+    const rows = this.db.prepare('SELECT message FROM history WHERE chatId = ? ORDER BY timestamp DESC LIMIT ?')
+      .all(chatId, limit);
+    return rows.map((row: any) => JSON.parse(row.message)).reverse();
   }
 
   // Очистка
   async clearChat(chatId: string): Promise<void> {
-    if (!this.isConnected || !this.redis) return;
-    try {
-      await this.redis.del(`session:${chatId}`, `history:${chatId}`);
-    } catch (err) {
-      logger.warn(`⚠️ Cache clearChat error: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    if (!this.isConnected || !this.db) return;
+    this.db.prepare('DELETE FROM sessions WHERE chatId = ?').run(chatId);
+    this.db.prepare('DELETE FROM history WHERE chatId = ?').run(chatId);
   }
 
   get status(): boolean {

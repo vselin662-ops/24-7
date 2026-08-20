@@ -5519,7 +5519,7 @@ async function getHealthStatus() {
     timestamp: new Date().toISOString(),
     checks: {
       sqlite: { status: sqliteStatus, latencyMs: sqliteLatency },
-      redis: { status: cacheService.status ? "up" : "disconnected" },
+      sqlite_cache: { status: cacheService.status ? "up" : "down" },
       gemini_api: { status: geminiStatus, circuitBreaker: circuitState },
       max_bot: { status: maxStatus },
       firestore: { status: firestoreStatus },

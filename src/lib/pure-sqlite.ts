@@ -122,7 +122,8 @@ export class PureDatabase {
             });
             if (!row.tenant_id && tableName !== "user_sessions") row.tenant_id = "default";
 
-            const rowId = String(row.id || row.chat_id || Object.keys(row)[0] || Math.random());
+            const firstCol = cols[0];
+            const rowId = String(row.id || row.chatid || row.chat_id || row.key || (firstCol ? row[firstCol] : Math.random()));
             const existing = table.get(rowId);
             if (existing) {
               table.set(rowId, { ...existing, ...row });
@@ -133,11 +134,22 @@ export class PureDatabase {
             return { changes: 1 };
           }
         } else if (upper.startsWith("DELETE FROM")) {
-          const match = cleanSql.match(/DELETE FROM ([a-zA-Z0-9_]+)/i);
+          const match = cleanSql.match(/DELETE\s+FROM\s+([a-zA-Z0-9_]+)(?:\s+WHERE\s+(.+?))?$/i);
           if (match) {
             const tableName = match[1];
+            const whereClause = match[2];
             const table = this.tables.get(tableName);
-            if (table) table.clear();
+            if (table) {
+              if (!whereClause) {
+                table.clear();
+              } else {
+                for (const [k, row] of Array.from(table.entries())) {
+                  if (this.matchesWhere(row, whereClause, params)) {
+                    table.delete(k);
+                  }
+                }
+              }
+            }
             this.saveToDisk();
             return { changes: 1 };
           }
@@ -210,14 +222,26 @@ export class PureDatabase {
   private matchesWhere(row: any, whereClause?: string, params: any[] = []): boolean {
     if (!whereClause) return true;
     const cleanWhere = whereClause.toLowerCase();
+    
+    // key = ? AND expires > ?
+    if (cleanWhere.includes("key = ?") && cleanWhere.includes("expires > ?")) {
+      const keyMatch = String(row.key) === String(params[0]);
+      const expiresMatch = Number(row.expires || 0) > Number(params[1] || 0);
+      return keyMatch && expiresMatch;
+    }
+
+    if (cleanWhere.includes("key = ?")) {
+      return String(row.key) === String(params[0]);
+    }
+    if (cleanWhere.includes("chatid = ?") || cleanWhere.includes("chat_id = ?")) {
+      const rId = row.chatId !== undefined ? row.chatId : row.chat_id;
+      return String(rId) === String(params[0]);
+    }
     if (cleanWhere.includes("tenant_id = ?")) {
       return String(row.tenant_id) === String(params[0]);
     }
     if (cleanWhere.includes("id = ?")) {
       return String(row.id) === String(params[0]);
-    }
-    if (cleanWhere.includes("chat_id = ?")) {
-      return String(row.chat_id) === String(params[0]);
     }
     return true;
   }
