@@ -5,7 +5,8 @@ import {
   Task,
   TaskType,
   TaskPriority,
-  ChannelType
+  ChannelType,
+  VoiceMode
 } from "./types";
 import { logger } from "../logger";
 
@@ -211,9 +212,16 @@ export class SelinCore {
       task.completedAt = Date.now();
       task.result = responseText;
 
+      const isVoiceResponse = context.isVoice ||
+        context.voiceMode === VoiceMode.TEXT_TO_VOICE ||
+        context.voiceMode === VoiceMode.VOICE_TO_VOICE;
+
       const aiResponse: AIResponse = {
         text: responseText,
         confidence: 0.95,
+        metadata: {
+          voiceMode: context.voiceMode
+        },
         actions: wakeResult.detected ? [
           {
             id: `act_${Date.now()}`,
@@ -223,7 +231,7 @@ export class SelinCore {
         ] : undefined
       };
 
-      if (context.isVoice) {
+      if (isVoiceResponse) {
         aiResponse.voice = {
           format: 'ogg'
         };

@@ -1,3 +1,9 @@
+export enum VoiceMode {
+  TEXT_TO_TEXT = 'text_to_text',     // Текст → Текст (обычный чат)
+  TEXT_TO_VOICE = 'text_to_voice',   // Текст → Голос (бот отвечает голосом)
+  VOICE_TO_VOICE = 'voice_to_voice'  // Голос → Голос (полный голосовой диалог)
+}
+
 export interface Agent {
   id: string;
   role: 'receiver' | 'content' | 'sales' | 'analyst' | 'operator';
@@ -42,6 +48,7 @@ export interface AppConfig {
   is_active: boolean;
   auto_synthesize?: boolean;
   tts_voice?: string;
+  voice_mode?: VoiceMode;
   agent_missions?: Record<string, string>;
   is_live?: boolean;
   readiness?: { kb_ready: boolean; channel_ready: boolean; tone_ready: boolean; missions_ready: boolean };

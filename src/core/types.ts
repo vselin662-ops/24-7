@@ -5,7 +5,16 @@
  */
 
 // ==========================================
-// 1. Каналы коммуникации (ChannelType)
+// 1. Режимы работы с голосом (VoiceMode)
+// ==========================================
+export enum VoiceMode {
+  TEXT_TO_TEXT = 'text_to_text',     // Текст → Текст (обычный чат)
+  TEXT_TO_VOICE = 'text_to_voice',   // Текст → Голос (бот отвечает голосом)
+  VOICE_TO_VOICE = 'voice_to_voice'  // Голос → Голос (полный голосовой диалог)
+}
+
+// ==========================================
+// 2. Каналы коммуникации (ChannelType)
 // ==========================================
 export enum ChannelType {
   MAX = 'max',
@@ -105,6 +114,7 @@ export interface MessageContext {
   senderId?: string;
   senderName?: string;
   timestamp?: number;
+  voiceMode?: VoiceMode;
 
   // Поля для расширенных подсистем (голос, камера, локация)
   location?: GeoLocation;
@@ -210,6 +220,7 @@ export interface UserPreferences {
   language?: string;
   voiceSpeed?: number;
   voiceName?: string;
+  voiceMode?: VoiceMode;
   notificationsEnabled?: boolean;
   communicationStyle?: 'concise' | 'detailed' | 'formal' | 'casual';
   customInstructions?: string;
@@ -291,6 +302,7 @@ export interface AppConfig {
   is_active: boolean;
   auto_synthesize?: boolean;
   tts_voice?: string;
+  voice_mode?: VoiceMode;
   agent_missions?: Record<string, string>;
   is_live?: boolean;
   readiness?: { kb_ready: boolean; channel_ready: boolean; tone_ready: boolean; missions_ready: boolean };

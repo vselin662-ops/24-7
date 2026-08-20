@@ -39,6 +39,7 @@ import { RobotAdapter } from "./src/adapters/robot.adapter";
 import { LLMService, llmService } from "./src/core/LLMService";
 import { SelinCore } from "./src/core/SelinCore";
 import { MaxAdapter as ModernMaxAdapter } from "./src/adapters/MaxAdapter";
+import { VoiceMode } from "./src/core/types";
 import {
   startLearning,
   generateLesson,
@@ -169,6 +170,53 @@ app.post(["/api/max/webhook", "/max/webhook"], async (req, res) => {
     logger.error("❌ MaxAdapter webhook error:", error);
     return res.status(200).send("ok");
   }
+});
+
+// ==========================================
+// Voice Mode API Routes (3 Modes: TEXT_TO_TEXT, TEXT_TO_VOICE, VOICE_TO_VOICE)
+// ==========================================
+app.get("/api/voice-mode", (req, res) => {
+  const chatId = req.query.chatId ? String(req.query.chatId) : undefined;
+  const currentMode = chatId ? modernMaxAdapter.getVoiceMode(chatId) : VoiceMode.TEXT_TO_VOICE;
+
+  res.json({
+    currentMode,
+    availableModes: [
+      {
+        id: VoiceMode.TEXT_TO_TEXT,
+        name: "Текст → Текст",
+        description: "Обычный чат, текстовые ответы без генерации аудио"
+      },
+      {
+        id: VoiceMode.TEXT_TO_VOICE,
+        name: "Текст → Голос",
+        description: "Бот всегда отвечает синтезированным голосом"
+      },
+      {
+        id: VoiceMode.VOICE_TO_VOICE,
+        name: "Голос → Голос",
+        description: "Полный голосовой диалог в реальном времени"
+      }
+    ]
+  });
+});
+
+app.post("/api/voice-mode", (req, res) => {
+  const { chatId, mode } = req.body;
+  if (!mode || !Object.values(VoiceMode).includes(mode)) {
+    return res.status(400).json({
+      error: `Invalid voice mode. Allowed modes: ${Object.values(VoiceMode).join(", ")}`
+    });
+  }
+
+  if (chatId) {
+    modernMaxAdapter.setVoiceMode(chatId, mode);
+  } else {
+    modernMaxAdapter.setDefaultVoiceMode(mode);
+  }
+
+  logger.info(`🔄 Voice mode updated to ${mode}${chatId ? ` for chat ${chatId}` : ' globally'}`);
+  res.json({ success: true, mode, chatId: chatId || 'global' });
 });
 
 /* ==========================================

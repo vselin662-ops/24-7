@@ -2,7 +2,7 @@
 import { Bot } from "@maxhub/max-bot-api";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { SelinCore } from "../core/SelinCore";
-import { AIResponse, MessageContext, ChannelType } from "../core/types";
+import { AIResponse, MessageContext, ChannelType, VoiceMode } from "../core/types";
 import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
 
@@ -11,11 +11,39 @@ export class MaxAdapter {
   private core: SelinCore;
   private token: string | undefined;
   private voiceService: VoiceService;
+  private voiceModes: Map<string, VoiceMode> = new Map();
+  private defaultVoiceMode: VoiceMode = VoiceMode.TEXT_TO_VOICE;
 
-  constructor(core: SelinCore, token?: string) {
+  constructor(core: SelinCore, token?: string, defaultMode: VoiceMode = VoiceMode.TEXT_TO_VOICE) {
     this.core = core;
     this.token = token || process.env.MAX_BOT_TOKEN;
     this.voiceService = new VoiceService();
+    this.defaultVoiceMode = defaultMode;
+  }
+
+  /**
+   * Установка режима работы с голосом для чата
+   */
+  public setVoiceMode(chatId: string | number, mode: VoiceMode): void {
+    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    this.voiceModes.set(cleanId, mode);
+    logger.info(`🔄 [MaxAdapter] Voice mode for chat ${cleanId} set to "${mode}"`);
+  }
+
+  /**
+   * Получение текущего режима работы с голосом для чата
+   */
+  public getVoiceMode(chatId: string | number): VoiceMode {
+    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    return this.voiceModes.get(cleanId) || this.defaultVoiceMode;
+  }
+
+  /**
+   * Установка глобального режима по умолчанию
+   */
+  public setDefaultVoiceMode(mode: VoiceMode): void {
+    this.defaultVoiceMode = mode;
+    logger.info(`🔄 [MaxAdapter] Default voice mode set to "${mode}"`);
   }
 
   /**
@@ -315,26 +343,49 @@ export class MaxAdapter {
   }
 
   /**
-   * Отправка ответа пользователю (голос с отказоустойчивым фолбэком на текст)
+   * Отправка ответа пользователю с учетом режима работы с голосом (VoiceMode)
+   * 1. TEXT_TO_TEXT: отправка текстового сообщения
+   * 2. TEXT_TO_VOICE: синтез и отправка голосового сообщения (с фолбэком на текст)
+   * 3. VOICE_TO_VOICE: полный голосовой диалог (синтез голоса с фолбэком на текст)
    */
-  public async sendMessage(chatId: string, response: AIResponse): Promise<void> {
-    const cleanId = chatId.replace(/^[a-z_]+/, '');
+  public async sendMessage(
+    chatId: string | number,
+    response: AIResponse,
+    explicitMode?: VoiceMode
+  ): Promise<void> {
+    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    const currentMode = explicitMode || (response.metadata?.voiceMode as VoiceMode) || this.getVoiceMode(cleanId);
 
-    if (response.voice || response.text) {
-      try {
-        await this.synthesizeAndSendVoice(cleanId, response.text);
-        logger.info(`🎤 [MaxAdapter] Voice reply sent to ${cleanId}`);
-        return;
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.warn(`⚠️ [MaxAdapter] Voice failed, fallback to text: ${errorMsg}`);
-        await this.safeSendMessageToChat(cleanId, response.text);
-        return;
+    logger.info(`📤 [MaxAdapter] Sending message to ${cleanId} using mode: "${currentMode}"`);
+
+    switch (currentMode) {
+      case VoiceMode.TEXT_TO_TEXT: {
+        // Режим 1: Текст → Текст (обычный чат)
+        if (response.text) {
+          await this.safeSendMessageToChat(cleanId, response.text);
+          logger.info(`💬 [MaxAdapter] Plain text sent to ${cleanId}`);
+        }
+        break;
       }
-    }
 
-    if (response.text) {
-      await this.safeSendMessageToChat(cleanId, response.text);
+      case VoiceMode.TEXT_TO_VOICE:
+      case VoiceMode.VOICE_TO_VOICE:
+      default: {
+        // Режим 2 (Текст → Голос) и Режим 3 (Голос → Голос): синтез и отправка голоса
+        if (response.text) {
+          try {
+            await this.synthesizeAndSendVoice(cleanId, response.text);
+            logger.info(`🎤 [MaxAdapter] Voice reply sent to ${cleanId} (mode: ${currentMode})`);
+            return;
+          } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            logger.warn(`⚠️ [MaxAdapter] Voice failed, fallback to text: ${errorMsg}`);
+            await this.safeSendMessageToChat(cleanId, response.text);
+            return;
+          }
+        }
+        break;
+      }
     }
   }
 
@@ -421,17 +472,75 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // 5. Проверка команд смены режима голоса
+      const lowerText = text.trim().toLowerCase();
+      if (lowerText === '/mode text' || lowerText === '/text' || lowerText === '/режим текст') {
+        this.setVoiceMode(cleanId, VoiceMode.TEXT_TO_TEXT);
+        await this.safeSendMessageToChat(
+          cleanId,
+          "💬 Режим изменен: Текст → Текст (обычный чат без голосовых сообщений)."
+        );
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText === '/mode voice' || lowerText === '/mode text_to_voice' || lowerText === '/tts' || lowerText === '/режим голос') {
+        this.setVoiceMode(cleanId, VoiceMode.TEXT_TO_VOICE);
+        await this.safeSendMessageToChat(
+          cleanId,
+          "🎤 Режим изменен: Текст → Голос (бот будет озвучивать свои ответы)."
+        );
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText === '/mode voice_to_voice' || lowerText === '/mode v2v' || lowerText === '/v2v' || lowerText === '/режим диалог') {
+        this.setVoiceMode(cleanId, VoiceMode.VOICE_TO_VOICE);
+        try {
+          await this.synthesizeAndSendVoice(
+            cleanId,
+            "Голосовой диалог активирован. Я на связи и буду отвечать вам голосом."
+          );
+        } catch {
+          await this.safeSendMessageToChat(
+            cleanId,
+            "🎙️ Режим изменен: Голос → Голос (полный голосовой диалог)."
+          );
+        }
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText === '/mode' || lowerText === '/modes' || lowerText === '/режим') {
+        const current = this.getVoiceMode(cleanId);
+        const modeDesc = {
+          [VoiceMode.TEXT_TO_TEXT]: "1. Текст → Текст (обычный чат)",
+          [VoiceMode.TEXT_TO_VOICE]: "2. Текст → Голос (бот отвечает голосом)",
+          [VoiceMode.VOICE_TO_VOICE]: "3. Голос → Голос (полный голосовой диалог)"
+        }[current] || current;
+
+        const info = `⚙️ Режимы работы с голосом в Selin AI 2.0:\n\n` +
+          `Текущий режим: ${modeDesc}\n\n` +
+          `Для переключения отправьте команду:\n` +
+          `• /mode text — Текст → Текст (обычный чат)\n` +
+          `• /mode voice — Текст → Голос (бот отвечает голосом)\n` +
+          `• /mode voice_to_voice — Голос → Голос (полный голосовой диалог)`;
+
+        await this.safeSendMessageToChat(cleanId, info);
+        return res.status(200).send('ok');
+      }
+
+      const currentChatMode = this.getVoiceMode(cleanId);
+
       const context: MessageContext = {
         chatId: cleanId,
         tenantId: `max_${cleanId}`,
         channel: ChannelType.MAX,
         isVoice: isVoiceInput,
+        voiceMode: currentChatMode,
         timestamp: Date.now()
       };
 
-      // 5. Передача в SelinCore и отправка ответа
+      // 6. Передача в SelinCore и отправка ответа
       this.core.processMessage(text, context).then(async (aiResponse) => {
-        await this.sendMessage(cleanId, aiResponse);
+        await this.sendMessage(cleanId, aiResponse, currentChatMode);
       }).catch(err => {
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.error(`❌ [MaxAdapter] Error processing message in SelinCore: ${errorMsg}`);
