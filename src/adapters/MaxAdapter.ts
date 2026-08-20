@@ -319,20 +319,54 @@ export class MaxAdapter {
   /**
    * Скачивание аудиофайла из MAX Storage по токену
    */
-  public async downloadAudio(token: string): Promise<Buffer> {
-    const url = token.startsWith('http://') || token.startsWith('https://')
-      ? token
-      : `https://platform-api.max.ru/uploads/${token}`;
-    const MAX_TOKEN = process.env.MAX_BOT_TOKEN || this.token;
-    const response = await fetch(url, {
-      headers: { 'Authorization': MAX_TOKEN || '' },
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to download audio: ${response.status}`);
+  private async downloadAudio(token: string): Promise<Buffer> {
+    // Проверяем, что токен не пустой
+    if (!token || token.length < 10) {
+      throw new Error('Invalid audio token: token is empty or too short');
     }
+
+    // Формируем URL для скачивания
+    let url = token.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `https://platform-api.max.ru/uploads/${url}`;
+    }
+
+    logger.info(`⬇️ Downloading audio from: ${url.substring(0, 80)}...`);
+
+    const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
+    if (!MAX_TOKEN) {
+      throw new Error('MAX_BOT_TOKEN is not set');
+    }
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': MAX_TOKEN,
+        'Accept': 'audio/*, application/octet-stream'
+      },
+      signal: AbortSignal.timeout(15000) // 15 секунд таймаут
+    });
+
+    // Подробный лог статуса
+    logger.info(`📊 Download response status: ${response.status} ${response.statusText}`);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error body');
+      throw new Error(`Failed to download audio (HTTP ${response.status}): ${errorText}`);
+    }
+
+    const contentType = response.headers.get('content-type') || 'unknown';
+    logger.info(`📄 Content-Type: ${contentType}`);
+
     const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (buffer.length === 0) {
+      throw new Error('Downloaded audio is empty');
+    }
+
+    logger.info(`✅ Audio downloaded: ${buffer.length} bytes`);
+    return buffer;
   }
 
   /**
