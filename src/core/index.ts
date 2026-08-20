@@ -18,6 +18,7 @@ export * from './emotion-engine';
 export * from './planner';
 export * from './MemorySystem';
 export * from './AgentOrchestrator';
+export * from './CacheService';
 
 export {
   type Message as LegacyMessage,

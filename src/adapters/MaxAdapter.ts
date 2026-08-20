@@ -410,31 +410,25 @@ export class MaxAdapter {
       const raw = req.body || {};
       logger.info(`📨 [MaxAdapter] Webhook received`);
 
+      // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА — ЭТО НУЖНО ДЛЯ ОТЛАДКИ
+      logger.info(`📦 RAW BODY: ${JSON.stringify(raw)}`);
+
       // 1. Извлекаем chatId
       let chatId = raw.chat_id || raw.payload?.chat_id || raw.body?.chat_id;
-      if (!chatId && raw.message) {
-        chatId = raw.message.chat_id || raw.message.recipient?.chat_id;
-      }
-      if (!chatId && raw.payload?.message) {
-        chatId = raw.payload.message.chat_id || raw.payload.message.recipient?.chat_id;
-      }
-
+      if (!chatId && raw.message) chatId = raw.message.chat_id || raw.message.recipient?.chat_id;
+      if (!chatId && raw.payload?.message) chatId = raw.payload.message.chat_id || raw.payload.message.recipient?.chat_id;
       if (!chatId) {
-        logger.error("❌ [MaxAdapter] No ChatID found in webhook payload");
+        logger.error("❌ No ChatID found");
         return res.status(200).send('ok');
       }
-
-      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
 
       // 2. Извлекаем текст
       let text = '';
       const textCandidates = [
-        raw.text,
-        raw.payload?.text,
-        raw.body?.text,
-        raw.message?.text,
-        raw.message?.body?.text,
-        raw.payload?.message?.text
+        raw.text, raw.payload?.text, raw.body?.text,
+        raw.message?.text, raw.message?.body?.text,
+        raw.payload?.message?.text, raw.payload?.message?.body?.text,
+        raw.body?.message?.text, raw.body?.message?.body?.text
       ];
       for (const cand of textCandidates) {
         if (cand !== undefined && cand !== null && String(cand).trim() !== '') {
@@ -443,148 +437,77 @@ export class MaxAdapter {
         }
       }
 
-      // 3. Определяем, голосовое ли сообщение в attachments
+      // 3. Проверяем аудио-вложения
       let isVoiceInput = false;
       let voiceToken = '';
 
-      const attachments = raw.attachments || raw.message?.attachments || raw.payload?.attachments || [];
-      for (const att of attachments) {
-        if (att.type === 'audio' || att.type === 'voice') {
+      const allAttachments: any[] = [];
+      const collectFrom = (obj: any) => {
+        if (!obj || typeof obj !== 'object') return;
+        if (Array.isArray(obj.attachments)) allAttachments.push(...obj.attachments);
+        if (obj.payload && typeof obj.payload === 'object') collectFrom(obj.payload);
+        if (obj.body && typeof obj.body === 'object') collectFrom(obj.body);
+        if (obj.message && typeof obj.message === 'object') collectFrom(obj.message);
+      };
+      collectFrom(raw);
+
+      logger.info(`📎 ATTACHMENTS: ${JSON.stringify(allAttachments)}`);
+
+      for (const att of allAttachments) {
+        const typeStr = String(att?.type || '').toLowerCase();
+        if (typeStr.includes('audio') || typeStr.includes('voice')) {
           isVoiceInput = true;
           voiceToken = att.payload?.token || att.token || att.payload?.url || att.url || '';
+          logger.info(`🎤 Найдено аудио, token: ${voiceToken}`);
           break;
         }
       }
 
-      if (raw.type === 'voice' || raw.type === 'audio') {
-        isVoiceInput = true;
-        if (!voiceToken) {
-          voiceToken = raw.audio_url || raw.payload?.audio_url || raw.voice_token || '';
-        }
-      }
-
-      // 4. Если это голосовое сообщение → скачиваем и транскрибируем
+      // 4. Если голосовое — распознаём
       if (isVoiceInput && voiceToken) {
         try {
           const audioBuffer = await this.downloadAudio(voiceToken);
           const transcribedText = await this.transcribeAudio(audioBuffer);
-
-          if (!transcribedText || transcribedText.trim() === '') {
-            // Отвечаем голосом: "Не расслышал, повторите"
-            await this.synthesizeAndSendVoice(cleanId, 'Извините, я не расслышала. Повторите, пожалуйста.');
+          if (transcribedText && transcribedText.trim()) {
+            text = transcribedText.trim();
+            logger.info(`📝 Распознано: "${text}"`);
+          } else {
+            await this.synthesizeAndSendVoice(chatId, 'Извините, я не расслышала. Повторите, пожалуйста.');
             return res.status(200).send('ok');
           }
-          text = transcribedText;
-        } catch (err) {
-          logger.error('❌ [MaxAdapter] Voice recognition failed:', err);
-          try {
-            await this.synthesizeAndSendVoice(cleanId, 'Извините, возникла ошибка при обработке аудио. Повторите, пожалуйста.');
-          } catch {
-            await this.safeSendMessageToChat(cleanId, 'Извините, не удалось распознать голосовое сообщение.');
-          }
+        } catch (err: any) {
+          logger.error(`❌ Ошибка обработки голоса: ${err?.message || err}`);
+          await this.synthesizeAndSendVoice(chatId, 'Произошла ошибка при обработке голосового сообщения.');
           return res.status(200).send('ok');
         }
       }
 
       if (!text || !text.trim()) {
-        logger.warn(`⚠️ [MaxAdapter] Empty text after processing webhook for chatId ${cleanId}`);
+        logger.warn('⚠️ Empty text after processing');
         return res.status(200).send('ok');
       }
 
-      // 5. Проверка команд смены режима голоса
-      const lowerText = text.trim().toLowerCase();
-      if (lowerText === '/mode text' || lowerText === '/text' || lowerText === '/режим текст') {
-        this.setVoiceMode(cleanId, VoiceMode.TEXT_TO_TEXT);
-        await this.safeSendMessageToChat(
-          cleanId,
-          "💬 Режим изменен: Текст → Текст (обычный чат без голосовых сообщений)."
-        );
-        return res.status(200).send('ok');
-      }
-
-      if (lowerText === '/mode voice' || lowerText === '/mode text_to_voice' || lowerText === '/tts' || lowerText === '/режим голос') {
-        this.setVoiceMode(cleanId, VoiceMode.TEXT_TO_VOICE);
-        await this.safeSendMessageToChat(
-          cleanId,
-          "🎤 Режим изменен: Текст → Голос (бот будет озвучивать свои ответы)."
-        );
-        return res.status(200).send('ok');
-      }
-
-      if (lowerText === '/mode voice_to_voice' || lowerText === '/mode v2v' || lowerText === '/v2v' || lowerText === '/режим диалог') {
-        this.setVoiceMode(cleanId, VoiceMode.VOICE_TO_VOICE);
-        try {
-          await this.synthesizeAndSendVoice(
-            cleanId,
-            "Голосовой диалог активирован. Я на связи и буду отвечать вам голосом."
-          );
-        } catch {
-          await this.safeSendMessageToChat(
-            cleanId,
-            "🎙️ Режим изменен: Голос → Голос (полный голосовой диалог)."
-          );
-        }
-        return res.status(200).send('ok');
-      }
-
-      if (lowerText === '/mode' || lowerText === '/modes' || lowerText === '/режим') {
-        const current = this.getVoiceMode(cleanId);
-        const modeDesc = {
-          [VoiceMode.TEXT_TO_TEXT]: "1. Текст → Текст (обычный чат)",
-          [VoiceMode.TEXT_TO_VOICE]: "2. Текст → Голос (бот отвечает голосом)",
-          [VoiceMode.VOICE_TO_VOICE]: "3. Голос → Голос (полный голосовой диалог)"
-        }[current] || current;
-
-        const info = `⚙️ Режимы работы с голосом в Selin AI 2.0:\n\n` +
-          `Текущий режим: ${modeDesc}\n\n` +
-          `Для переключения отправьте команду:\n` +
-          `• /mode text — Текст → Текст (обычный чат)\n` +
-          `• /mode voice — Текст → Голос (бот отвечает голосом)\n` +
-          `• /mode voice_to_voice — Голос → Голос (полный голосовой диалог)`;
-
-        await this.safeSendMessageToChat(cleanId, info);
-        return res.status(200).send('ok');
-      }
-
-      // 6. Проверка ключевых слов для ответа голосом в текстовом сообщении
-      const voiceKeywords = [
-        "скажи голосом",
-        "озвучь",
-        "ответь голосом",
-        "скажи вслух",
-        "проговори вслух",
-        "прочитай вслух",
-        "прочитай голосом",
-        "голосом"
-      ];
-      const hasVoiceKeyword = voiceKeywords.some(kw => lowerText.includes(kw));
-
-      const currentChatMode = this.getVoiceMode(cleanId);
-      const shouldReplyWithVoice = isVoiceInput || hasVoiceKeyword || (currentChatMode === VoiceMode.TEXT_TO_VOICE) || (currentChatMode === VoiceMode.VOICE_TO_VOICE && isVoiceInput);
-
+      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
       const context: MessageContext = {
         chatId: cleanId,
         tenantId: `max_${cleanId}`,
         channel: ChannelType.MAX,
         isVoice: isVoiceInput,
-        voiceMode: currentChatMode,
         timestamp: Date.now()
       };
 
-      // 7. Передача в SelinCore и отправка ответа
-      try {
-        const response = await this.core.processMessage(text, context);
-        await this.sendMessage(cleanId, response, shouldReplyWithVoice);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.error(`❌ [MaxAdapter] Error processing message in SelinCore: ${errorMsg}`);
-        await this.safeSendMessageToChat(cleanId, "Извините, возникла внутренняя ошибка при обработке запроса.");
+      const response = await this.core.processMessage(text, context);
+
+      if (isVoiceInput) {
+        await this.synthesizeAndSendVoice(cleanId, response.text);
+      } else {
+        await this.safeSendMessageToChat(cleanId, response.text);
       }
 
       return res.status(200).send('ok');
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.error(`❌ [MaxAdapter] handleWebhook critical error: ${errorMsg}`);
+
+    } catch (err: any) {
+      logger.error(`❌ Webhook error: ${err?.message || err}`);
       return res.status(200).send('ok');
     }
   }

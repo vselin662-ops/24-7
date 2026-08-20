@@ -1,4 +1,5 @@
 import { LLMService } from "./LLMService";
+import { cacheService } from "./CacheService";
 import {
   MessageContext,
   AIResponse,
@@ -200,6 +201,29 @@ export class SelinCore {
         break;
     }
 
+    // 3.5. Проверка кэша ответов в Redis
+    try {
+      const cached = await cacheService.getCachedResponse(context.chatId, effectiveText);
+      if (cached) {
+        logger.info(`⚡ [SelinCore] Returning cached LLM response for chat ${context.chatId}`);
+        const isVoiceResponse = context.isVoice ||
+          context.voiceMode === VoiceMode.TEXT_TO_VOICE ||
+          context.voiceMode === VoiceMode.VOICE_TO_VOICE;
+
+        return {
+          text: cached,
+          confidence: 0.99,
+          metadata: {
+            cached: true,
+            voiceMode: context.voiceMode
+          },
+          voice: isVoiceResponse ? { format: 'ogg' } : undefined
+        };
+      }
+    } catch (cacheErr) {
+      logger.warn(`⚠️ [SelinCore] Cache lookup error: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
+    }
+
     // 4. Вызов LLM через LLMService
     try {
       const responseText = await this.llm.smartCall(
@@ -211,6 +235,11 @@ export class SelinCore {
       task.status = 'completed';
       task.completedAt = Date.now();
       task.result = responseText;
+
+      // Сохраняем в кэш и историю диалога
+      cacheService.setCachedResponse(context.chatId, effectiveText, responseText).catch(() => {});
+      cacheService.pushMessage(context.chatId, { role: 'user', content: effectiveText, timestamp: Date.now() }).catch(() => {});
+      cacheService.pushMessage(context.chatId, { role: 'assistant', content: responseText, timestamp: Date.now() }).catch(() => {});
 
       const isVoiceResponse = context.isVoice ||
         context.voiceMode === VoiceMode.TEXT_TO_VOICE ||

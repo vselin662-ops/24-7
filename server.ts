@@ -38,6 +38,7 @@ import { MaxAdapter } from "./src/adapters/max.adapter";
 import { RobotAdapter } from "./src/adapters/robot.adapter";
 import { LLMService, llmService } from "./src/core/LLMService";
 import { SelinCore } from "./src/core/SelinCore";
+import { cacheService } from "./src/core/CacheService";
 import { MaxAdapter as ModernMaxAdapter } from "./src/adapters/MaxAdapter";
 import { VoiceMode } from "./src/core/types";
 import {
@@ -5518,6 +5519,7 @@ async function getHealthStatus() {
     timestamp: new Date().toISOString(),
     checks: {
       sqlite: { status: sqliteStatus, latencyMs: sqliteLatency },
+      redis: { status: cacheService.status ? "up" : "disconnected" },
       gemini_api: { status: geminiStatus, circuitBreaker: circuitState },
       max_bot: { status: maxStatus },
       firestore: { status: firestoreStatus },
