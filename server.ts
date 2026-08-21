@@ -300,6 +300,13 @@ async function legacyHandleMaxWebhook(req: any, res: any) {
     }
 
     // Scan attachments for audio/voice content
+    const primaryAtt = raw.body?.attachments?.[0] || raw.attachments?.[0] || raw.payload?.attachments?.[0] || raw.message?.attachments?.[0];
+    const directUrl = primaryAtt?.payload?.url || primaryAtt?.payload?.link || primaryAtt?.url || primaryAtt?.link;
+    if (directUrl && String(directUrl).startsWith('http')) {
+      isVoiceInput = true;
+      voiceUrlOrId = String(directUrl);
+    }
+
     for (const att of allAttachments) {
       const typeStr = String(att?.type || '').toLowerCase();
       const mediaTypeStr = String(att?.media_type || '').toLowerCase();
@@ -310,7 +317,7 @@ async function legacyHandleMaxWebhook(req: any, res: any) {
         mediaTypeStr.includes('audio')
       ) {
         isVoiceInput = true;
-        const candidate = att.payload?.url || att.url || att.payload?.token || att.token || att.file_url || att.fileId || att.file_id;
+        const candidate = att.payload?.url || att.payload?.link || att.url || att.link || att.file_url;
         if (candidate) {
           voiceUrlOrId = String(candidate);
           break;
@@ -2392,44 +2399,13 @@ async function transcribeAudioFromUrl(url: string): Promise<string> {
   return await transcribeAudio(audioBuffer, 'voice.ogg');
 }
 
-async function downloadMaxAudio(fileUrlOrId: string): Promise<Buffer> {
-  try {
-    let url = fileUrlOrId.trim();
-    // Если передан только UUID/токен, формируем полный URL для загрузки
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = `https://platform-api.max.ru/uploads/${url}`;
-    }
-
-    console.log(`💾 [downloadMaxAudio] Скачивание файла с URL: ${url.slice(0, 85)}...`);
-    
-    const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
-    const headers: Record<string, string> = {};
-    if (MAX_TOKEN) {
-      headers['Authorization'] = MAX_TOKEN;
-    }
-
-    const res = await fetch(url, {
-      method: 'GET',
-      headers,
-      signal: AbortSignal.timeout(20000)
-    });
-
-    const contentType = res.headers.get("content-type") || "";
-    if (!res.ok || contentType.includes("text/html")) {
-      const errText = await res.text();
-      console.error(`❌ [downloadMaxAudio Error] HTTP статус: ${res.status}. Content-Type: ${contentType}. Ответ (до 200 симв):`);
-      console.error(errText.slice(0, 200));
-      throw new Error(`MAX Storage download returned HTTP ${res.status}`);
-    }
-
-    const arrayBuf = await res.arrayBuffer();
-    const buffer = Buffer.from(arrayBuf);
-    console.log(`✅ [downloadMaxAudio Success] Файл успешно загружен. Размер: ${buffer.length} байт.`);
-    return buffer;
-  } catch (err: any) {
-    console.error(`❌ [downloadMaxAudio Failed] Ошибка при скачивании аудио из MAX: ${err?.message || err}`);
-    throw err;
+async function downloadMaxAudio(fileUrl: string): Promise<Buffer> {
+  if (!fileUrl || !fileUrl.startsWith('http')) {
+    throw new Error('Нужна прямая ссылка payload.url, а не токен');
   }
+  const res = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
 }
 
 async function transcribeAudioBuffer(buf: Buffer): Promise<string> {

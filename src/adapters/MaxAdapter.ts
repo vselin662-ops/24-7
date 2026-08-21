@@ -317,56 +317,15 @@ export class MaxAdapter {
   }
 
   /**
-   * Скачивание аудиофайла из MAX Storage по токену
+   * Скачивание аудиофайла из MAX по прямому URL
    */
-  private async downloadAudio(token: string): Promise<Buffer> {
-    // Проверяем, что токен не пустой
-    if (!token || token.length < 10) {
-      throw new Error('Invalid audio token: token is empty or too short');
+  private async downloadAudio(fileUrl: string): Promise<Buffer> {
+    if (!fileUrl || !fileUrl.startsWith('http')) {
+      throw new Error('Нужна прямая ссылка payload.url, а не токен');
     }
-
-    // Формируем URL для скачивания
-    let url = token.trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = `https://platform-api.max.ru/uploads/${url}`;
-    }
-
-    logger.info(`⬇️ Downloading audio from: ${url.substring(0, 80)}...`);
-
-    const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
-    if (!MAX_TOKEN) {
-      throw new Error('MAX_BOT_TOKEN is not set');
-    }
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': MAX_TOKEN,
-        'Accept': 'audio/*, application/octet-stream'
-      },
-      signal: AbortSignal.timeout(15000) // 15 секунд таймаут
-    });
-
-    // Подробный лог статуса
-    logger.info(`📊 Download response status: ${response.status} ${response.statusText}`);
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'No error body');
-      throw new Error(`Failed to download audio (HTTP ${response.status}): ${errorText}`);
-    }
-
-    const contentType = response.headers.get('content-type') || 'unknown';
-    logger.info(`📄 Content-Type: ${contentType}`);
-
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    if (buffer.length === 0) {
-      throw new Error('Downloaded audio is empty');
-    }
-
-    logger.info(`✅ Audio downloaded: ${buffer.length} bytes`);
-    return buffer;
+    const res = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
   }
 
   /**
@@ -471,9 +430,13 @@ export class MaxAdapter {
         }
       }
 
-      // 3. Проверяем аудио-вложения
+      // 3. Проверяем аудио-вложения и извлекаем прямой URL/токен
       let isVoiceInput = false;
-      let voiceToken = '';
+      let audioUrlOrToken = '';
+
+      // Прямое извлечение URL из вложений (raw.body?.attachments?.[0] || raw.attachments?.[0])
+      const primaryAtt = raw.body?.attachments?.[0] || raw.attachments?.[0] || raw.payload?.attachments?.[0] || raw.message?.attachments?.[0];
+      const directUrl = primaryAtt?.payload?.url || primaryAtt?.payload?.link || primaryAtt?.url || primaryAtt?.link;
 
       const allAttachments: any[] = [];
       const collectFrom = (obj: any) => {
@@ -489,18 +452,34 @@ export class MaxAdapter {
 
       for (const att of allAttachments) {
         const typeStr = String(att?.type || '').toLowerCase();
-        if (typeStr.includes('audio') || typeStr.includes('voice')) {
+        const mediaTypeStr = String(att?.media_type || '').toLowerCase();
+        if (typeStr.includes('audio') || typeStr.includes('voice') || mediaTypeStr.includes('audio') || mediaTypeStr.includes('voice')) {
           isVoiceInput = true;
-          voiceToken = att.payload?.token || att.token || att.payload?.url || att.url || '';
-          logger.info(`🎤 Найдено аудио, token: ${voiceToken}`);
+          audioUrlOrToken = att.payload?.url || att.payload?.link || att.url || att.link || att.payload?.token || att.token || '';
+          logger.info(`🎤 Найдено аудио во вложениях, url/token: ${audioUrlOrToken}`);
           break;
         }
       }
 
+      // Если аудио найдено через прямой URL или флаг
+      if (!audioUrlOrToken && directUrl) {
+        const typeStr = String(primaryAtt?.type || raw.type || raw.body?.type || raw.payload?.type || '').toLowerCase();
+        if (typeStr.includes('audio') || typeStr.includes('voice') || !text) {
+          isVoiceInput = true;
+          audioUrlOrToken = directUrl;
+          logger.info(`🎤 Найдено прямое audio directUrl: ${audioUrlOrToken}`);
+        }
+      }
+
+      if (!audioUrlOrToken && (raw.audio_url || raw.body?.audio_url || raw.payload?.audio_url)) {
+        isVoiceInput = true;
+        audioUrlOrToken = raw.audio_url || raw.body?.audio_url || raw.payload?.audio_url;
+      }
+
       // 4. Если голосовое — распознаём
-      if (isVoiceInput && voiceToken) {
+      if (isVoiceInput && audioUrlOrToken) {
         try {
-          const audioBuffer = await this.downloadAudio(voiceToken);
+          const audioBuffer = await this.downloadAudio(audioUrlOrToken);
           const transcribedText = await this.transcribeAudio(audioBuffer);
           if (transcribedText && transcribedText.trim()) {
             text = transcribedText.trim();
