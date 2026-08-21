@@ -3,6 +3,8 @@ import Groq from "groq-sdk";
 import { ChatMemory } from "./types";
 import { logger } from "../logger";
 
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
 export class LLMService {
   private gemini: GoogleGenAI | null = null;
   private groq: Groq | null = null;
@@ -91,7 +93,7 @@ export class LLMService {
         }));
 
         const completion = await this.gemini.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: GEMINI_MODEL,
           contents: contents,
           config: {
             systemInstruction: finalSystem,
@@ -112,44 +114,56 @@ export class LLMService {
       }
     }
 
-    // 2. Попытка через Groq
+    // 2. Попытка через Groq с перебором живых моделей
     try {
       const groq = this.getGroqClient();
+      if (groq) {
+        // Формируем сообщения с контекстом
+        const messages = [
+          { role: 'system', content: finalSystem },
+          ...context.map(msg => ({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: msg.content
+          }))
+        ];
 
-      // Формируем сообщения с контекстом
-      const messages = [
-        { role: 'system', content: finalSystem },
-        ...context.map(msg => ({
-          role: msg.role === 'user' ? 'user' : 'assistant',
-          content: msg.content
-        }))
-      ];
+        logger.info(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
 
-      logger.info(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
+        const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
-      const completion = await groq.chat.completions.create({
-        messages: messages as any,
-        model: 'llama-3.1-70b-versatile',
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
+        for (const model of models) {
+          try {
+            const completion = await groq.chat.completions.create({
+              messages: messages as any,
+              model: model,
+              temperature: 0.8,
+              max_tokens: 2000,
+            });
 
-      const response = completion.choices[0]?.message?.content ||
-        "Хм, задумался... Давай переформулируем вопрос?";
+            const response = completion.choices[0]?.message?.content;
+            if (response && typeof response === 'string' && response.trim()) {
+              const trimmed = response.trim();
+              // Сохраняем ответ в память
+              memory.history.push({ role: 'assistant', content: trimmed, timestamp: Date.now() });
 
-      // Сохраняем ответ в память
-      memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+              // Обрезаем историю до 30 сообщений
+              if (memory.history.length > 30) {
+                memory.history = memory.history.slice(-30);
+              }
 
-      // Обрезаем историю до 30 сообщений
-      if (memory.history.length > 30) {
-        memory.history = memory.history.slice(-30);
+              return trimmed;
+            }
+          } catch (mErr: any) {
+            logger.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
+            continue;
+          }
+        }
       }
-
-      return response;
     } catch (err: any) {
       logger.error(`❌ Smart LLM error: ${err?.message || err}`);
-      return "Ой, что-то я зависла... Давай попробуем еще раз?";
     }
+
+    return "Ой, что-то я зависла... Давай попробуем еще раз?";
   }
 
   public async call(
@@ -187,7 +201,7 @@ export class LLMService {
         }
 
         const completion = await this.gemini.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: GEMINI_MODEL,
           contents: formattedContents,
           config: config
         });
@@ -342,7 +356,7 @@ export class LLMService {
           }
 
           const response = await this.gemini.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: GEMINI_MODEL,
             contents: formattedContents,
             config: geminiConfig
           });

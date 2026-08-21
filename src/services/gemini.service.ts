@@ -25,7 +25,7 @@ class GeminiService {
   async generate(prompt: string, options: { temperature?: number; model?: string } = {}): Promise<string> {
     try {
       const ai = this.getClient();
-      const model = options.model || 'gemini-2.5-flash';
+      const model = options.model || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
       const response = await ai.models.generateContent({
         model,
         contents: prompt,

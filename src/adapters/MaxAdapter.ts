@@ -5,6 +5,7 @@ import { SelinCore } from "../core/SelinCore";
 import { AIResponse, MessageContext, ChannelType, VoiceMode } from "../core/types";
 import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
+import { ensureMp3Buffer } from "../lib/audioConvert";
 
 export class MaxAdapter {
   private bot: Bot | null = null;
@@ -263,6 +264,8 @@ export class MaxAdapter {
     // --- Шаг 4: Загрузка в MAX Storage (MP3) и отправка в чат ---
     if (audioBuffer && audioBuffer.length > 0 && this.bot) {
       try {
+        audioBuffer = await ensureMp3Buffer(audioBuffer);
+
         const maxToken = this.token || process.env.MAX_BOT_TOKEN;
         const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
           method: 'POST',
@@ -292,7 +295,8 @@ export class MaxAdapter {
                 attachments: [{
                   type: 'audio',
                   payload: {
-                    token: uploadToken
+                    token: uploadToken,
+                    filename: 'voice.mp3'
                   }
                 }] as any
               });
@@ -320,12 +324,37 @@ export class MaxAdapter {
    * Скачивание аудиофайла из MAX по прямому URL
    */
   private async downloadAudio(fileUrl: string): Promise<Buffer> {
-    if (!fileUrl || !fileUrl.startsWith('http')) {
-      throw new Error('Нужна прямая ссылка payload.url, а не токен');
+    const url = (fileUrl || '').trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      throw new Error(`Нужна прямая ссылка payload.url, а не токен (получено: "${url}")`);
     }
-    const res = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
-    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+
+    logger.info(`⬇️ [MaxAdapter] Скачивание аудио по прямой ссылке: ${url.substring(0, 80)}...`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'audio/*, application/octet-stream'
+      },
+      signal: AbortSignal.timeout(20000)
+    });
+
+    logger.info(`📊 [MaxAdapter] Ответ скачивания: HTTP ${response.status} ${response.statusText}`);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error body');
+      throw new Error(`Failed to download audio (HTTP ${response.status}): ${errorText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (buffer.length === 0) {
+      throw new Error('Downloaded audio is empty');
+    }
+
+    logger.info(`✅ [MaxAdapter] Аудио успешно скачано: ${buffer.length} байт`);
+    return buffer;
   }
 
   /**

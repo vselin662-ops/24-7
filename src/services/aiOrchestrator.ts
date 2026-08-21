@@ -60,7 +60,7 @@ class AIOrchestrator {
         name: 'gemini',
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
         apiKey: process.env.GEMINI_API_KEY || '',
-        model: 'gemini-2.5-flash',
+        model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
         priority: 6,
       },
     ];

@@ -41,6 +41,7 @@ import { SelinCore } from "./src/core/SelinCore";
 import { cacheService } from "./src/core/CacheService";
 import { MaxAdapter as ModernMaxAdapter } from "./src/adapters/MaxAdapter";
 import { VoiceMode } from "./src/core/types";
+import { ensureMp3Buffer } from "./src/lib/audioConvert";
 import {
   startLearning,
   generateLesson,
@@ -524,6 +525,9 @@ function getChatMemory(chatId: string): ChatMemory {
 // УМНЫЙ LLM С КОНТЕКСТОМ
 // ==========================================
 
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const MODEL_CHAIN = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+
 async function smartCallLLM(
   chatId: string,
   userMessage: string,
@@ -567,7 +571,7 @@ async function smartCallLLM(
       }));
 
       const completion = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: GEMINI_MODEL,
         contents: contents,
         config: {
           systemInstruction: finalSystem,
@@ -588,50 +592,57 @@ async function smartCallLLM(
     }
   }
 
-  // 2. Попытка через Groq
+  // 2. Попытка через Groq с перебором живых моделей
   try {
     const groq = getGroq();
-    
-    // Формируем сообщения с контекстом
-    const messages = [
-      { role: 'system', content: finalSystem },
-      ...context.map(msg => ({
-        role: msg.role === 'user' ? 'user' : 'assistant',
-        content: msg.content
-      }))
-    ];
+    if (groq) {
+      // Формируем сообщения с контекстом
+      const messages = [
+        { role: 'system', content: finalSystem },
+        ...context.map(msg => ({
+          role: msg.role === 'user' ? 'user' : 'assistant',
+          content: msg.content
+        }))
+      ];
 
-    console.log(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
+      console.log(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
 
-    const completion = await groq.chat.completions.create({
-      messages: messages as any,
-      model: 'llama-3.1-70b-versatile',
-      temperature: 0.8, // Выше для креативности
-      max_tokens: 2000,
-    });
+      const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
-    const response = completion.choices[0]?.message?.content || 
-      "Хм, задумался... Давай переформулируем вопрос?";
+      for (const model of models) {
+        try {
+          const completion = await groq.chat.completions.create({
+            messages: messages as any,
+            model: model,
+            temperature: 0.8, // Выше для креативности
+            max_tokens: 2000,
+          });
 
-    // Сохраняем ответ в память
-    memory.history.push({ role: 'assistant', content: response });
+          const response = completion.choices[0]?.message?.content;
+          if (response && typeof response === 'string' && response.trim()) {
+            const trimmed = response.trim();
+            // Сохраняем ответ в память
+            memory.history.push({ role: 'assistant', content: trimmed });
 
-    // Обрезаем историю до 30 сообщений
-    if (memory.history.length > 30) {
-      memory.history = memory.history.slice(-30);
+            // Обрезаем историю до 30 сообщений
+            if (memory.history.length > 30) {
+              memory.history = memory.history.slice(-30);
+            }
+
+            return trimmed;
+          }
+        } catch (mErr: any) {
+          console.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
+          continue;
+        }
+      }
     }
-
-    return response;
-
   } catch (err: any) {
     console.error('❌ Smart LLM error:', err);
-    return "Ой, что-то я зависла... Давай попробуем еще раз?";
   }
+
+  return "Ой, что-то я зависла... Давай попробуем еще раз?";
 }
-
-const GEMINI_MODEL = "llama-3.3-70b-versatile";
-
-const MODEL_CHAIN = ["gemma2-9b-it", "llama-3.3-70b-versatile"];
 
 let groqInstance: Groq | null = null;
 function getGroq(): Groq | null {
@@ -685,7 +696,7 @@ async function callLLM(
       }
       
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: GEMINI_MODEL,
         contents: contents,
         config: config
       });
@@ -832,7 +843,7 @@ async function generateWithFallback(buildContents: () => any, cfg: any): Promise
         }
 
         const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: GEMINI_MODEL,
           contents: formattedContents,
           config: geminiConfig
         });
@@ -2275,6 +2286,9 @@ async function synthesizeAndSendVoice(
   // 3. Загрузка в MAX Storage и отправка (с защитой от HTML-ошибок и падений)
   if (audioBuffer && audioBuffer.length > 0) {
     try {
+      // Гарантируем, что аудио переведено в MP3 перед отправкой в MAX
+      audioBuffer = await ensureMp3Buffer(audioBuffer);
+
       const MAX_TOKEN = process.env.MAX_BOT_TOKEN;
       console.log("💾 Загрузка аудио в MAX Storage...");
       const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
@@ -2299,20 +2313,16 @@ async function synthesizeAndSendVoice(
         throw new Error("MAX Storage response missing token or url");
       }
 
-      // Использование встроенного в Node.js 18+ стандартного FormData и Blob.
-      // Это автоматически и корректно формирует multipart/form-data со всеми нужными boundary,
-      // предотвращая ошибку 412 (Precondition Failed) на сервере MAX.
+      // Использование стандартного FormData и Blob ('audio/mpeg', 'voice.mp3')
       const form = new FormData();
       const fileBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
       form.append('data', fileBlob, 'voice.mp3');
 
-      // Логируем параметры отправки для диагностики (без конфиденциальных токенов)
+      // Логируем параметры отправки для диагностики
       console.log(`🌐 [MAX Storage Upload] Отправка файла на URL: ${url.substring(0, 70)}... (размер: ${audioBuffer.length} байт)`);
       
       const uploadRes = await fetch(url, {
         method: 'POST',
-        // Убираем ручное указание заголовка Content-Type (чтобы fetch сам прописал boundary)
-        // и убираем Authorization для upload URL (так как ссылка url уже содержит все одноразовые токены)
         body: form,
         signal: AbortSignal.timeout(20000)
       });
@@ -2400,12 +2410,37 @@ async function transcribeAudioFromUrl(url: string): Promise<string> {
 }
 
 async function downloadMaxAudio(fileUrl: string): Promise<Buffer> {
-  if (!fileUrl || !fileUrl.startsWith('http')) {
-    throw new Error('Нужна прямая ссылка payload.url, а не токен');
+  const url = (fileUrl || '').trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    throw new Error(`Нужна прямая ссылка payload.url, а не токен (получено: "${url}")`);
   }
-  const res = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
-  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+
+  console.log(`⬇️ [downloadMaxAudio] Скачивание аудио по прямой ссылке: ${url.substring(0, 80)}...`);
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'audio/*, application/octet-stream'
+    },
+    signal: AbortSignal.timeout(20000)
+  });
+
+  console.log(`📊 [downloadMaxAudio] Ответ: HTTP ${res.status} ${res.statusText}`);
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => 'No error body');
+    throw new Error(`Failed to download audio (HTTP ${res.status}): ${errorText}`);
+  }
+
+  const arrayBuf = await res.arrayBuffer();
+  const buffer = Buffer.from(arrayBuf);
+
+  if (buffer.length === 0) {
+    throw new Error('Downloaded audio is empty');
+  }
+
+  console.log(`✅ [downloadMaxAudio] Аудио успешно скачано: ${buffer.length} байт`);
+  return buffer;
 }
 
 async function transcribeAudioBuffer(buf: Buffer): Promise<string> {
