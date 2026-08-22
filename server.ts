@@ -671,6 +671,7 @@ async function smartCallLLM(
 3. Задавай уточняющие вопросы
 4. Приводи примеры из жизни
 5. Если не знаешь — честно скажи
+6. Никогда не используй имя 'DimaTorzok' или фразы про создание/редактирование субтитров. Если ты не знаешь имя пользователя или в аудиофайле тишина/шум, просто отвечай по сути или вежливо переспрашивай.
 
 СЕЙЧАС ТЕБЯ СПРАШИВАЮТ: "${userMessage}"`;
 
@@ -2700,7 +2701,24 @@ async function transcribeAudio(audioBuffer: Buffer, filename: string = 'voice.og
     }
 
     const data = await response.json() as any;
-    const text = data.text || "";
+    let text = (data.text || "").trim();
+
+    // Фильтрация галлюцинаций Whisper при тишине/шуме (например DimaTorzok, субтитры)
+    const lower = text.toLowerCase();
+    if (
+      lower.includes('dimatorzok') ||
+      lower.includes('дима торжок') ||
+      lower.includes('субтитры') ||
+      lower.includes('субтитрами') ||
+      lower.includes('создал субтитры') ||
+      lower.includes('редактор субтитров') ||
+      lower.includes('продолжение следует') ||
+      lower.includes('спасибо за просмотр')
+    ) {
+      console.warn(`⚠️ [Groq Whisper STT] Отфильтрована галлюцинация Whisper: "${text}"`);
+      text = "";
+    }
+
     console.log(`✅ [Groq Whisper STT Success] Распознанный текст: "${text}"`);
     return text;
   } catch (err: any) {
@@ -3662,7 +3680,7 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
         chatIdStr,
         text,
         `Ты — Selin AI. ${config.is_universal ? 'Универсальный ассистент' : `Помощник компании ${config.business_name}`}. 
-  Отвечай как эксперт. Будь полезным, конкретным и живым.`
+Отвечай как эксперт. Будь полезным, конкретным и живым. Никогда не используй имя 'DimaTorzok' или фразы про создание субтитров. Если ты не знаешь имя пользователя или в сообщении/аудио тишина/шум, отвечай по сути вопроса или вежливо переспроси.`
       );
       responseText = smartResponse;
     }

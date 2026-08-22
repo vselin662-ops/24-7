@@ -379,7 +379,22 @@ export class MaxAdapter {
 
         if (response.ok) {
           const data = await response.json();
-          return (data?.text || '').trim();
+          let recognized = (data?.text || '').trim();
+          const lower = recognized.toLowerCase();
+          if (
+            lower.includes('dimatorzok') ||
+            lower.includes('дима торжок') ||
+            lower.includes('субтитры') ||
+            lower.includes('субтитрами') ||
+            lower.includes('создал субтитры') ||
+            lower.includes('редактор субтитров') ||
+            lower.includes('продолжение следует') ||
+            lower.includes('спасибо за просмотр')
+          ) {
+            logger.warn(`⚠️ [MaxAdapter] Filtered Whisper hallucination: "${recognized}"`);
+            recognized = '';
+          }
+          return recognized;
         } else {
           logger.warn(`⚠️ [MaxAdapter] Groq Whisper returned status ${response.status}`);
         }

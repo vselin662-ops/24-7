@@ -39,7 +39,22 @@ export class STTService {
       }
 
       const data: any = await response.json();
-      return (data?.text || '').trim();
+      let text = (data?.text || '').trim();
+      const lower = text.toLowerCase();
+      if (
+        lower.includes('dimatorzok') ||
+        lower.includes('дима торжок') ||
+        lower.includes('субтитры') ||
+        lower.includes('субтитрами') ||
+        lower.includes('создал субтитры') ||
+        lower.includes('редактор субтитров') ||
+        lower.includes('продолжение следует') ||
+        lower.includes('спасибо за просмотр')
+      ) {
+        logger.warn(`[STTService] Filtered Whisper hallucination: "${text}"`);
+        text = '';
+      }
+      return text;
     } catch (err: any) {
       logger.error(`[STTService] Transcription error: ${err?.message || err}`);
       return '';
