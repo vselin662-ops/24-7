@@ -526,7 +526,84 @@ function getChatMemory(chatId: string): ChatMemory {
 // ==========================================
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-const MODEL_CHAIN = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+
+let groqModelsCache: string[] | null = null;
+let groqModelsCacheTime = 0;
+const GROQ_CACHE_TTL_MS = 60 * 60 * 1000; // 60 минут
+
+async function getGroqModels(): Promise<string[]> {
+  const now = Date.now();
+  if (groqModelsCache && (now - groqModelsCacheTime < GROQ_CACHE_TTL_MS)) {
+    return groqModelsCache;
+  }
+
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey.includes('your_') || apiKey.includes('placeholder') || apiKey.length < 10) {
+    return [];
+  }
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!res.ok) {
+      console.error(`❌ [Groq] Ошибка получения списка моделей: HTTP ${res.status}`);
+      return [];
+    }
+
+    const data: any = await res.json();
+    const ids: string[] = Array.isArray(data?.data)
+      ? data.data.map((m: any) => m?.id).filter((id: any) => typeof id === 'string')
+      : [];
+
+    groqModelsCache = ids;
+    groqModelsCacheTime = now;
+    return ids;
+  } catch (err: any) {
+    console.error('❌ [Groq] Исключение при получении моделей:', err?.message || err);
+    return [];
+  }
+}
+
+async function pickGroqModel(): Promise<string> {
+  const models = await getGroqModels();
+  let chosen = '';
+
+  if (models.length > 0) {
+    const priorities = ['llama-3.3', 'gpt-oss-120b', 'qwen', 'gpt-oss-20b'];
+    
+    for (const p of priorities) {
+      const match = models.find(id => id.toLowerCase().includes(p));
+      if (match) {
+        chosen = match;
+        break;
+      }
+    }
+
+    if (!chosen) {
+      const fallback = models.find(id => {
+        const lower = id.toLowerCase();
+        return !lower.includes('whisper') && !lower.includes('orpheus') && !lower.includes('safety');
+      });
+      if (fallback) {
+        chosen = fallback;
+      }
+    }
+  }
+
+  if (!chosen) {
+    chosen = 'openai/gpt-oss-20b';
+  }
+
+  console.log('🧠 [Groq] Выбрана живая модель: ' + chosen);
+  return chosen;
+}
 
 async function smartCallLLM(
   chatId: string,
@@ -592,7 +669,7 @@ async function smartCallLLM(
     }
   }
 
-  // 2. Попытка через Groq с перебором живых моделей
+  // 2. Попытка через Groq с динамическим выбором модели
   try {
     const groq = getGroq();
     if (groq) {
@@ -607,34 +684,31 @@ async function smartCallLLM(
 
       console.log(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
 
-      const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+      const model = await pickGroqModel();
 
-      for (const model of models) {
-        try {
-          const completion = await groq.chat.completions.create({
-            messages: messages as any,
-            model: model,
-            temperature: 0.8, // Выше для креативности
-            max_tokens: 2000,
-          });
+      try {
+        const completion = await groq.chat.completions.create({
+          messages: messages as any,
+          model: model,
+          temperature: 0.8, // Выше для креативности
+          max_tokens: 2000,
+        });
 
-          const response = completion.choices[0]?.message?.content;
-          if (response && typeof response === 'string' && response.trim()) {
-            const trimmed = response.trim();
-            // Сохраняем ответ в память
-            memory.history.push({ role: 'assistant', content: trimmed });
+        const response = completion.choices[0]?.message?.content;
+        if (response && typeof response === 'string' && response.trim()) {
+          const trimmed = response.trim();
+          // Сохраняем ответ в память
+          memory.history.push({ role: 'assistant', content: trimmed });
 
-            // Обрезаем историю до 30 сообщений
-            if (memory.history.length > 30) {
-              memory.history = memory.history.slice(-30);
-            }
-
-            return trimmed;
+          // Обрезаем историю до 30 сообщений
+          if (memory.history.length > 30) {
+            memory.history = memory.history.slice(-30);
           }
-        } catch (mErr: any) {
-          console.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
-          continue;
+
+          return trimmed;
         }
+      } catch (mErr: any) {
+        console.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
       }
     }
   } catch (err: any) {
@@ -713,24 +787,20 @@ async function callLLM(
   // Fallback для старых вызовов
   const groq = getGroq();
   if (groq) {
-    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-    
-    for (const model of models) {
-      try {
-        const completion = await groq.chat.completions.create({
-          messages: messages as any,
-          model: model,
-          temperature: 0.8,
-          max_tokens: 2000,
-        });
-        const text = completion.choices[0]?.message?.content;
-        if (text && typeof text === 'string') {
-          return text.trim();
-        }
-      } catch (err: any) {
-        logger.warn(`[LLM] Model ${model} failed: ${err?.message || err}`);
-        continue;
+    const model = await pickGroqModel();
+    try {
+      const completion = await groq.chat.completions.create({
+        messages: messages as any,
+        model: model,
+        temperature: 0.8,
+        max_tokens: 2000,
+      });
+      const text = completion.choices[0]?.message?.content;
+      if (text && typeof text === 'string') {
+        return text.trim();
       }
+    } catch (err: any) {
+      logger.warn(`[LLM] Model ${model} failed: ${err?.message || err}`);
     }
   }
   
@@ -5649,6 +5719,13 @@ async function setBotUserMode(chatId: string, mode: string): Promise<void> {
 
 // Integrate Vite middleware in development or serve static files in production
 async function startServer() {
+  try {
+    const ids = await getGroqModels();
+    console.log('🧠 [Groq] Доступные модели:', JSON.stringify(ids));
+  } catch (err: any) {
+    console.error('❌ [Groq] Ошибка получения списка моделей при старте:', err?.message || err);
+  }
+
   try {
     await initSessionsDb();
     logger.info("📁 Sessions Database initialized successfully using sqlite3 (async/await)");
