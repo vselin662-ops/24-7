@@ -2136,7 +2136,7 @@ app.get("/api/get-voice-quest", (req, res) => {
 });
 
 // Endpoint to fetch company config
-app.get("/api/get-config", async (req, res) => {
+app.get(["/api/get-config", "/api/admin/config"], async (req, res) => {
   const chatId = req.query.chatId;
   if (chatId) {
     const userConfig = await getUserConfigByChatId(chatId as string);
@@ -2148,8 +2148,8 @@ app.get("/api/get-config", async (req, res) => {
   return res.json({ config: getCompanyConfig() });
 });
 
-// Endpoint to save company config from frontend
-app.post("/api/save-config", async (req, res) => {
+// Endpoint to save company config from frontend or admin
+app.post(["/api/save-config", "/api/admin/config"], async (req, res) => {
   const config = req.body;
   if (!config || typeof config !== "object") {
     return res.status(400).json({ error: "Invalid configuration object." });
@@ -2167,12 +2167,70 @@ app.post("/api/save-config", async (req, res) => {
   return res.json({ success: true, config });
 });
 
-app.get("/api/feed", (req, res) => {
+// Admin System Status endpoint
+app.get("/api/admin/status", async (req, res) => {
+  const kb = getKnowledgeBase();
+  const readiness = getReadinessState();
+  const queue = getModerationQueue();
+  const config = getCompanyConfig();
+  const health = await getHealthStatus();
+  return res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    health,
+    knowledge_base: {
+      documentCount: kb.documents.length,
+      chunkCount: kb.chunks.length
+    },
+    moderation: {
+      pendingCount: queue.length
+    },
+    feed_count: cachedFeed.length,
+    readiness: readiness,
+    config: {
+      business_name: config.business_name,
+      industry: config.industry,
+      is_live: config.is_live,
+      channels: config.channels
+    }
+  });
+});
+
+// Admin Metrics endpoint
+app.get("/api/admin/metrics", (req, res) => {
+  return res.json({
+    feedCount: cachedFeed.length,
+    knowledgeDocuments: getKnowledgeBase().documents.length,
+    moderationPending: getModerationQueue().length,
+    uptimeSeconds: process.uptime()
+  });
+});
+
+// Admin Feed endpoint
+app.get(["/api/feed", "/api/admin/feed"], (req, res) => {
   return res.json({ feed: cachedFeed });
 });
 
+// Admin Moderation endpoint
+app.get(["/api/moderation/queue", "/api/moderation/pending", "/api/admin/moderation"], (req, res) => {
+  return res.json({ queue: getModerationQueue(), log: getModerationLog() });
+});
+
+// Admin Chats endpoint
+app.get("/api/admin/chats", (req, res) => {
+  try {
+    let chats: any[] = [];
+    if (sqliteDb) {
+      chats = sqliteDb.prepare("SELECT * FROM conversations ORDER BY last_activity DESC LIMIT 50").all();
+    }
+    return res.json({ chats });
+  } catch (e: any) {
+    return res.json({ chats: [] });
+  }
+});
+
 // Endpoint to fetch knowledge base status/stats
-app.get("/api/knowledge/status", (req, res) => {
+app.get(["/api/knowledge/status", "/api/admin/knowledge"], (req, res) => {
   const kb = getKnowledgeBase();
   return res.json({
     documentCount: kb.documents.length,

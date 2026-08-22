@@ -450,6 +450,84 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {/* Mobile Navigation Drawer */}
+        {menuOpen && (
+          <div className="md:hidden border-t border-[#2A231F] bg-[#161210]/95 px-4 py-3 space-y-1.5 animate-fade-in">
+            <button
+              onClick={() => { setActiveTab('main'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'main' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Главная</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('languages'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'languages' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Globe className="w-4 h-4 text-blue-400" />
+              <span>Языки</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('business'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'business' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Briefcase className="w-4 h-4 text-amber-400" />
+              <span>Бизнес</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('lifestyle'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'lifestyle' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Car className="w-4 h-4 text-emerald-400" />
+              <span>Быт (Скоро)</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('feed'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'feed' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>Лента штаба</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('moderation'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'moderation' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Shield className="w-4 h-4" />
+              <span>Модерация</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('knowledge'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'knowledge' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              <span>База знаний</span>
+            </button>
+            <button
+              onClick={() => { setActiveTab('settings'); setMenuOpen(false); }}
+              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 transition-all ${
+                activeTab === 'settings' ? 'bg-[#C5A059] text-[#0F0D0C] font-semibold' : 'text-[#9E958C] hover:bg-[#221C19] hover:text-[#EAE6DF]'
+              }`}
+            >
+              <Sliders className="w-4 h-4" />
+              <span>Настройки</span>
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Main Layout */}
