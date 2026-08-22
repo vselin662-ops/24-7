@@ -2571,7 +2571,7 @@ async function synthesizeAndSendVoice(
     try {
       console.log("🎙️ Запуск резервного Edge TTS для синтеза...");
       const tts = new MsEdgeTTS();
-      const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural';
+      const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
       await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
       const streamRes = tts.toStream(text);
       const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
@@ -3115,7 +3115,7 @@ async function processMultimodalMessage(
       console.log('🎤 Edge TTS inside wantsVoice:', textResponse.slice(0, 50));
       const tts = new MsEdgeTTS();
       await tts.setMetadata(
-        process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+        process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
         OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
       );
       
@@ -4292,7 +4292,7 @@ app.post("/api/tts", async (req, res) => {
   try {
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+      process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     
@@ -5104,7 +5104,7 @@ app.post("/api/synthesize", async (req, res) => {
 
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural',
+      process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     

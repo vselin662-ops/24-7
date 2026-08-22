@@ -58,7 +58,7 @@ export class TTSService {
     const elevenKey = options.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
     const elevenVoice = options.voiceId || options.voice || '21m00Tcm4TlvDq8ikWAM'; // Rachel/Default
     const lang = options.lang || 'ru';
-    const voice = options.voice || 'ru-RU-SvetlanaNeural';
+    const voice = options.voice || process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
     const speed = options.speed || 1.0;
     const pitch = options.pitch || 0.0;
 
@@ -158,7 +158,7 @@ export class TTSService {
 
     const ratePercent = `${Math.round((speed - 1.0) * 100)}%`;
     const pitchHz = `${Math.round(pitch)}Hz`;
-    const selectedVoice = voice.includes('Neural') ? voice : 'ru-RU-SvetlanaNeural';
+    const selectedVoice = voice.includes('Neural') ? voice : (process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural');
 
     for (const chunk of chunks) {
       const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='ru-RU'><voice name='${selectedVoice}'><prosody rate='${ratePercent}' pitch='${pitchHz}'>${chunk}</prosody></voice></speak>`;

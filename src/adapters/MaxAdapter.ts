@@ -7,6 +7,9 @@ import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
 import { ensureMp3Buffer } from "../lib/audioConvert";
 
+const processedMessages = new Map<string, number>();
+const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
+
 export class MaxAdapter {
   private bot: Bot | null = null;
   private core: SelinCore;
@@ -227,7 +230,7 @@ export class MaxAdapter {
     if (!audioBuffer || audioBuffer.length === 0) {
       try {
         const tts = new MsEdgeTTS();
-        const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-SvetlanaNeural';
+        const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
         await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
         const streamRes = tts.toStream(cleanedText);
         const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
@@ -446,6 +449,28 @@ export class MaxAdapter {
     try {
       const raw = req.body || {};
       logger.info(`📨 [MaxAdapter] Webhook received`);
+
+      // 1. Идемпотентность: извлечение ID сообщения и фильтрация дублей
+      const messageId = raw.body?.mid || raw.body?.seq || raw.message?.body?.mid || raw.message_id || raw.mid || raw.seq || raw.payload?.mid || raw.payload?.seq;
+
+      if (messageId) {
+        const idStr = String(messageId);
+        const now = Date.now();
+
+        // Очистка старых записей (>10 минут)
+        for (const [id, timestamp] of processedMessages.entries()) {
+          if (now - timestamp > MESSAGE_TTL) {
+            processedMessages.delete(id);
+          }
+        }
+
+        if (processedMessages.has(idStr)) {
+          console.log('♻️ [MaxAdapter] Дубль вебхука пропущен: ' + idStr);
+          return res.status(200).send('ok');
+        }
+
+        processedMessages.set(idStr, now);
+      }
 
       // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА — ЭТО НУЖНО ДЛЯ ОТЛАДКИ
       logger.info(`📦 RAW BODY: ${JSON.stringify(raw)}`);

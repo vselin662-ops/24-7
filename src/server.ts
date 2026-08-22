@@ -283,7 +283,7 @@ export function createServerApp(): ServerServices {
 
         // Синтезируем голос для воспроизведения на колонке
         const audioBuffer = await selinTTS.synthesize(aiResponse.text, {
-          voice: 'ru-RU-SvetlanaNeural',
+          voice: process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
           speed: 1.05
         });
 
