@@ -2374,6 +2374,8 @@ function extractMaxChatId(payload: any): string | null {
   return null;
 }
 
+const MAX_TEXT_LIMIT = 1800;
+
 function splitTextSmart(text: string, maxLen: number): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
   const chunks: string[] = [];
@@ -2394,6 +2396,8 @@ async function safeSendMessageToChat(
   extra?: any
 ): Promise<any> {
   if (!botInstance) return null;
+  if ((!text || text.trim() === '') && !extra) return null;
+
   const cleanIdStr = String(chatId).replace(/^[a-z_]+/, '');
   const numericId = parseInt(cleanIdStr, 10);
   if (isNaN(numericId) || numericId <= 0) {
@@ -2401,57 +2405,63 @@ async function safeSendMessageToChat(
     return null;
   }
 
-  if (text && text.length > 3000 && !extra) {
-    const chunks = splitTextSmart(text, 3000);
+  const validText = (text && typeof text === 'string') ? text.trim() : '';
+
+  if (validText.length > MAX_TEXT_LIMIT) {
+    const chunks = splitTextSmart(validText, MAX_TEXT_LIMIT);
+    console.log(`✂️ [MAX] Ответ длинный (${validText.length} симв.), разбиваю на ${chunks.length} части`);
     for (const chunk of chunks) {
-      await botInstance.api.sendMessageToChat(numericId, chunk);
+      try {
+        await botInstance.api.sendMessageToChat(numericId, chunk, extra);
+      } catch (err: any) {
+        const is400 = err?.status === 400 || err?.statusCode === 400 || String(err?.message || '').includes('400') || String(err?.message || '').includes('size');
+        if (is400) {
+          console.warn(`⚠️ [MAX] Ошибка 400 при отправке части (${chunk.length} симв.), разбиваю на куски по 900 символов...`);
+          const subChunks = splitTextSmart(chunk, 900);
+          for (const sub of subChunks) {
+            try {
+              await botInstance.api.sendMessageToChat(numericId, sub, extra);
+              await new Promise(r => setTimeout(r, 600));
+            } catch (subErr: any) {
+              logger.error('❌ [MAX] Ошибка при отправке куска 900 симв:', subErr?.message || subErr);
+            }
+          }
+        } else {
+          logger.error('❌ [MAX] Ошибка отправки части:', err?.message || err);
+        }
+      }
       await new Promise(r => setTimeout(r, 600));
     }
     return null;
   }
 
-  // If text is empty string and extra is provided, we omit it or pass null/undefined to avoid proto.payload
-  const textToSend = (text === "" && extra) ? undefined : text;
-
   try {
-    logger.info(`Sending message to Max chat ${numericId}`, {
-      text: textToSend,
-      hasExtra: !!extra,
-      extraKeys: extra ? Object.keys(extra) : []
-    });
-
+    const textToSend = validText ? validText : (extra ? undefined : '');
+    if (!textToSend && !extra) return null;
     const message = await botInstance.api.sendMessageToChat(numericId, textToSend as any, extra);
-    logger.info(`✅ Message successfully sent to Max chat ${numericId}`);
     return message;
   } catch (err: any) {
+    const is400 = err?.status === 400 || err?.statusCode === 400 || String(err?.message || '').includes('400') || String(err?.message || '').includes('size');
+    if (is400 && validText) {
+      console.warn(`⚠️ [MAX] Ошибка 400 при отправке (${validText.length} симв.), разбиваю на куски по 900 символов...`);
+      const subChunks = splitTextSmart(validText, 900);
+      for (const sub of subChunks) {
+        try {
+          await botInstance.api.sendMessageToChat(numericId, sub, extra);
+          await new Promise(r => setTimeout(r, 600));
+        } catch (subErr: any) {
+          logger.error('❌ [MAX] Ошибка при отправке куска 900 симв:', subErr?.message || subErr);
+        }
+      }
+      return null;
+    }
+
     logger.error("❌ Max send failed in safeSendMessageToChat!", {
       chatId: numericId,
       status: err?.status,
-      code: err?.code || err?.response?.code,
-      message: err?.message,
-      response: err?.response ? JSON.stringify(err.response) : undefined,
-      fullError: JSON.stringify(err)
+      message: err?.message
     });
-
-    // Fallback: If sending with extra/attachments failed, retry sending plain text
-    if (extra && text) {
-      try {
-        logger.info(`🔄 Attempting fallback plain-text send to Max chat ${numericId}...`);
-        const fallbackMsg = await botInstance.api.sendMessageToChat(numericId, text);
-        logger.info(`✅ Fallback plain-text sent successfully to Max chat ${numericId}`);
-        return fallbackMsg;
-      } catch (fallbackErr: any) {
-        logger.error("❌ Fallback plain-text send ALSO failed!", {
-          chatId: numericId,
-          status: fallbackErr?.status,
-          code: fallbackErr?.code || fallbackErr?.response?.code,
-          message: fallbackErr?.message,
-          response: fallbackErr?.response ? JSON.stringify(fallbackErr.response) : undefined
-        });
-      }
-    }
-
-    throw err;
+    return null;
   }
 }
 
