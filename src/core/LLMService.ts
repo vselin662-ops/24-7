@@ -54,7 +54,7 @@ export async function pickGroqModel(): Promise<string> {
   let chosen = '';
 
   if (models.length > 0) {
-    const priorities = ['llama-3.3', 'gpt-oss-120b', 'qwen', 'gpt-oss-20b'];
+    const priorities = ['gpt-oss-20b', 'qwen', 'llama-3.3', 'gpt-oss-120b'];
     
     for (const p of priorities) {
       const match = models.find(id => id.toLowerCase().includes(p));
@@ -138,8 +138,13 @@ export class LLMService {
     // Сохраняем сообщение пользователя
     memory.history.push({ role: 'user', content: userMessage, timestamp: Date.now() });
 
-    // Берем последние 10 сообщений для контекста
-    const context = memory.history.slice(-10);
+    // Берем последние 6 сообщений для контекста и каждое обрезаем до 1200 символов
+    const rawContext = memory.history.slice(-6);
+    const context = rawContext.map(msg => ({
+      role: msg.role,
+      content: (msg.content || '').slice(0, 1200),
+      timestamp: msg.timestamp
+    }));
 
     // Определяем системный промпт если не передан
     const defaultSystem = `Ты — Selin AI, интеллектуальный ассистент.
@@ -214,7 +219,7 @@ export class LLMService {
             messages: messages as any,
             model: model,
             temperature: 0.8,
-            max_tokens: 4000,
+            max_tokens: 2000,
           });
 
           const response = completion.choices[0]?.message?.content;
@@ -301,7 +306,7 @@ export class LLMService {
             messages: messages as any,
             model: model,
             temperature: 0.8,
-            max_tokens: 4000,
+            max_tokens: 2000,
           });
           const text = completion.choices[0]?.message?.content;
           if (text && typeof text === 'string') {
