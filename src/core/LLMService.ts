@@ -214,7 +214,7 @@ export class LLMService {
             messages: messages as any,
             model: model,
             temperature: 0.8,
-            max_tokens: 2000,
+            max_tokens: 4000,
           });
 
           const response = completion.choices[0]?.message?.content;
@@ -301,7 +301,7 @@ export class LLMService {
             messages: messages as any,
             model: model,
             temperature: 0.8,
-            max_tokens: 2000,
+            max_tokens: 4000,
           });
           const text = completion.choices[0]?.message?.content;
           if (text && typeof text === 'string') {

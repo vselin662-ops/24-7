@@ -67,7 +67,7 @@ export class MaxAdapter {
   }
 
   /**
-   * Очистка текста от Markdown, ссылок, спецсимволов, эмодзи и обрезка до 500 символов
+   * Очистка текста от Markdown, ссылок, спецсимволов, эмодзи и обрезка до 4000 символов
    */
   public cleanText(text: string): string {
     let cleaned = String(text || "")
@@ -83,7 +83,7 @@ export class MaxAdapter {
       return "";
     }
 
-    const MAX_VOICE_LENGTH = 500;
+    const MAX_VOICE_LENGTH = 4000;
     if (cleaned.length > MAX_VOICE_LENGTH) {
       let cutIndex = -1;
       const punctuationMarks = ['. ', '! ', '? ', '.\n', '!\n', '?\n', '\n'];

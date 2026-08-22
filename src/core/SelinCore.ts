@@ -203,7 +203,8 @@ export class SelinCore {
 
     // 3.5. Проверка кэша ответов в Redis
     try {
-      const cached = await cacheService.getCachedResponse(context.chatId, effectiveText);
+      const isCacheDisabled = process.env.DISABLE_LLM_CACHE === 'true';
+      const cached = isCacheDisabled ? null : await cacheService.getCachedResponse(context.chatId, effectiveText);
       if (cached) {
         logger.info(`⚡ [SelinCore] Returning cached LLM response for chat ${context.chatId}`);
         const isVoiceResponse = context.isVoice ||

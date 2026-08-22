@@ -691,7 +691,7 @@ async function smartCallLLM(
           messages: messages as any,
           model: model,
           temperature: 0.8, // Выше для креативности
-          max_tokens: 2000,
+          max_tokens: 4000,
         });
 
         const response = completion.choices[0]?.message?.content;
@@ -793,7 +793,7 @@ async function callLLM(
         messages: messages as any,
         model: model,
         temperature: 0.8,
-        max_tokens: 2000,
+        max_tokens: 4000,
       });
       const text = completion.choices[0]?.message?.content;
       if (text && typeof text === 'string') {
@@ -2170,6 +2170,18 @@ function extractMaxChatId(payload: any): string | null {
   return null;
 }
 
+function splitTextSmart(text: string, maxLen: number): string[] {
+  const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
+  const chunks: string[] = [];
+  let current = '';
+  for (const s of sentences) {
+    if ((current + s).length > maxLen && current) { chunks.push(current.trim()); current = s; }
+    else { current += s; }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map(c => c.length > maxLen ? c.substring(0, maxLen) : c);
+}
+
 // Helper to safely send messages with robust logs and retry fallbacks
 async function safeSendMessageToChat(
   botInstance: Bot | null,
@@ -2182,6 +2194,15 @@ async function safeSendMessageToChat(
   const numericId = parseInt(cleanIdStr, 10);
   if (isNaN(numericId) || numericId <= 0) {
     console.error('❌ safeSendMessageToChat: невалидный numericId', { raw: chatId, parsed: numericId });
+    return null;
+  }
+
+  if (text && text.length > 3000 && !extra) {
+    const chunks = splitTextSmart(text, 3000);
+    for (const chunk of chunks) {
+      await botInstance.api.sendMessageToChat(numericId, chunk);
+      await new Promise(r => setTimeout(r, 600));
+    }
     return null;
   }
 

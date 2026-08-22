@@ -44,17 +44,21 @@ export class CacheService {
 
   // Кэширование ответов LLM
   async getCachedResponse(chatId: string, message: string): Promise<string | null> {
+    if (process.env.DISABLE_LLM_CACHE === 'true') return null;
     if (!this.isConnected || !this.db) return null;
-    const key = `llm:${chatId}:${message.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const userText = message || '';
+    const key = `${chatId}::${userText.trim()}`;
     const now = Date.now();
     const row = this.db.prepare('SELECT value FROM cache WHERE key = ? AND expires > ?').get(key, now);
     return row ? row.value : null;
   }
 
   async setCachedResponse(chatId: string, message: string, response: string): Promise<void> {
+    if (process.env.DISABLE_LLM_CACHE === 'true') return;
     if (!this.isConnected || !this.db) return;
-    const key = `llm:${chatId}:${message.slice(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
-    const expires = Date.now() + 3600000; // 1 час
+    const userText = message || '';
+    const key = `${chatId}::${userText.trim()}`;
+    const expires = Date.now() + 120000; // TTL: 120 секунд
     this.db.prepare('INSERT OR REPLACE INTO cache (key, value, expires) VALUES (?, ?, ?)')
       .run(key, response, expires);
   }
