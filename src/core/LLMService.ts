@@ -83,6 +83,68 @@ export async function pickGroqModel(): Promise<string> {
   return chosen;
 }
 
+export function stripMarkdown(text: string): string {
+  if (!text) return '';
+  return String(text)
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]+`/g, '')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/[#*_~>|]/g, '')
+    .trim();
+}
+
+export async function callVision(userText: string, dataUrl: string): Promise<string> {
+  const models = await getGroqModels();
+  let model = '';
+  if (Array.isArray(models) && models.length > 0) {
+    const matched = models.find(id => {
+      const lower = String(id).toLowerCase();
+      return lower.includes('qwen') || lower.includes('vision');
+    });
+    if (matched) {
+      model = matched;
+    }
+  }
+
+  if (!model) {
+    model = 'llama-3.2-11b-vision-preview';
+  }
+
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey.includes('your_') || apiKey.includes('placeholder') || apiKey.length < 10) {
+    throw new Error('GROQ_API_KEY is not defined or is placeholder');
+  }
+
+  const groq = new Groq({ apiKey });
+
+  const messages: any = [{
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: userText || 'Подробно опиши, что на скриншоте. Если это код или логи — проанализируй их и предложи решение.'
+      },
+      {
+        type: 'image_url',
+        image_url: {
+          url: dataUrl
+        }
+      }
+    ]
+  }];
+
+  const completion = await groq.chat.completions.create({
+    messages,
+    model,
+    temperature: 0.4,
+    max_tokens: 2000,
+  });
+
+  const response = completion.choices[0]?.message?.content || '';
+  console.log('👁️ [Vision] Ответ готов');
+  return response.trim();
+}
+
 export class LLMService {
   private gemini: GoogleGenAI | null = null;
   private groq: Groq | null = null;

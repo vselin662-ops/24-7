@@ -871,6 +871,56 @@ function getGroq(): Groq | null {
   return groqInstance;
 }
 
+export async function callVision(userText: string, dataUrl: string): Promise<string> {
+  const models = await getGroqModels();
+  let model = '';
+  if (Array.isArray(models) && models.length > 0) {
+    const matched = models.find(id => {
+      const lower = String(id).toLowerCase();
+      return lower.includes('qwen') || lower.includes('vision');
+    });
+    if (matched) {
+      model = matched;
+    }
+  }
+
+  if (!model) {
+    model = 'llama-3.2-11b-vision-preview';
+  }
+
+  const groq = getGroq();
+  if (!groq) {
+    throw new Error('GROQ_API_KEY is not defined or is placeholder');
+  }
+
+  const messages: any = [{
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: userText || 'Подробно опиши, что на скриншоте. Если это код или логи — проанализируй их и предложи решение.'
+      },
+      {
+        type: 'image_url',
+        image_url: {
+          url: dataUrl
+        }
+      }
+    ]
+  }];
+
+  const completion = await groq.chat.completions.create({
+    messages,
+    model,
+    temperature: 0.4,
+    max_tokens: 2000,
+  });
+
+  const response = completion.choices[0]?.message?.content || '';
+  console.log('👁️ [Vision] Ответ готов');
+  return response.trim();
+}
+
 // Замени старую callLLM на эту
 async function callLLM(
   messages: Array<{role: string, content: string}>,

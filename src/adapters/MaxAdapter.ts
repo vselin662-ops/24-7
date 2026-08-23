@@ -6,10 +6,33 @@ import { AIResponse, MessageContext, ChannelType, VoiceMode } from "../core/type
 import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
 import { ensureMp3Buffer } from "../lib/audioConvert";
+import { callVision, stripMarkdown } from "../core/LLMService";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
 const MAX_TEXT_LIMIT = 1800;
+
+export function getImageMimeType(buf: Buffer, contentTypeHeader?: string | null): string {
+  if (contentTypeHeader && contentTypeHeader.startsWith('image/')) {
+    const clean = contentTypeHeader.split(';')[0].trim().toLowerCase();
+    if (clean) return clean;
+  }
+  if (buf.length >= 4) {
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+      return 'image/png';
+    }
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {
+      return 'image/jpeg';
+    }
+    if (buf.slice(0, 4).toString() === 'RIFF' && buf.length >= 12 && buf.slice(8, 12).toString() === 'WEBP') {
+      return 'image/webp';
+    }
+    if (buf.slice(0, 3).toString() === 'GIF') {
+      return 'image/gif';
+    }
+  }
+  return 'image/jpeg';
+}
 
 export function splitTextSmart(text: string, maxLen: number): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
@@ -609,6 +632,92 @@ export class MaxAdapter {
         } catch (err: any) {
           logger.error(`❌ Ошибка обработки голоса: ${err?.message || err}`);
           await this.synthesizeAndSendVoice(chatId, 'Произошла ошибка при обработке голосового сообщения.');
+          return res.status(200).send('ok');
+        }
+      }
+
+      // 4.5. Проверяем наличие картинок/скриншотов во вложениях
+      let hasImage = false;
+      let imageUrl = '';
+
+      for (const att of allAttachments) {
+        const typeStr = String(att?.type || '').toLowerCase();
+        const mediaTypeStr = String(att?.media_type || '').toLowerCase();
+        if (
+          typeStr === 'image' || typeStr === 'photo' ||
+          mediaTypeStr === 'image' || mediaTypeStr === 'photo' ||
+          typeStr.includes('image') || typeStr.includes('photo')
+        ) {
+          const candidate = att.payload?.url || att.payload?.link || att.url || att.link || att.file_url;
+          if (candidate) {
+            hasImage = true;
+            imageUrl = String(candidate);
+            break;
+          }
+        }
+      }
+
+      if (!hasImage && (raw.image_url || raw.body?.image_url || raw.payload?.image_url || raw.photo_url || raw.body?.photo_url || raw.payload?.photo_url)) {
+        hasImage = true;
+        imageUrl = String(raw.image_url || raw.body?.image_url || raw.payload?.image_url || raw.photo_url || raw.body?.photo_url || raw.payload?.photo_url);
+      }
+
+      if (!hasImage && directUrl) {
+        const typeStr = String(primaryAtt?.type || raw.type || raw.body?.type || raw.payload?.type || '').toLowerCase();
+        if (typeStr === 'image' || typeStr === 'photo' || typeStr.includes('image') || typeStr.includes('photo')) {
+          hasImage = true;
+          imageUrl = String(directUrl);
+        }
+      }
+
+      // Если пришла картинка — скачиваем и запускаем callVision
+      if (hasImage && imageUrl) {
+        const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+        try {
+          const imgRes = await fetch(imageUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(20000)
+          });
+
+          if (!imgRes.ok) {
+            throw new Error(`Failed to download image (HTTP ${imgRes.status})`);
+          }
+
+          const arrayBuffer = await imgRes.arrayBuffer();
+          const buf = Buffer.from(arrayBuffer);
+          console.log('🖼️ [MaxAdapter] Получена картинка, байт: ' + buf.length);
+
+          if (buf.length > 4 * 1024 * 1024) {
+            const heavyMsg = 'Картинка слишком тяжёлая, пришли скрин поменьше';
+            if (isVoiceInput) {
+              await this.synthesizeAndSendVoice(cleanId, heavyMsg);
+            } else {
+              await this.safeSendMessageToChat(cleanId, heavyMsg);
+            }
+            return res.status(200).send('ok');
+          }
+
+          const mime = getImageMimeType(buf, imgRes.headers.get('content-type'));
+          const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+
+          const visionResponse = await callVision(text, dataUrl);
+          const finalReply = stripMarkdown(visionResponse);
+
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, finalReply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, finalReply);
+          }
+
+          return res.status(200).send('ok');
+        } catch (visionErr: any) {
+          logger.error(`❌ [MaxAdapter] Ошибка Vision: ${visionErr?.message || visionErr}`);
+          const errMsg = 'Не удалось проанализировать изображение. Пожалуйста, попробуйте еще раз.';
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, errMsg);
+          } else {
+            await this.safeSendMessageToChat(cleanId, errMsg);
+          }
           return res.status(200).send('ok');
         }
       }
