@@ -606,36 +606,55 @@ async function pickGroqModel(): Promise<string> {
   return chosen;
 }
 
-let teamoInstance: OpenAI | null = null;
-function getTeamo(): OpenAI | null {
-  if (!teamoInstance) {
-    const key = process.env.TEAMO_API_KEY;
-    if (!key || key.includes('your_') || key.includes('placeholder') || key.length < 5) {
-      return null;
-    }
-    teamoInstance = new OpenAI({
-      baseURL: process.env.TEAMO_BASE_URL || 'https://api.teamorouter.com/v1',
-      apiKey: key,
-      timeout: 30000,
-    });
-  }
-  return teamoInstance;
-}
+const PROVIDERS = [
+  { name: 'free-qwen235', key: 'OPENROUTER_API_KEY', base: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3-235b-a22b:free' },
+  { name: 'free-llama70', key: 'OPENROUTER_API_KEY', base: 'https://openrouter.ai/api/v1', model: 'meta-llama/llama-3.3-70b-instruct:free' },
+  { name: 'free-gemma', key: 'OPENROUTER_API_KEY', base: 'https://openrouter.ai/api/v1', model: 'google/gemma-3-27b-it:free' },
+  { name: 'openrouter-qwen', key: 'OPENROUTER_API_KEY', base: 'https://openrouter.ai/api/v1', model: 'qwen/qwen-max' },
+  { name: 'openrouter-deepseek', key: 'OPENROUTER_API_KEY', base: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat' },
+  { name: 'qwen-groq', key: 'GROQ_API_KEY', base: 'https://api.groq.com/openai/v1', model: 'qwen/qwen3.6-27b' },
+  { name: 'gpt-oss-groq', key: 'GROQ_API_KEY', base: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-120b' },
+  { name: 'deepseek', key: 'DEEPSEEK_API_KEY', base: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { name: 'teamo', key: 'TEAMO_API_KEY', base: process.env.TEAMO_BASE_URL || '', model: 'teamo-balanced' },
+  { name: 'orca', key: 'ORCA_API_KEY', base: process.env.ORCA_BASE_URL || '', model: 'openai/gpt-4o-mini' }
+];
 
-let orcaInstance: OpenAI | null = null;
-function getOrca(): OpenAI | null {
-  if (!orcaInstance) {
-    const key = process.env.ORCA_API_KEY;
-    if (!key || key.includes('your_') || key.includes('placeholder') || key.length < 5) {
-      return null;
+async function callLLMChain(messages: any[]): Promise<string | null> {
+  for (const p of PROVIDERS) {
+    const keyVal = process.env[p.key];
+    if (!keyVal || keyVal.includes('your_') || keyVal.includes('placeholder') || !p.base) {
+      continue;
     }
-    orcaInstance = new OpenAI({
-      baseURL: process.env.ORCA_BASE_URL || 'https://api.orcarouter.ai/v1',
-      apiKey: key,
-      timeout: 30000,
-    });
+    try {
+      const client = new OpenAI({
+        baseURL: p.base,
+        apiKey: keyVal,
+        timeout: 45000,
+        defaultHeaders: p.base.includes('openrouter') ? {
+          'HTTP-Referer': 'https://selin.ai',
+          'X-Title': 'SelinAI'
+        } : undefined
+      });
+
+      const completion = await client.chat.completions.create({
+        model: p.model,
+        messages: messages as any,
+        temperature: 0.7,
+        max_tokens: 2000,
+        extra_headers: p.base.includes('openrouter') ? { 'HTTP-Referer': 'https://selin.ai', 'X-Title': 'SelinAI' } : undefined
+      } as any, { timeout: 45000 });
+
+      const text = completion.choices[0]?.message?.content;
+      if (text && typeof text === 'string' && text.trim()) {
+        console.log('🧠 [LLM] Ответ дал: ' + p.name);
+        return text.trim();
+      }
+    } catch (err: any) {
+      console.log('⚠️ [' + p.name + '] ' + (err?.message || err));
+      continue;
+    }
   }
-  return orcaInstance;
+  return null;
 }
 
 async function smartCallLLM(
@@ -677,7 +696,28 @@ async function smartCallLLM(
 
   const finalSystem = systemPrompt || defaultSystem;
 
-  // 1. Попытка через Gemini для максимального интеллекта
+  // Формируем сообщения с контекстом (последние 6 сообщений по <= 1200 символов)
+  const messages = [
+    { role: 'system', content: finalSystem },
+    ...context.map(msg => ({
+      role: msg.role === 'user' ? 'user' : 'assistant',
+      content: msg.content
+    }))
+  ];
+
+  console.log(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
+
+  // 1. Попытка через callLLMChain
+  const answer = await callLLMChain(messages);
+  if (answer) {
+    memory.history.push({ role: 'assistant', content: answer });
+    if (memory.history.length > 30) {
+      memory.history = memory.history.slice(-30);
+    }
+    return answer;
+  }
+
+  // 2. Попытка через Gemini если цепочка не дала ответ
   if (ai) {
     try {
       const contents: any[] = context.map(msg => ({
@@ -696,7 +736,7 @@ async function smartCallLLM(
 
       const response = completion.text?.trim();
       if (response) {
-        console.log('🧠 [LLM] Ответ дал провайдер: gemini');
+        console.log('🧠 [LLM] Ответ дал: gemini');
         memory.history.push({ role: 'assistant', content: response });
         if (memory.history.length > 30) {
           memory.history = memory.history.slice(-30);
@@ -704,156 +744,8 @@ async function smartCallLLM(
         return response;
       }
     } catch (gErr: any) {
-      console.warn("⚠️ [smartCallLLM] Gemini attempt failed, falling back to Groq:", gErr?.message || gErr);
+      console.warn("⚠️ [smartCallLLM] Gemini attempt failed:", gErr?.message || gErr);
     }
-  }
-
-  // 2. Попытка через Groq с динамическим выбором модели и умным ретраем
-  try {
-    const groq = getGroq();
-    if (groq) {
-      // Формируем сообщения с контекстом (последние 6 сообщений по <= 1200 символов)
-      let messages = [
-        { role: 'system', content: finalSystem },
-        ...context.map(msg => ({
-          role: msg.role === 'user' ? 'user' : 'assistant',
-          content: msg.content
-        }))
-      ];
-
-      console.log(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
-
-      const model = await pickGroqModel();
-
-      try {
-        const completion = await groq.chat.completions.create({
-          messages: messages as any,
-          model: model,
-          temperature: 0.8, // Выше для креативности
-          max_tokens: 2000,
-        });
-
-        const response = completion.choices[0]?.message?.content;
-        if (response && typeof response === 'string' && response.trim()) {
-          const trimmed = response.trim();
-          console.log('🧠 [LLM] Ответ дал провайдер: groq');
-          memory.history.push({ role: 'assistant', content: trimmed });
-          if (memory.history.length > 30) {
-            memory.history = memory.history.slice(-30);
-          }
-          return trimmed;
-        }
-      } catch (mErr: any) {
-        console.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
-        const errMsg = String(mErr?.message || '').toLowerCase();
-        const status = mErr?.status || mErr?.statusCode;
-        const isLimitOrTooLarge = errMsg.includes('too large') || errMsg.includes('limit_exceeded') || status === 413 || status === 429;
-
-        if (isLimitOrTooLarge) {
-          console.log(`🔄 [smartCallLLM] Ошибка лимита Groq (${status || errMsg}). Выполняем умный ретрай с 2 сообщениями и max_tokens: 1000...`);
-          try {
-            const retryContext = memory.history.slice(-2).map(msg => ({
-              role: msg.role === 'user' ? 'user' : 'assistant',
-              content: (msg.content || '').slice(0, 1200)
-            }));
-            const retryMessages = [
-              { role: 'system', content: finalSystem },
-              ...retryContext
-            ];
-
-            const retryCompletion = await groq.chat.completions.create({
-              messages: retryMessages as any,
-              model: model,
-              temperature: 0.8,
-              max_tokens: 1000,
-            });
-
-            const retryResponse = retryCompletion.choices[0]?.message?.content;
-            if (retryResponse && typeof retryResponse === 'string' && retryResponse.trim()) {
-              const trimmed = retryResponse.trim();
-              console.log('🧠 [LLM] Ответ дал провайдер: groq (retry)');
-              memory.history.push({ role: 'assistant', content: trimmed });
-              if (memory.history.length > 30) {
-                memory.history = memory.history.slice(-30);
-              }
-              return trimmed;
-            }
-          } catch (rErr: any) {
-            console.warn(`⚠️ [smartCallLLM] Groq retry failed: ${rErr?.message || rErr}`);
-          }
-        }
-      }
-    }
-  } catch (err: any) {
-    console.error('❌ Smart LLM error:', err);
-  }
-
-  // 3. Fallback: Попытка через Teamo (teamo-balanced)
-  try {
-    const teamo = getTeamo();
-    if (teamo) {
-      console.log('🔄 [smartCallLLM] Пробуем Teamo (teamo-balanced)...');
-      const teamoModel = process.env.TEAMO_MODEL || 'teamo-balanced';
-      const messages = [
-        { role: 'system', content: finalSystem },
-        ...context.map(msg => ({
-          role: msg.role === 'user' ? 'user' : 'assistant',
-          content: msg.content
-        }))
-      ];
-      const completion = await teamo.chat.completions.create({
-        model: teamoModel,
-        messages: messages as any,
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
-      const response = completion.choices[0]?.message?.content;
-      if (response && typeof response === 'string' && response.trim()) {
-        const trimmed = response.trim();
-        console.log('🧠 [LLM] Ответ дал провайдер: teamo');
-        memory.history.push({ role: 'assistant', content: trimmed });
-        if (memory.history.length > 30) {
-          memory.history = memory.history.slice(-30);
-        }
-        return trimmed;
-      }
-    }
-  } catch (teamoErr: any) {
-    console.warn(`⚠️ [smartCallLLM] Teamo failed: ${teamoErr?.message || teamoErr}`);
-  }
-
-  // 4. Fallback: Попытка через Orca (openai/gpt-4o-mini)
-  try {
-    const orca = getOrca();
-    if (orca) {
-      console.log('🔄 [smartCallLLM] Пробуем Orca (openai/gpt-4o-mini)...');
-      const orcaModel = process.env.ORCA_MODEL || 'openai/gpt-4o-mini';
-      const messages = [
-        { role: 'system', content: finalSystem },
-        ...context.map(msg => ({
-          role: msg.role === 'user' ? 'user' : 'assistant',
-          content: msg.content
-        }))
-      ];
-      const completion = await orca.chat.completions.create({
-        model: orcaModel,
-        messages: messages as any,
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
-      const response = completion.choices[0]?.message?.content;
-      if (response && typeof response === 'string' && response.trim()) {
-        const trimmed = response.trim();
-        console.log('🧠 [LLM] Ответ дал провайдер: orca');
-        memory.history.push({ role: 'assistant', content: trimmed });
-        if (memory.history.length > 30) {
-          memory.history = memory.history.slice(-30);
-        }
-        return trimmed;
-      }
-    }
-  } catch (orcaErr: any) {
-    console.warn(`⚠️ [smartCallLLM] Orca failed: ${orcaErr?.message || orcaErr}`);
   }
 
   return "Ой, что-то я зависла... Давай попробуем еще раз?";
@@ -872,26 +764,20 @@ function getGroq(): Groq | null {
 }
 
 export async function callVision(userText: string, dataUrl: string): Promise<string> {
-  const models = await getGroqModels();
-  let model = '';
-  if (Array.isArray(models) && models.length > 0) {
-    const matched = models.find(id => {
-      const lower = String(id).toLowerCase();
-      return lower.includes('qwen') || lower.includes('vision');
-    });
-    if (matched) {
-      model = matched;
-    }
-  }
-
-  if (!model) {
-    model = 'llama-3.2-11b-vision-preview';
-  }
-
-  const groq = getGroq();
-  if (!groq) {
-    throw new Error('GROQ_API_KEY is not defined or is placeholder');
-  }
+  const visionProviders = [
+    {
+      name: 'qwen-groq',
+      key: 'GROQ_API_KEY',
+      base: 'https://api.groq.com/openai/v1',
+      model: 'qwen/qwen3.6-27b',
+    },
+    {
+      name: 'free-gemma',
+      key: 'OPENROUTER_API_KEY',
+      base: 'https://openrouter.ai/api/v1',
+      model: 'google/gemma-3-27b-it:free',
+    },
+  ];
 
   const messages: any = [{
     role: 'user',
@@ -909,16 +795,42 @@ export async function callVision(userText: string, dataUrl: string): Promise<str
     ]
   }];
 
-  const completion = await groq.chat.completions.create({
-    messages,
-    model,
-    temperature: 0.4,
-    max_tokens: 2000,
-  });
+  for (const p of visionProviders) {
+    const keyVal = process.env[p.key];
+    if (!keyVal || keyVal.includes('your_') || keyVal.includes('placeholder') || !p.base) {
+      continue;
+    }
+    try {
+      const client = new OpenAI({
+        baseURL: p.base,
+        apiKey: keyVal,
+        timeout: 45000,
+        defaultHeaders: p.base.includes('openrouter') ? {
+          'HTTP-Referer': 'https://selin.ai',
+          'X-Title': 'SelinAI'
+        } : undefined
+      });
 
-  const response = completion.choices[0]?.message?.content || '';
-  console.log('👁️ [Vision] Ответ готов');
-  return response.trim();
+      const completion = await client.chat.completions.create({
+        messages,
+        model: p.model,
+        temperature: 0.4,
+        max_tokens: 2000,
+        extra_headers: p.base.includes('openrouter') ? { 'HTTP-Referer': 'https://selin.ai', 'X-Title': 'SelinAI' } : undefined
+      } as any, { timeout: 45000 });
+
+      const response = completion.choices[0]?.message?.content;
+      if (response && typeof response === 'string' && response.trim()) {
+        console.log('👁️ [Vision] Ответ дал: ' + p.name);
+        return response.trim();
+      }
+    } catch (err: any) {
+      console.log('⚠️ [Vision ' + p.name + '] ошибка, следующий: ' + err?.message);
+      continue;
+    }
+  }
+
+  throw new Error('All Vision providers failed');
 }
 
 // Замени старую callLLM на эту
@@ -968,97 +880,19 @@ async function callLLM(
       
       const text = response.text;
       if (text && typeof text === 'string') {
-        console.log('🧠 [LLM] Ответ дал провайдер: gemini');
+        console.log('🧠 [LLM] Ответ дал: gemini');
         return text.trim();
       }
     } catch (geminiErr: any) {
-      logger.warn(`[LLM] Gemini call failed inside callLLM, falling back to Groq: ${geminiErr?.message || geminiErr}`);
+      logger.warn(`[LLM] Gemini call failed inside callLLM, falling back to chain: ${geminiErr?.message || geminiErr}`);
     }
   }
 
-  // Fallback для старых вызовов через Groq
-  const groq = getGroq();
-  if (groq) {
-    const model = await pickGroqModel();
-    try {
-      const completion = await groq.chat.completions.create({
-        messages: messages as any,
-        model: model,
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
-      const text = completion.choices[0]?.message?.content;
-      if (text && typeof text === 'string') {
-        console.log('🧠 [LLM] Ответ дал провайдер: groq');
-        return text.trim();
-      }
-    } catch (err: any) {
-      logger.warn(`[LLM] Model ${model} failed: ${err?.message || err}`);
-      const errMsg = String(err?.message || '').toLowerCase();
-      const status = err?.status || err?.statusCode;
-      if (errMsg.includes('too large') || errMsg.includes('limit_exceeded') || status === 413 || status === 429) {
-        try {
-          const retryMessages = messages.slice(-2);
-          const retryCompletion = await groq.chat.completions.create({
-            messages: retryMessages as any,
-            model: model,
-            temperature: 0.8,
-            max_tokens: 1000,
-          });
-          const retryText = retryCompletion.choices[0]?.message?.content;
-          if (retryText && typeof retryText === 'string') {
-            console.log('🧠 [LLM] Ответ дал провайдер: groq (retry)');
-            return retryText.trim();
-          }
-        } catch (rErr: any) {
-          logger.warn(`[LLM] Groq retry failed in callLLM: ${rErr?.message || rErr}`);
-        }
-      }
-    }
+  const answer = await callLLMChain(messages);
+  if (answer) {
+    return answer;
   }
 
-  // Fallback для callLLM: Teamo
-  try {
-    const teamo = getTeamo();
-    if (teamo) {
-      const teamoModel = process.env.TEAMO_MODEL || 'teamo-balanced';
-      const completion = await teamo.chat.completions.create({
-        model: teamoModel,
-        messages: messages as any,
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
-      const text = completion.choices[0]?.message?.content;
-      if (text && typeof text === 'string') {
-        console.log('🧠 [LLM] Ответ дал провайдер: teamo');
-        return text.trim();
-      }
-    }
-  } catch (teamoErr: any) {
-    logger.warn(`[LLM] Teamo fallback failed in callLLM: ${teamoErr?.message || teamoErr}`);
-  }
-
-  // Fallback для callLLM: Orca
-  try {
-    const orca = getOrca();
-    if (orca) {
-      const orcaModel = process.env.ORCA_MODEL || 'openai/gpt-4o-mini';
-      const completion = await orca.chat.completions.create({
-        model: orcaModel,
-        messages: messages as any,
-        temperature: 0.8,
-        max_tokens: 2000,
-      });
-      const text = completion.choices[0]?.message?.content;
-      if (text && typeof text === 'string') {
-        console.log('🧠 [LLM] Ответ дал провайдер: orca');
-        return text.trim();
-      }
-    }
-  } catch (orcaErr: any) {
-    logger.warn(`[LLM] Orca fallback failed in callLLM: ${orcaErr?.message || orcaErr}`);
-  }
-  
   return "Привет! Я — Selin AI. Чем могу помочь?";
 }
 

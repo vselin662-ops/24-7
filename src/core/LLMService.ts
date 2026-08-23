@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import Groq from "groq-sdk";
+import OpenAI from "openai";
 import { ChatMemory } from "./types";
 import { logger } from "../logger";
 
@@ -94,28 +95,20 @@ export function stripMarkdown(text: string): string {
 }
 
 export async function callVision(userText: string, dataUrl: string): Promise<string> {
-  const models = await getGroqModels();
-  let model = '';
-  if (Array.isArray(models) && models.length > 0) {
-    const matched = models.find(id => {
-      const lower = String(id).toLowerCase();
-      return lower.includes('qwen') || lower.includes('vision');
-    });
-    if (matched) {
-      model = matched;
-    }
-  }
-
-  if (!model) {
-    model = 'llama-3.2-11b-vision-preview';
-  }
-
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey.includes('your_') || apiKey.includes('placeholder') || apiKey.length < 10) {
-    throw new Error('GROQ_API_KEY is not defined or is placeholder');
-  }
-
-  const groq = new Groq({ apiKey });
+  const visionProviders = [
+    {
+      name: 'qwen-groq',
+      key: 'GROQ_API_KEY',
+      base: 'https://api.groq.com/openai/v1',
+      model: 'qwen/qwen3.6-27b',
+    },
+    {
+      name: 'free-gemma',
+      key: 'OPENROUTER_API_KEY',
+      base: 'https://openrouter.ai/api/v1',
+      model: 'google/gemma-3-27b-it:free',
+    },
+  ];
 
   const messages: any = [{
     role: 'user',
@@ -133,16 +126,42 @@ export async function callVision(userText: string, dataUrl: string): Promise<str
     ]
   }];
 
-  const completion = await groq.chat.completions.create({
-    messages,
-    model,
-    temperature: 0.4,
-    max_tokens: 2000,
-  });
+  for (const p of visionProviders) {
+    const keyVal = process.env[p.key];
+    if (!keyVal || keyVal.includes('your_') || keyVal.includes('placeholder') || !p.base) {
+      continue;
+    }
+    try {
+      const client = new OpenAI({
+        baseURL: p.base,
+        apiKey: keyVal,
+        timeout: 45000,
+        defaultHeaders: p.base.includes('openrouter') ? {
+          'HTTP-Referer': 'https://selin.ai',
+          'X-Title': 'SelinAI'
+        } : undefined
+      });
 
-  const response = completion.choices[0]?.message?.content || '';
-  console.log('👁️ [Vision] Ответ готов');
-  return response.trim();
+      const completion = await client.chat.completions.create({
+        messages,
+        model: p.model,
+        temperature: 0.4,
+        max_tokens: 2000,
+        extra_headers: p.base.includes('openrouter') ? { 'HTTP-Referer': 'https://selin.ai', 'X-Title': 'SelinAI' } : undefined
+      } as any, { timeout: 45000 });
+
+      const response = completion.choices[0]?.message?.content;
+      if (response && typeof response === 'string' && response.trim()) {
+        console.log('👁️ [Vision] Ответ дал: ' + p.name);
+        return response.trim();
+      }
+    } catch (err: any) {
+      console.log('⚠️ [Vision ' + p.name + '] ошибка, следующий: ' + err?.message);
+      continue;
+    }
+  }
+
+  throw new Error('All Vision providers failed');
 }
 
 export class LLMService {
