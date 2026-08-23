@@ -77,7 +77,7 @@
   * Формат входного аудио: нативное извлечение `.ogg` / `.mp3` из вложений MAX API.
 * **Text-to-Speech (TTS) Module:**  
   * Технология: Microsoft Edge Translation & Speech API (`msedge-tts`).
-  * Голос по умолчанию: `ru-RU-SvetlanaNeural` (выборка 24kHz, 48kbps, моно MP3/OPUS).
+  * Голос по умолчанию: `ru-RU-DmitryNeural` (выборка 24kHz, 48kbps, моно MP3/OPUS).
 * **Multimedia Generation Engine:**  
   * Изображения: Открытый REST API Pollinations.ai (генерация на базе диффузионных моделей Flux-1) без API-ключей и лимитов.
   * Код: Выделенный агент написания кода на базе `Qwen-2.5-Coder-32b`.

@@ -2468,7 +2468,7 @@ async function safeSendMessageToChat(
 
   if (validText.length > MAX_TEXT_LIMIT) {
     const chunks = splitTextSmart(validText, MAX_TEXT_LIMIT);
-    console.log(`✂️ [MAX] Ответ длинный (${validText.length} симв.), разбиваю на ${chunks.length} части`);
+    console.log('✂️ [MAX] длина ' + validText.length + ', частей ' + chunks.length);
     for (const chunk of chunks) {
       try {
         await botInstance.api.sendMessageToChat(numericId, chunk, extra);

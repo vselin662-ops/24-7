@@ -7,7 +7,7 @@ Selin AI — это голосовой ассистент с архитекту�
 - **Backend:** Node.js, Express, TypeScript
 - **LLM Core:** Groq API (Llama-3.3-70b)
 - **STT (Распознавание):** Groq Whisper-large-v3
-- **TTS (Синтез):** Microsoft Edge TTS (ru-RU-SvetlanaNeural)
+- **TTS (Синтез):** Microsoft Edge TTS (ru-RU-DmitryNeural)
 - **Database:** SQLite (WAL mode) + Firebase Firestore
 - **Hosting:** Railway.app
 

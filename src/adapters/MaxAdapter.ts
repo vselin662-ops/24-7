@@ -9,6 +9,23 @@ import { ensureMp3Buffer } from "../lib/audioConvert";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
+const MAX_TEXT_LIMIT = 1800;
+
+export function splitTextSmart(text: string, maxLen: number): string[] {
+  const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
+  const chunks: string[] = [];
+  let current = '';
+  for (const s of sentences) {
+    if ((current + s).length > maxLen && current) {
+      chunks.push(current.trim());
+      current = s;
+    } else {
+      current += s;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.map(c => c.length > maxLen ? c.substring(0, maxLen) : c);
+}
 
 export class MaxAdapter {
   private bot: Bot | null = null;
@@ -130,10 +147,42 @@ export class MaxAdapter {
       return null;
     }
 
-    const textToSend = (text === "" && extra) ? undefined : (text ?? undefined);
+    if (!text || text.trim() === '') {
+      if (extra) {
+        try {
+          return await this.bot.api.sendMessageToChat(numericId, undefined as any, extra);
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          logger.error("❌ [MaxAdapter] Max send failed in safeSendMessageToChat", { chatId: numericId, message: errorMsg });
+          return null;
+        }
+      }
+      return null;
+    }
+
+    const trimmedText = text.trim();
+
+    if (trimmedText.length > MAX_TEXT_LIMIT) {
+      const chunks = splitTextSmart(trimmedText, MAX_TEXT_LIMIT);
+      console.log('✂️ [MAX] длина ' + trimmedText.length + ', частей ' + chunks.length);
+      let lastMsg: unknown = null;
+      for (const chunk of chunks) {
+        try {
+          lastMsg = await this.bot.api.sendMessageToChat(numericId, chunk as any, extra);
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          logger.error("❌ [MaxAdapter] Max send failed in safeSendMessageToChat", {
+            chatId: numericId,
+            message: errorMsg
+          });
+        }
+        await new Promise(r => setTimeout(r, 600));
+      }
+      return lastMsg;
+    }
 
     try {
-      const message = await this.bot.api.sendMessageToChat(numericId, textToSend as any, extra);
+      const message = await this.bot.api.sendMessageToChat(numericId, trimmedText as any, extra);
       logger.info(`✅ [MaxAdapter] Message successfully sent to Max chat ${numericId}`);
       return message;
     } catch (err: unknown) {
@@ -144,16 +193,16 @@ export class MaxAdapter {
       });
 
       // Fallback: попытаться отправить обычный текст если была отправка с вложениями
-      if (extra && text) {
+      if (extra && trimmedText) {
         try {
-          return await this.bot.api.sendMessageToChat(numericId, text);
+          return await this.bot.api.sendMessageToChat(numericId, trimmedText);
         } catch (fallbackErr: unknown) {
           const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
           logger.error(`❌ [MaxAdapter] Fallback plain-text send failed: ${fbMsg}`);
         }
       }
 
-      throw err;
+      return null;
     }
   }
 
@@ -465,7 +514,7 @@ export class MaxAdapter {
         }
 
         if (processedMessages.has(idStr)) {
-          console.log('♻️ [MaxAdapter] Дубль вебхука пропущен: ' + idStr);
+          console.log('♻️ [MAX] Дубль пропущен: ' + idStr);
           return res.status(200).send('ok');
         }
 
