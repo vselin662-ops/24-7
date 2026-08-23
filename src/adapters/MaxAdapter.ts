@@ -34,6 +34,24 @@ export function getImageMimeType(buf: Buffer, contentTypeHeader?: string | null)
   return 'image/jpeg';
 }
 
+export function cleanForMax(text: string): string {
+  if (!text) return '';
+  return String(text)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/^\s*[-=|]{3,}\s*$/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/[_~]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function splitTextSmart(text: string, maxLen: number): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
   const chunks: string[] = [];
@@ -113,6 +131,7 @@ export class MaxAdapter {
    * Очистка текста от Markdown, ссылок, спецсимволов, эмодзи и обрезка до 4000 символов
    */
   public cleanText(text: string): string {
+    text = cleanForMax(text);
     let cleaned = String(text || "")
       .replace(/```[\s\S]*?```/g, '')
       .replace(/`[^`]+`/g, '')
@@ -158,6 +177,7 @@ export class MaxAdapter {
     text?: string | null,
     extra?: Record<string, unknown>
   ): Promise<unknown> {
+    if (text) text = cleanForMax(text);
     if (!this.bot) {
       logger.warn("⚠️ [MaxAdapter] Cannot send message: bot instance is not connected.");
       return null;

@@ -481,11 +481,31 @@ if (apiKey) {
   logger.warn("⚠️ GEMINI_API_KEY is not defined in the environment. AI features will be simulated.");
 }
 
+function cleanForMax(text: string): string {
+  if (!text) return '';
+  return String(text)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/^\s*[-=|]{3,}\s*$/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/[_~]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // ==========================================
 // КОНФИГУРАЦИЯ СИСТЕМНЫХ ПРОМПТОВ
 // ==========================================
 const SYSTEM_PROMPTS = {
-  universal: `Ты — Selin AI, универсальный интеллектуальный помощник.
+  universal: `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
+
+Ты — Selin AI, универсальный интеллектуальный помощник.
 Ты умеешь всё: помогать с бизнесом, учебой, творчеством, бытовыми вопросами.
 Твой стиль — живой, ироничный, глубокий. Ты эксперт в каждой теме.
 Отвечаешь развернуто, с примерами, метафорами и практическими советами.
@@ -675,7 +695,9 @@ async function smartCallLLM(
   }));
   
   // Определяем системный промпт если не передан
-  const defaultSystem = `Ты — Selin AI, интеллектуальный ассистент.
+  const defaultSystem = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
+
+Ты — Selin AI, интеллектуальный ассистент.
 
 ТВОИ ХАРАКТЕРИСТИКИ:
 - Ты живой, умный, ироничный и глубокий собеседник
@@ -2338,6 +2360,7 @@ async function safeSendMessageToChat(
   text: string | null | undefined,
   extra?: any
 ): Promise<any> {
+  if (text) text = cleanForMax(text);
   if (!botInstance) return null;
   if ((!text || text.trim() === '') && !extra) return null;
 
@@ -2427,6 +2450,8 @@ async function synthesizeAndSendVoice(
     chatId = String(chatIdOrText);
     text = String(textOrSkip);
   }
+
+  text = cleanForMax(text);
 
   // Перед отправкой голоса — обогащаем ответ контекстом
   if (text && !text.includes('```') && !text.includes('http') && !text.startsWith('Приняла') && !text.startsWith('🔄') && text.length < 80) {
@@ -3148,7 +3173,9 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
     const isCodeRequest = lowerMessage.startsWith('/code') || lowerMessage.startsWith('напиши код');
     const isTextModeCommand = lowerMessage.includes('селин 123770') || lowerMessage.includes('selin 123770') || lowerMessage === '123770' || lowerMessage.includes('/text_mode');
 
-    let SYSTEM_PROMPT = `Ты голосовой ассистент Selin AI. Отвечай на вопросы пользователя ПОДРОБНО и РАЗВЕРНУТО. Твой ответ должен звучать как естественная речь живого человека, продолжительностью 20-40 секунд. 
+    let SYSTEM_PROMPT = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
+
+Ты голосовой ассистент Selin AI. Отвечай на вопросы пользователя ПОДРОБНО и РАЗВЕРНУТО. Твой ответ должен звучать как естественная речь живого человека, продолжительностью 20-40 секунд. 
    СТРОГИЕ ПРАВИЛА ДЛЯ ОЗВУЧКИ:
    - НИКОГДА не используй Markdown (никаких звездочек, решеток, тире для списков, обратных кавычек).
    - НИКОГДА не используй смайлики и эмодзи.
