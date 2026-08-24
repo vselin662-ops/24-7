@@ -7,6 +7,7 @@ import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
 import { ensureMp3Buffer } from "../lib/audioConvert";
 import { callVision, stripMarkdown } from "../core/LLMService";
+import { sqliteDb } from "../../db";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
@@ -748,6 +749,48 @@ export class MaxAdapter {
       }
 
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+
+      // Bible broadcast subscription toggle command
+      const lower = text.toLowerCase();
+      if (lower.includes('бог благ и милость его велика')) {
+        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+
+        let currentSub: any = null;
+        try {
+          currentSub = sqliteDb.prepare("SELECT * FROM bible_subs WHERE chat_id = ?").get(cleanId);
+        } catch (e) {
+          try {
+            currentSub = sqliteDb.prepare("SELECT * FROM bible_subs WHERE chatId = ?").get(cleanId);
+          } catch (err) {}
+        }
+
+        let replyText = "";
+        if (!currentSub || Number(currentSub.active) === 0) {
+          try {
+            sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, todayStr, 1);
+          } catch (e) {
+            sqliteDb.prepare("INSERT INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, todayStr, 1);
+          }
+          replyText = "Рассылка Бог благ включена на 365 дней. Каждое утро и вечер будут приходить стихи с разборами. Благословений!";
+          logger.info(`📖 [Bible] Рассылка включена для chat_id ${cleanId}`);
+        } else {
+          try {
+            sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, currentSub.start_date || todayStr, 0);
+          } catch (e) {
+            sqliteDb.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
+          }
+          replyText = "Рассылка остановлена. Возвращайся!";
+          logger.info(`📖 [Bible] Рассылка остановлена для chat_id ${cleanId}`);
+        }
+
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, replyText);
+        } else {
+          await this.safeSendMessageToChat(cleanId, replyText);
+        }
+        return res.status(200).send('ok');
+      }
+
       const context: MessageContext = {
         chatId: cleanId,
         tenantId: `max_${cleanId}`,

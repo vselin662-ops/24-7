@@ -234,8 +234,14 @@ export class PureDatabase {
       return String(row.key) === String(params[0]);
     }
     if (cleanWhere.includes("chatid = ?") || cleanWhere.includes("chat_id = ?")) {
-      const rId = row.chatId !== undefined ? row.chatId : row.chat_id;
+      const rId = row.chatId !== undefined ? row.chatId : (row.chat_id !== undefined ? row.chat_id : row.id);
       return String(rId) === String(params[0]);
+    }
+    if (cleanWhere.includes("active = ?")) {
+      return Number(row.active) === Number(params[0]);
+    }
+    if (cleanWhere.includes("active = 1")) {
+      return Number(row.active) === 1;
     }
     if (cleanWhere.includes("tenant_id = ?")) {
       return String(row.tenant_id) === String(params[0]);

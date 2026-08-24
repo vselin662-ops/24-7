@@ -161,6 +161,12 @@ try {
       updated_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS bible_subs (
+      chat_id TEXT PRIMARY KEY,
+      start_date TEXT,
+      active INTEGER
+    );
+
     -- Business Mentor Tables
     CREATE TABLE IF NOT EXISTS business_profile (
       tenant_id TEXT PRIMARY KEY,

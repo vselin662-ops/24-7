@@ -69,6 +69,7 @@ import {
   getOrchestrator,
   handleIncomingMessage as externalHandleIncomingMessage
 } from './src/index';
+import { BIBLE_PLAN } from './src/data/biblePlan';
 
 dotenv.config();
 
@@ -497,6 +498,211 @@ function cleanForMax(text: string): string {
     .replace(/[_~]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+// ==========================================
+// ГОДОВАЯ РАССЫЛКА «БОГ БЛАГ» (BIBLE BROADCAST)
+// ==========================================
+
+export interface BibleSlotConfig {
+  slotIndex: number;
+  type: 'text' | 'voice';
+  title: string;
+  slotName: string;
+}
+
+export const BIBLE_SLOTS: Record<string, BibleSlotConfig> = {
+  '09:00': { slotIndex: 0, type: 'text', title: 'Утренний стих.', slotName: '09:00_текст' },
+  '09:30': { slotIndex: 0, type: 'voice', title: 'Утренний разбор', slotName: '09:30_голос' },
+  '18:00': { slotIndex: 1, type: 'text', title: 'Дневной стих.', slotName: '18:00_текст' },
+  '18:30': { slotIndex: 1, type: 'voice', title: 'Дневной разбор', slotName: '18:30_голос' },
+  '21:00': { slotIndex: 2, type: 'text', title: 'Вечерний стих.', slotName: '21:00_текст' },
+  '21:30': { slotIndex: 2, type: 'voice', title: 'Вечерний разбор', slotName: '21:30_голос' }
+};
+
+export function getDayIndex(startDateStr: string): number {
+  try {
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+    const startMs = new Date(startDateStr + 'T00:00:00Z').getTime();
+    const todayMs = new Date(todayStr + 'T00:00:00Z').getTime();
+    if (isNaN(startMs) || isNaN(todayMs)) return 0;
+    const diffDays = Math.floor((todayMs - startMs) / (1000 * 60 * 60 * 24));
+    return ((diffDays % 365) + 365) % 365;
+  } catch (e) {
+    return 0;
+  }
+}
+
+export async function handleBibleSubscription(chatId: string | number, text: string, isVoice: boolean = false): Promise<string | null> {
+  if (!text) return null;
+  const lower = String(text).toLowerCase();
+  if (!lower.includes('бог благ и милость его велика')) {
+    return null;
+  }
+
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+
+  let currentSub: any = null;
+  try {
+    currentSub = sqliteDb.prepare("SELECT * FROM bible_subs WHERE chat_id = ?").get(cleanId);
+  } catch (e) {
+    try {
+      currentSub = sqliteDb.prepare("SELECT * FROM bible_subs WHERE chatId = ?").get(cleanId);
+    } catch (err) {}
+  }
+
+  let replyText = "";
+  if (!currentSub || Number(currentSub.active) === 0) {
+    try {
+      sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, todayStr, 1);
+    } catch (e) {
+      sqliteDb.prepare("INSERT INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, todayStr, 1);
+    }
+    replyText = "Рассылка Бог благ включена на 365 дней. Каждое утро и вечер будут приходить стихи с разборами. Благословений!";
+    logger.info(`📖 [Bible] Рассылка включена для chat_id ${cleanId}`);
+  } else {
+    try {
+      sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, currentSub.start_date || todayStr, 0);
+    } catch (e) {
+      sqliteDb.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
+    }
+    replyText = "Рассылка остановлена. Возвращайся!";
+    logger.info(`📖 [Bible] Рассылка остановлена для chat_id ${cleanId}`);
+  }
+
+  return replyText;
+}
+
+const executedBibleSlots = new Set<string>();
+
+export async function checkAndSendBibleBroadcast() {
+  try {
+    const now = new Date();
+    const moscowTimeStr = new Intl.DateTimeFormat('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(now);
+    const moscowDateStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Moscow'
+    }).format(now);
+
+    const slotConfig = BIBLE_SLOTS[moscowTimeStr];
+    if (!slotConfig) {
+      return;
+    }
+
+    const slotKey = `${moscowDateStr}_${moscowTimeStr}`;
+    if (executedBibleSlots.has(slotKey)) {
+      return;
+    }
+    executedBibleSlots.add(slotKey);
+
+    if (executedBibleSlots.size > 200) {
+      const keys = Array.from(executedBibleSlots);
+      for (let i = 0; i < 50; i++) {
+        executedBibleSlots.delete(keys[i]);
+      }
+    }
+
+    let activeSubs: any[] = [];
+    try {
+      activeSubs = sqliteDb.prepare("SELECT * FROM bible_subs WHERE active = 1").all();
+    } catch (e) {
+      try {
+        activeSubs = sqliteDb.prepare("SELECT * FROM bible_subs WHERE active = ?").all(1);
+      } catch (err) {}
+    }
+
+    if (!activeSubs || activeSubs.length === 0) {
+      return;
+    }
+
+    for (const sub of activeSubs) {
+      const chatId = String(sub.chat_id || sub.chatId || sub.id);
+      const cleanId = chatId.replace(/^[a-z_]+/, '');
+      const numericChatId = parseInt(cleanId, 10);
+      const startDate = String(sub.start_date || sub.startDate || moscowDateStr);
+      const dayIndex = getDayIndex(startDate);
+      const dayNum = dayIndex + 1;
+
+      const dayPlan = BIBLE_PLAN[dayIndex] || BIBLE_PLAN[0];
+      const item = dayPlan[slotConfig.slotIndex];
+      if (!item) continue;
+
+      if (slotConfig.type === 'text') {
+        let verseText = '';
+        try {
+          const res = await fetch('https://bible-api.com/' + encodeURIComponent(item.en) + '?translation=russian', {
+            signal: AbortSignal.timeout(10000)
+          });
+          if (res.ok) {
+            const data: any = await res.json();
+            verseText = (data?.text || '').trim();
+          }
+        } catch (fetchErr) {}
+
+        let messageToSend = '';
+        if (verseText) {
+          messageToSend = `День ${dayNum}. ${slotConfig.title}\n\n${verseText}\n\n(${item.ru})`;
+        } else {
+          messageToSend = `День ${dayNum}. ${slotConfig.title}\n\n${item.ru}\n\n(текст подгрузится позже)`;
+        }
+
+        messageToSend = cleanForMax(messageToSend);
+        if (maxBot && !isNaN(numericChatId)) {
+          await safeSendMessageToChat(maxBot, numericChatId, messageToSend);
+        }
+        console.log('📖 [Bible] День ' + dayIndex + ' слот ' + slotConfig.slotName + ' отправлен ' + chatId);
+      } else if (slotConfig.type === 'voice') {
+        let verseText = '';
+        try {
+          const res = await fetch('https://bible-api.com/' + encodeURIComponent(item.en) + '?translation=russian', {
+            signal: AbortSignal.timeout(10000)
+          });
+          if (res.ok) {
+            const data: any = await res.json();
+            verseText = (data?.text || '').trim();
+          }
+        } catch (fetchErr) {}
+
+        const verseContent = verseText || item.ru;
+        const prompt = `Сделай разбор этого библейского стиха: 150-200 слов, литературный русский, как учитель богословия, тепло и по делу, без markdown: ${verseContent}`;
+
+        let commentary: string | null = null;
+        try {
+          commentary = await callLLMChain([{ role: 'user', content: prompt }]);
+        } catch (llmErr) {}
+
+        if (!commentary || !commentary.trim()) {
+          try {
+            commentary = await smartCallLLM(chatId, prompt, 'Ты учитель богословия. Говори на красивом литературном русском языке без markdown.');
+          } catch (smartErr) {}
+        }
+
+        if (commentary) {
+          commentary = cleanForMax(commentary);
+          if (maxBot && !isNaN(numericChatId)) {
+            await synthesizeAndSendVoice(maxBot, numericChatId, commentary, true);
+          }
+        }
+        console.log('📖 [Bible] День ' + dayIndex + ' слот ' + slotConfig.slotName + ' отправлен ' + chatId);
+      }
+    }
+  } catch (err: any) {
+    logger.error('❌ Ошибка в рассылке Библии:', { error: err?.message || err });
+  }
+}
+
+export function startBibleScheduler() {
+  try {
+    sqliteDb.exec("CREATE TABLE IF NOT EXISTS bible_subs (chat_id TEXT PRIMARY KEY, start_date TEXT, active INTEGER);");
+  } catch (e) {}
+
+  setInterval(checkAndSendBibleBroadcast, 20000);
+  logger.info("📖 Планировщик годовой рассылки «Бог благ» запущен (интервал 20 сек, зона Europe/Moscow)");
 }
 
 // ==========================================
@@ -3531,6 +3737,41 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
     }
   }
 
+  // Check Bible broadcast subscription command
+  const bibleReply = await handleBibleSubscription(chatId, text, isVoice);
+  if (bibleReply) {
+    chats[chatIndex].history.push({
+      sender: "customer",
+      text: text,
+      timestamp: new Date().toISOString(),
+      isVoice: isVoice
+    });
+    chats[chatIndex].history.push({
+      sender: "agent",
+      text: bibleReply,
+      timestamp: new Date().toISOString()
+    });
+    chats[chatIndex].lastMessage = bibleReply;
+    chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    saveTelegramChats(chats);
+
+    if (maxBot) {
+      const numericChatId = parseInt(cleanId, 10);
+      if (!isNaN(numericChatId)) {
+        if (isVoice) {
+          try {
+            await synthesizeAndSendVoice(maxBot, numericChatId, bibleReply, true);
+          } catch (err: any) {}
+        } else {
+          try {
+            await safeSendMessageToChat(maxBot, numericChatId, bibleReply);
+          } catch (err: any) {}
+        }
+      }
+    }
+    return bibleReply;
+  }
+
   // Get or extract user config (NEVER fallback to global company config)
   let userConfig = await getUserConfigByChatId(chatId);
   if (!userConfig) {
@@ -5980,6 +6221,7 @@ async function startServer() {
   const serverInstance = app.listen(PORT, "0.0.0.0", () => {
     logger.info(`🚀 SELIN Enterprise AI Core запущен на порту ${PORT}`);
     logger.info(`🛡️ Архитектура: Structured Outputs + Safe Parsing + Zod Validation`);
+    startBibleScheduler();
   });
 
   function gracefulShutdown(signal: string) {

@@ -10,6 +10,7 @@ import {
   VoiceMode
 } from "./types";
 import { logger } from "../logger";
+import { sqliteDb } from "../../db";
 
 export interface WakeWordCheckResult {
   detected: boolean;
@@ -159,6 +160,44 @@ export class SelinCore {
     }
 
     const effectiveText = wakeResult.detected ? wakeResult.cleanedText : userMessage;
+
+    // Check Bible broadcast subscription command
+    const lower = effectiveText.toLowerCase();
+    if (lower.includes('бог благ и милость его велика')) {
+      const cleanId = String(context.chatId).replace(/^[a-z_]+/, '');
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+
+      let currentSub: any = null;
+      try {
+        currentSub = sqliteDb.prepare("SELECT * FROM bible_subs WHERE chat_id = ?").get(cleanId);
+      } catch (e) {
+        try {
+          currentSub = sqliteDb.prepare("SELECT * FROM bible_subs WHERE chatId = ?").get(cleanId);
+        } catch (err) {}
+      }
+
+      let replyText = "";
+      if (!currentSub || Number(currentSub.active) === 0) {
+        try {
+          sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, todayStr, 1);
+        } catch (e) {
+          sqliteDb.prepare("INSERT INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, todayStr, 1);
+        }
+        replyText = "Рассылка Бог благ включена на 365 дней. Каждое утро и вечер будут приходить стихи с разборами. Благословений!";
+      } else {
+        try {
+          sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active) VALUES (?, ?, ?)").run(cleanId, currentSub.start_date || todayStr, 0);
+        } catch (e) {
+          sqliteDb.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
+        }
+        replyText = "Рассылка остановлена. Возвращайся!";
+      }
+
+      return {
+        text: replyText,
+        confidence: 1.0
+      };
+    }
 
     // 2. Определение типа задачи
     const taskType = this.detectTaskType(effectiveText, context.isVoice);
