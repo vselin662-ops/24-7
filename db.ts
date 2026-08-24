@@ -164,7 +164,8 @@ try {
     CREATE TABLE IF NOT EXISTS bible_subs (
       chat_id TEXT PRIMARY KEY,
       start_date TEXT,
-      active INTEGER
+      active INTEGER,
+      period_days INTEGER DEFAULT 365
     );
 
     -- Business Mentor Tables
