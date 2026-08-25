@@ -249,6 +249,11 @@ try {
       last_active TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS voice_prefs (
+      chat_id TEXT PRIMARY KEY,
+      gender TEXT DEFAULT 'male'
+    );
+
     CREATE INDEX IF NOT EXISTS idx_chats_tenant ON chats(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_tenant ON knowledge_base(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_docs_tenant ON kb_documents(tenant_id);
@@ -283,6 +288,53 @@ export function initDataStore() {
   if (!sqliteDb) return;
   // db is already initialized upon require/import, but this ensures schema readiness
   return true;
+}
+
+export function getVoiceGender(chatId?: string | number | null): 'male' | 'female' {
+  if (!chatId) return 'male';
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim() || String(chatId).trim();
+  if (sqliteDb) {
+    try {
+      const row = sqliteDb.prepare("SELECT gender FROM voice_prefs WHERE chat_id = ?").get(cleanId);
+      if (row?.gender === 'female' || row?.gender === 'male') {
+        return row.gender;
+      }
+    } catch (e) {
+      logger.warn(`⚠️ [voice_prefs] Error getting voice gender: ${e}`);
+    }
+  }
+  return 'male';
+}
+
+export function setVoiceGender(chatId: string | number, gender: 'male' | 'female'): void {
+  if (!chatId) return;
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim() || String(chatId).trim();
+  if (sqliteDb) {
+    try {
+      sqliteDb.prepare("INSERT OR REPLACE INTO voice_prefs (chat_id, gender) VALUES (?, ?)").run(cleanId, gender);
+      logger.info(`🎙️ [voice_prefs] Set gender for chat ${cleanId} to ${gender}`);
+    } catch (e) {
+      logger.warn(`⚠️ [voice_prefs] Error setting voice gender: ${e}`);
+    }
+  }
+}
+
+export function getVoiceConfig(chatId?: string | number | null): { voice: string; rate: string; pitch: string; gender: 'male' | 'female' } {
+  const gender = getVoiceGender(chatId);
+  if (gender === 'female') {
+    return {
+      voice: 'ru-RU-SvetlanaNeural',
+      rate: '-5%',
+      pitch: '-2Hz',
+      gender: 'female'
+    };
+  }
+  return {
+    voice: 'ru-RU-DmitryNeural',
+    rate: '-8%',
+    pitch: '-4Hz',
+    gender: 'male'
+  };
 }
 
 export { sqliteDb };

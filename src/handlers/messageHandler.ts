@@ -1,6 +1,6 @@
 import { hasUserInteractedBefore, markUserAsVisited } from '../database/sessions.db';
 import { getAIResponse } from '../services/aiOrchestrator';
-import { prepareVoiceText } from '../adapters/MaxAdapter';
+import { normalizeForVoice } from '../adapters/MaxAdapter';
 
 export async function handleIncomingMessage(
   chatId: string,
@@ -79,8 +79,8 @@ export async function handleIncomingMessage(
   if (shouldReplyWithText) {
     await safeSendMessageToChat(maxBot, chatId, llmResponse);
   } else {
-    // Очистка текста для TTS через prepareVoiceText
-    const cleanText = prepareVoiceText(llmResponse);
+    // Очистка и умная нормализация текста для TTS через normalizeForVoice
+    const cleanText = normalizeForVoice(llmResponse);
 
     if (cleanText) {
       await synthesizeAndSendVoice(maxBot, chatId, cleanText);

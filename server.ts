@@ -4,7 +4,7 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { evaluate } from "mathjs";
-import { sqliteDb } from "./db";
+import { sqliteDb, getVoiceGender, setVoiceGender, getVoiceConfig } from "./db";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import Groq from 'groq-sdk';
@@ -503,6 +503,9 @@ function cleanForMax(text: string): string {
     .trim();
 }
 
+export { числительное, normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "./src/utils/voiceNormalizer";
+import { normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "./src/utils/voiceNormalizer";
+
 export function prepareVoiceText(text: string): string {
   if (!text) return '';
   let res = cleanForMax(text);
@@ -512,8 +515,8 @@ export function prepareVoiceText(text: string): string {
   res = res.replace(/^(Ой|Ах|Ох|Ну|Вот|Слушай|Значит)[,! ]+/gi, '');
   res = res.replace(/[*#]/g, '');
   res = res.replace(/\s+/g, ' ').trim();
-  if (res.length > 700) {
-    const sub = res.slice(0, 700);
+  if (res.length > 4000) {
+    const sub = res.slice(0, 4000);
     const lastDot = sub.lastIndexOf('.');
     if (lastDot > 0) {
       res = sub.slice(0, lastDot).trim() + '...';
@@ -522,6 +525,25 @@ export function prepareVoiceText(text: string): string {
     }
   }
   return res.trim();
+}
+
+/**
+ * Умная нормализация чисел для голосового произношения (ТОЛЬКО для TTS)
+ * Пайплайн TTS: cleanForMax -> prepareVoiceText -> normalizeForVoice -> edge-tts
+ */
+export function normalizeForVoice(text: string): string {
+  if (!text) return '';
+  const initialText = text;
+  let res = prepareVoiceText(text);
+  if (!res) return '';
+
+  res = normalizeBiblicalReferences(res);
+  res = normalizeYears(res);
+  res = normalizeTimeOfDay(res);
+  res = normalizeHours12(res);
+
+  console.log('🎙️ [TTS] нормализация: ' + JSON.stringify({ in: initialText, out: res }));
+  return res;
 }
 
 // ==========================================
@@ -803,7 +825,7 @@ const SYSTEM_PROMPTS = {
 Отвечаешь развернуто, с примерами, метафорами и практическими советами.
 Никогда не говори "я не знаю" — вместо этого предлагаешь варианты решения.
 
-Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`,
+Правила голосовых ответов. Если просят рассказать историю, объяснить важный момент или тему глубоко — давай развёрнутый непрерывный ответ до 10-15 предложений. Если вопрос простой — одним-двумя предложениями. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`,
 
   business: (name: string) => `Ты — Selin AI, бизнес-ассистент компании "${name}".
 Ты эксперт в предпринимательстве, продажах и операционке.
@@ -811,14 +833,14 @@ const SYSTEM_PROMPTS = {
 Говоришь на языке цифр, метрик и бизнес-процессов.
 Помогаешь автоматизировать, оптимизировать и масштабировать.
 
-Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`,
+Правила голосовых ответов. Если просят рассказать историю, объяснить важный момент или тему глубоко — давай развёрнутый непрерывный ответ до 10-15 предложений. Если вопрос простой — одним-двумя предложениями. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`,
 
   tutor: `Ты — Selin AI, языковой репетитор.
 Ты учишь языкам через диалоги, интервальные повторения и практику.
 Говоришь на изучаемом языке, даешь перевод, объясняешь грамматику.
 Создаешь безопасную среду для практики.
 
-Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`
+Правила голосовых ответов. Если просят рассказать историю, объяснить важный момент или тему глубоко — давай развёрнутый непрерывный ответ до 10-15 предложений. Если вопрос простой — одним-двумя предложениями. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`
 };
 
 // ==========================================
@@ -991,13 +1013,19 @@ async function smartCallLLM(
     role: msg.role,
     content: (msg.content || '').slice(0, 1200)
   }));
+
+  const gender = getVoiceGender(chatId);
+  const genderPrompt = gender === 'female'
+    ? 'Твой голос женский, ты женщина, представляйся как женщина.'
+    : 'Твой голос мужской, ты мужчина, представляйся как мужчина.';
   
   // Определяем системный промпт если не передан
   const defaultSystem = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
 
 Ты — Selin AI, интеллектуальный ассистент.
+${genderPrompt}
 
-Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
+Правила голосовых ответов. Если просят рассказать историю, объяснить важный момент или тему глубоко — давай развёрнутый непрерывный ответ до 10-15 предложений. Если вопрос простой — одним-двумя предложениями. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
 
 ТВОИ ХАРАКТЕРИСТИКИ:
 - Ты живой, умный, ироничный и глубокий собеседник
@@ -1016,7 +1044,7 @@ async function smartCallLLM(
 
 СЕЙЧАС ТЕБЯ СПРАШИВАЮТ: "${userMessage}"`;
 
-  const finalSystem = systemPrompt || defaultSystem;
+  const finalSystem = systemPrompt ? `${systemPrompt}\n\n${genderPrompt}` : defaultSystem;
 
   // Формируем сообщения с контекстом (последние 6 сообщений по <= 1200 символов)
   const messages = [
@@ -1607,8 +1635,8 @@ function detectVoiceWakeWord(rawText: string): WakeWordResult {
 
   const isOnlyWakeWord = cleaned.length === 0;
   const confirmationSpeech = matchedMode === "male"
-    ? "Мужской режим активирован. Я на связи."
-    : "Женский режим активирован.";
+    ? "Мужской голос активирован."
+    : "Женский голос активирован.";
 
   return {
     detected: true,
@@ -1899,23 +1927,19 @@ function getUniversalConfig(): any {
 }
 
 async function getVoiceForChat(chatId?: number | string | null): Promise<string> {
-  if (chatId) {
-    const userCfg = await getUserConfigByChatId(chatId);
-    if (userCfg?.tts_voice || userCfg?.voice_id) {
-      return userCfg.tts_voice || userCfg.voice_id;
-    }
-  }
-  const companyCfg = getCompanyConfig();
-  return companyCfg.tts_voice || companyCfg.voice_id || "Kore";
+  const gender = getVoiceGender(chatId);
+  return gender === 'female' ? 'Kore' : 'Charon';
 }
 
-async function setVoiceForChat(chatId: number | string | null | undefined, voiceName: "Charon" | "Kore"): Promise<void> {
-  if (chatId && chatId !== "preview" && chatId !== "default" && String(chatId) !== "0") {
+async function setVoiceForChat(chatId: number | string | null | undefined, voiceName: "Charon" | "Kore" | "male" | "female"): Promise<void> {
+  const gender = (voiceName === 'Kore' || voiceName === 'female') ? 'female' : 'male';
+  if (chatId) {
+    setVoiceGender(chatId, gender);
     const existing = (await getUserConfigByChatId(chatId)) || getUniversalConfig();
     const updated = {
       ...existing,
-      tts_voice: voiceName,
-      voice_id: voiceName,
+      tts_voice: voiceName === 'female' ? 'Kore' : (voiceName === 'male' ? 'Charon' : voiceName),
+      voice_id: voiceName === 'female' ? 'Kore' : (voiceName === 'male' ? 'Charon' : voiceName),
     };
     await saveUserConfigByChatId(chatId, updated);
   }
@@ -2751,7 +2775,7 @@ async function synthesizeAndSendVoice(
     text = String(textOrSkip);
   }
 
-  text = prepareVoiceText(text);
+  text = normalizeForVoice(text);
 
   if (!text) {
     console.warn("⚠️ synthesizeAndSendVoice: Текст для синтеза пуст после очистки.");
@@ -2813,11 +2837,11 @@ async function synthesizeAndSendVoice(
   // 2. Резервный вариант №1 (Edge TTS): если основной API дал сбой или не настроен
   if (!audioBuffer) {
     try {
-      console.log('🎙️ [TTS] DmitryNeural, символов: ' + text.length);
+      const voiceConfig = getVoiceConfig(chatId);
+      console.log(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${text.length}`);
       const tts = new MsEdgeTTS();
-      const voiceName = 'ru-RU-DmitryNeural';
-      await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-      const streamRes = tts.toStream(text, { rate: '-8%', pitch: '-4Hz' });
+      await tts.setMetadata(voiceConfig.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+      const streamRes = tts.toStream(text, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
       const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
 
       const chunks: Buffer[] = [];
@@ -2827,7 +2851,7 @@ async function synthesizeAndSendVoice(
       }
       audioBuffer = Buffer.concat(chunks);
       voiceMethodUsed = "Edge TTS";
-      console.log(`✅ Успешно сгенерирован голос через резервный Edge TTS`);
+      console.log(`✅ Успешно сгенерирован голос через резервный Edge TTS (${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'})`);
     } catch (err: any) {
       console.error(`❌ Ошибка резервного Edge TTS: ${err?.message || err}`);
     }
@@ -3356,15 +3380,16 @@ async function processMultimodalMessage(
 
   if (wantsVoice) {
     try {
-      const voicePrepared = prepareVoiceText(textResponse);
-      console.log('🎙️ [TTS] DmitryNeural, символов: ' + voicePrepared.length);
+      const voicePrepared = normalizeForVoice(textResponse);
+      const voiceConfig = getVoiceConfig(config?.chatId || config?.id || config?.tenant_id);
+      console.log(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${voicePrepared.length}`);
       const tts = new MsEdgeTTS();
       await tts.setMetadata(
-        'ru-RU-DmitryNeural',
+        voiceConfig.voice,
         OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
       );
       
-      const { audioStream } = tts.toStream(voicePrepared, { rate: '-8%', pitch: '-4Hz' });
+      const { audioStream } = tts.toStream(voicePrepared, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
       const chunks: Buffer[] = [];
       for await (const chunk of audioStream) {
         if (Buffer.isBuffer(chunk)) chunks.push(chunk);
@@ -3451,11 +3476,17 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
     const isCodeRequest = lowerMessage.startsWith('/code') || lowerMessage.startsWith('напиши код');
     const isTextModeCommand = lowerMessage.includes('селин 123770') || lowerMessage.includes('selin 123770') || lowerMessage === '123770' || lowerMessage.includes('/text_mode');
 
+    const gender = getVoiceGender(config?.chatId || config?.id || config?.tenant_id);
+    const genderPrompt = gender === 'female'
+      ? 'Твой голос женский, ты женщина, представляйся как женщина.'
+      : 'Твой голос мужской, ты мужчина, представляйся как мужчина.';
+
     let SYSTEM_PROMPT = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
 
 Ты голосовой ассистент Selin AI.
+${genderPrompt}
 
-Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
+Правила голосовых ответов. Если просят рассказать историю, объяснить важный момент или тему глубоко — давай развёрнутый непрерывный ответ до 10-15 предложений. Если вопрос простой — одним-двумя предложениями. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
 
    СТРОГИЕ ПРАВИЛА ДЛЯ ОЗВУЧКИ:
    - НИКОГДА не используй Markdown (никаких звездочек, решеток, тире для списков, обратных кавычек).
@@ -3516,23 +3547,19 @@ app.post("/api/chats/message", async (req, res) => {
   // Check for smart speaker voice wake words ("Selin777" for Charon male, "Selin000" for Kore female)
   const wakeResult = detectVoiceWakeWord(text);
   if (wakeResult.detected) {
-    await setVoiceForChat(chatId, wakeResult.voice!);
-    if (wakeResult.isOnlyWakeWord) {
-      chats[chatIndex].history.push({ sender: "customer", text: text });
-      chats[chatIndex].history.push({ sender: "agent", text: wakeResult.confirmationSpeech });
-      chats[chatIndex].lastMessage = wakeResult.confirmationSpeech;
-      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      saveTelegramChats(chats);
+    setVoiceGender(chatId, wakeResult.mode!);
+    chats[chatIndex].history.push({ sender: "customer", text: text });
+    chats[chatIndex].history.push({ sender: "agent", text: wakeResult.confirmationSpeech });
+    chats[chatIndex].lastMessage = wakeResult.confirmationSpeech;
+    chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    saveTelegramChats(chats);
 
-      if (maxBot) {
-        try {
-          await synthesizeAndSendVoice(maxBot, chatId, wakeResult.confirmationSpeech, true);
-        } catch (err: any) {}
-      }
-      return res.json({ response: wakeResult.confirmationSpeech, voice: wakeResult.voice, wakeDetected: true, mode: wakeResult.mode });
-    } else {
-      text = wakeResult.cleanedText;
+    if (maxBot) {
+      try {
+        await synthesizeAndSendVoice(maxBot, chatId, wakeResult.confirmationSpeech, true);
+      } catch (err: any) {}
     }
+    return res.json({ response: wakeResult.confirmationSpeech, voice: wakeResult.voice, wakeDetected: true, mode: wakeResult.mode });
   }
 
   // Append client message
@@ -3784,32 +3811,28 @@ async function handleIncomingText(chatId: number, clientName: string, text: stri
   // Check for smart speaker voice wake words ("Selin777" for Charon male, "Selin000" for Kore female)
   const wakeResult = detectVoiceWakeWord(text);
   if (wakeResult.detected) {
-    await setVoiceForChat(chatId, wakeResult.voice!);
-    if (wakeResult.isOnlyWakeWord) {
-      chats[chatIndex].history.push({
-        sender: "customer",
-        text: text,
-        timestamp: new Date().toISOString(),
-        isVoice: isVoice
-      });
-      chats[chatIndex].history.push({
-        sender: "agent",
-        text: wakeResult.confirmationSpeech,
-        timestamp: new Date().toISOString()
-      });
-      chats[chatIndex].lastMessage = wakeResult.confirmationSpeech;
-      chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      saveTelegramChats(chats);
+    setVoiceGender(chatId, wakeResult.mode!);
+    chats[chatIndex].history.push({
+      sender: "customer",
+      text: text,
+      timestamp: new Date().toISOString(),
+      isVoice: isVoice
+    });
+    chats[chatIndex].history.push({
+      sender: "agent",
+      text: wakeResult.confirmationSpeech,
+      timestamp: new Date().toISOString()
+    });
+    chats[chatIndex].lastMessage = wakeResult.confirmationSpeech;
+    chats[chatIndex].timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    saveTelegramChats(chats);
 
-      if (maxBot) {
-        try {
-          await synthesizeAndSendVoice(maxBot, chatId, wakeResult.confirmationSpeech, true);
-        } catch (err: any) {}
-      }
-      return wakeResult.confirmationSpeech;
-    } else {
-      text = wakeResult.cleanedText;
+    if (maxBot) {
+      try {
+        await synthesizeAndSendVoice(maxBot, chatId, wakeResult.confirmationSpeech, true);
+      } catch (err: any) {}
     }
+    return wakeResult.confirmationSpeech;
   }
 
   // Check Bible broadcast subscription command
@@ -4373,21 +4396,17 @@ app.post("/api/voice-organism-dialogue", async (req, res) => {
   if (userInput && typeof userInput === "string") {
     const wakeResult = detectVoiceWakeWord(userInput);
     if (wakeResult.detected) {
-      await setVoiceForChat(chatId || "preview", wakeResult.voice!);
+      setVoiceGender(chatId || "preview", wakeResult.mode!);
       wakeWordInfo = wakeResult;
-      if (wakeResult.isOnlyWakeWord) {
-        return res.json({
-          speech: wakeResult.confirmationSpeech,
-          userName: sanitizeVoiceName(userName),
-          extractedGoal: null,
-          nextStep: step || "EXPLAIN_PLATFORM",
-          voice: wakeResult.voice,
-          wakeDetected: true,
-          mode: wakeResult.mode
-        });
-      } else {
-        userInput = wakeResult.cleanedText;
-      }
+      return res.json({
+        speech: wakeResult.confirmationSpeech,
+        userName: sanitizeVoiceName(userName),
+        extractedGoal: null,
+        nextStep: step || "EXPLAIN_PLATFORM",
+        voice: wakeResult.voice,
+        wakeDetected: true,
+        mode: wakeResult.mode
+      });
     }
   }
 
@@ -4562,28 +4581,23 @@ app.post("/api/tts", async (req, res) => {
   // Check for smart speaker voice wake words
   const wakeResult = detectVoiceWakeWord(text);
   let textToSynthesize = text;
-  let targetVoice = voice;
 
   if (wakeResult.detected) {
-    await setVoiceForChat(chatId, wakeResult.voice!);
-    targetVoice = wakeResult.voice!;
-    textToSynthesize = wakeResult.isOnlyWakeWord ? wakeResult.confirmationSpeech : wakeResult.cleanedText;
-  }
-
-  if (!targetVoice) {
-    targetVoice = (await getVoiceForChat(chatId)) || 'Kore';
+    setVoiceGender(chatId, wakeResult.mode!);
+    textToSynthesize = wakeResult.confirmationSpeech;
   }
 
   try {
-    const voicePrepared = prepareVoiceText(textToSynthesize);
-    console.log('🎙️ [TTS] DmitryNeural, символов: ' + voicePrepared.length);
+    const voicePrepared = normalizeForVoice(textToSynthesize);
+    const voiceConfig = getVoiceConfig(chatId);
+    console.log(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${voicePrepared.length}`);
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      'ru-RU-DmitryNeural',
+      voiceConfig.voice,
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     
-    const { audioStream } = tts.toStream(voicePrepared, { rate: '-8%', pitch: '-4Hz' });
+    const { audioStream } = tts.toStream(voicePrepared, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
     const chunks: Buffer[] = [];
     for await (const chunk of audioStream) {
       if (Buffer.isBuffer(chunk)) chunks.push(chunk);
@@ -4593,7 +4607,7 @@ app.post("/api/tts", async (req, res) => {
     const dataUrl = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     return res.json({
       audioUrl: dataUrl,
-      voice: targetVoice,
+      voice: voiceConfig.gender === 'female' ? 'Kore' : 'Charon',
       wakeDetected: wakeResult.detected,
       mode: wakeResult.mode,
       confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,
@@ -5377,27 +5391,22 @@ app.post("/api/synthesize", async (req, res) => {
   try {
     const wakeResult = detectVoiceWakeWord(text);
     let textToSynthesize = text;
-    let targetVoice = voice;
 
     if (wakeResult.detected) {
-      await setVoiceForChat(chatId, wakeResult.voice!);
-      targetVoice = wakeResult.voice!;
-      textToSynthesize = wakeResult.isOnlyWakeWord ? wakeResult.confirmationSpeech : wakeResult.cleanedText;
+      setVoiceGender(chatId, wakeResult.mode!);
+      textToSynthesize = wakeResult.confirmationSpeech;
     }
 
-    if (!targetVoice) {
-      targetVoice = (await getVoiceForChat(chatId)) || "Kore";
-    }
-
-    const voicePrepared = prepareVoiceText(textToSynthesize);
-    console.log('🎙️ [TTS] DmitryNeural, символов: ' + voicePrepared.length);
+    const voicePrepared = normalizeForVoice(textToSynthesize);
+    const voiceConfig = getVoiceConfig(chatId);
+    console.log(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${voicePrepared.length}`);
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      'ru-RU-DmitryNeural',
+      voiceConfig.voice,
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     
-    const { audioStream } = tts.toStream(voicePrepared, { rate: '-8%', pitch: '-4Hz' });
+    const { audioStream } = tts.toStream(voicePrepared, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
     const chunks: Buffer[] = [];
     for await (const chunk of audioStream) {
       if (Buffer.isBuffer(chunk)) chunks.push(chunk);
@@ -5408,7 +5417,7 @@ app.post("/api/synthesize", async (req, res) => {
 
     res.json({
       audio: base64Audio,
-      voice: targetVoice,
+      voice: voiceConfig.gender === 'female' ? 'Kore' : 'Charon',
       wakeDetected: wakeResult.detected,
       mode: wakeResult.mode,
       confirmationSpeech: wakeResult.detected ? wakeResult.confirmationSpeech : undefined,

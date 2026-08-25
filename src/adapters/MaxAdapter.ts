@@ -7,7 +7,7 @@ import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
 import { ensureMp3Buffer } from "../lib/audioConvert";
 import { callVision, stripMarkdown } from "../core/LLMService";
-import { sqliteDb } from "../../db";
+import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
@@ -53,6 +53,9 @@ export function cleanForMax(text: string): string {
     .trim();
 }
 
+export { числительное, normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "../utils/voiceNormalizer";
+import { normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "../utils/voiceNormalizer";
+
 export function prepareVoiceText(text: string): string {
   if (!text) return '';
   let res = cleanForMax(text);
@@ -62,8 +65,8 @@ export function prepareVoiceText(text: string): string {
   res = res.replace(/^(Ой|Ах|Ох|Ну|Вот|Слушай|Значит)[,! ]+/gi, '');
   res = res.replace(/[*#]/g, '');
   res = res.replace(/\s+/g, ' ').trim();
-  if (res.length > 700) {
-    const sub = res.slice(0, 700);
+  if (res.length > 4000) {
+    const sub = res.slice(0, 4000);
     const lastDot = sub.lastIndexOf('.');
     if (lastDot > 0) {
       res = sub.slice(0, lastDot).trim() + '...';
@@ -72,6 +75,25 @@ export function prepareVoiceText(text: string): string {
     }
   }
   return res.trim();
+}
+
+/**
+ * Умная нормализация чисел для голосового произношения (ТОЛЬКО для TTS)
+ * Пайплайн TTS: cleanForMax -> prepareVoiceText -> normalizeForVoice -> edge-tts
+ */
+export function normalizeForVoice(text: string): string {
+  if (!text) return '';
+  const initialText = text;
+  let res = prepareVoiceText(text);
+  if (!res) return '';
+
+  res = normalizeBiblicalReferences(res);
+  res = normalizeYears(res);
+  res = normalizeTimeOfDay(res);
+  res = normalizeHours12(res);
+
+  console.log('🎙️ [TTS] нормализация: ' + JSON.stringify({ in: initialText, out: res }));
+  return res;
 }
 
 export function splitTextSmart(text: string, maxLen: number): string[] {
@@ -150,10 +172,10 @@ export class MaxAdapter {
   }
 
   /**
-   * Очистка текста перед синтезом голоса
+   * Очистка и нормализация текста перед синтезом голоса
    */
   public cleanText(text: string): string {
-    return prepareVoiceText(text);
+    return normalizeForVoice(text);
   }
 
   /**
@@ -308,11 +330,11 @@ export class MaxAdapter {
     // --- Шаг 2 каскада: Microsoft Edge TTS (MsEdgeTTS) ---
     if (!audioBuffer || audioBuffer.length === 0) {
       try {
-        console.log('🎙️ [TTS] DmitryNeural, символов: ' + cleanedText.length);
+        const voiceConfig = getVoiceConfig(chatId);
+        console.log(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${cleanedText.length}`);
         const tts = new MsEdgeTTS();
-        const voiceName = 'ru-RU-DmitryNeural';
-        await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-        const streamRes = tts.toStream(cleanedText, { rate: '-8%', pitch: '-4Hz' });
+        await tts.setMetadata(voiceConfig.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        const streamRes = tts.toStream(cleanedText, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
         const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
 
         const chunks: Buffer[] = [];
@@ -324,7 +346,7 @@ export class MaxAdapter {
           }
         }
         audioBuffer = Buffer.concat(chunks);
-        logger.info(`✅ [MaxAdapter] Speech synthesized via Edge TTS (${audioBuffer.length} bytes)`);
+        logger.info(`✅ [MaxAdapter] Speech synthesized via Edge TTS (${audioBuffer.length} bytes, voice: ${voiceConfig.voice})`);
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.warn(`⚠️ [MaxAdapter] Edge TTS failed, falling back to VoiceService: ${errorMsg}`);
@@ -736,6 +758,28 @@ export class MaxAdapter {
       }
 
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+
+      const norm = text.toLowerCase().trim().replace(/[\s\-_.,!?:;]+/g, '');
+      if (norm === 'селин777' || norm === 'selin777' || norm.includes('селин777') || norm.includes('selin777')) {
+        setVoiceGender(cleanId, 'male');
+        const reply = 'Мужской голос активирован.';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
+      if (norm === 'селин000' || norm === 'selin000' || norm.includes('селин000') || norm.includes('selin000') || norm.includes('селинооо') || norm.includes('selinooo')) {
+        setVoiceGender(cleanId, 'female');
+        const reply = 'Женский голос активирован.';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
 
       // Bible broadcast subscription & confirmation check
       const { handleBibleSubscription } = await import("../../server");
