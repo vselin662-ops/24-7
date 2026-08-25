@@ -29,6 +29,7 @@ import { requestIdMiddleware } from "./src/middleware/requestId";
 import { connectorRegistry } from "./src/connectors";
 import languageRouter from "./src/routes/language.routes";
 import securityRouter from "./src/routes/security.routes";
+import { fintechRouter, handleFintechCommand } from "./src/fintech/routes";
 import { aiShieldMiddleware } from "./src/middleware/ai-shield";
 import { filterAIOutput } from "./src/services/output-filter";
 import { sanitizeRAGChunk, RAG_SYSTEM_INSTRUCTION } from "./src/services/rag-protection";
@@ -388,13 +389,13 @@ app.get(["/api/max/webhook", "/max/webhook"], (req, res) => {
 
 // 1. AI Shield Middleware (Prompt Sanitization & Jailbreak Defense)
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/') || req.originalUrl.startsWith('/api/yookassa') || req.originalUrl.startsWith('/api/robokassa') || req.originalUrl.startsWith('/api/payments')) return next();
   return aiShieldMiddleware(req, res, next);
 });
 
 // 2. Rate Limiting Middleware
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/') || req.originalUrl.startsWith('/api/yookassa') || req.originalUrl.startsWith('/api/robokassa') || req.originalUrl.startsWith('/api/payments')) return next();
   return apiRateLimiter(req, res, next);
 });
 app.use('/api/tts', (req, res, next) => {
@@ -412,7 +413,7 @@ app.use('/api/voice-organism-dialogue', (req, res, next) => {
 
 // 3. Agent Monitor Middleware (Behavior Tracking & Anomaly Detection)
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/') || req.originalUrl.startsWith('/api/yookassa') || req.originalUrl.startsWith('/api/robokassa') || req.originalUrl.startsWith('/api/payments')) return next();
   const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || "default";
   trackUserRateAndAnomalies(tenantId);
   next();
@@ -420,7 +421,7 @@ app.use('/api', (req, res, next) => {
 
 // 4. Output Filter Middleware (Response Sanitization & Anti-Exfiltration)
 app.use((req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/') || req.originalUrl.startsWith('/api/yookassa') || req.originalUrl.startsWith('/api/robokassa') || req.originalUrl.startsWith('/api/payments')) return next();
   const originalJson = res.json;
   const originalSend = res.send;
 
@@ -458,8 +459,10 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(fintechRouter);
+
 app.use('/api', (req, res, next) => {
-  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/')) return next();
+  if (req.originalUrl.startsWith('/api/max/webhook') || req.originalUrl.startsWith('/api/ai/') || req.originalUrl.startsWith('/api/yookassa') || req.originalUrl.startsWith('/api/robokassa') || req.originalUrl.startsWith('/api/payments')) return next();
   return authMiddleware(req, res, next);
 });
 app.use('/api/security', securityRouter);
@@ -498,6 +501,27 @@ function cleanForMax(text: string): string {
     .replace(/[_~]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+export function prepareVoiceText(text: string): string {
+  if (!text) return '';
+  let res = cleanForMax(text);
+  res = res.replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{27BF}\u{FE0F}]/gu, '');
+  res = res.replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '');
+  res = res.replace(/https?:\/\/\S+/g, '');
+  res = res.replace(/^(Ой|Ах|Ох|Ну|Вот|Слушай|Значит)[,! ]+/gi, '');
+  res = res.replace(/[*#]/g, '');
+  res = res.replace(/\s+/g, ' ').trim();
+  if (res.length > 700) {
+    const sub = res.slice(0, 700);
+    const lastDot = sub.lastIndexOf('.');
+    if (lastDot > 0) {
+      res = sub.slice(0, lastDot).trim() + '...';
+    } else {
+      res = sub.trim() + '...';
+    }
+  }
+  return res.trim();
 }
 
 // ==========================================
@@ -545,6 +569,12 @@ export async function handleBibleSubscription(chatId: string | number, text: str
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   const now = Date.now();
+
+  // 0. Финтех-команды и проверка прав доступа (тарифы, pay:*, оплачено, подтвердить, isFeatureAllowed)
+  const fintechResult = await handleFintechCommand(cleanId, text, isVoice);
+  if (fintechResult && fintechResult.handled) {
+    return fintechResult.replyText || null;
+  }
 
   // 1. Проверка состояния ожидания подтверждения (TTL 5 минут = 300000 мс)
   const pendingTimestamp = biblePendingConfirmations.get(cleanId);
@@ -771,18 +801,24 @@ const SYSTEM_PROMPTS = {
 Ты умеешь всё: помогать с бизнесом, учебой, творчеством, бытовыми вопросами.
 Твой стиль — живой, ироничный, глубокий. Ты эксперт в каждой теме.
 Отвечаешь развернуто, с примерами, метафорами и практическими советами.
-Никогда не говори "я не знаю" — вместо этого предлагаешь варианты решения.`,
+Никогда не говори "я не знаю" — вместо этого предлагаешь варианты решения.
+
+Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`,
 
   business: (name: string) => `Ты — Selin AI, бизнес-ассистент компании "${name}".
 Ты эксперт в предпринимательстве, продажах и операционке.
 Даешь конкретные, измеримые, выполнимые советы.
 Говоришь на языке цифр, метрик и бизнес-процессов.
-Помогаешь автоматизировать, оптимизировать и масштабировать.`,
+Помогаешь автоматизировать, оптимизировать и масштабировать.
+
+Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`,
 
   tutor: `Ты — Selin AI, языковой репетитор.
 Ты учишь языкам через диалоги, интервальные повторения и практику.
 Говоришь на изучаемом языке, даешь перевод, объясняешь грамматику.
-Создаешь безопасную среду для практики.`
+Создаешь безопасную среду для практики.
+
+Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.`
 };
 
 // ==========================================
@@ -960,6 +996,8 @@ async function smartCallLLM(
   const defaultSystem = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
 
 Ты — Selin AI, интеллектуальный ассистент.
+
+Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
 
 ТВОИ ХАРАКТЕРИСТИКИ:
 - Ты живой, умный, ироничный и глубокий собеседник
@@ -2713,30 +2751,7 @@ async function synthesizeAndSendVoice(
     text = String(textOrSkip);
   }
 
-  text = cleanForMax(text);
-
-  // Перед отправкой голоса — обогащаем ответ контекстом
-  if (text && !text.includes('```') && !text.includes('http') && !text.startsWith('Приняла') && !text.startsWith('🔄') && text.length < 80) {
-    try {
-      const enhanced = await smartCallLLM(
-        chatId,
-        `Разверни эту мысль для голосового ответа: "${text}"`,
-        'Ты — голосовой ассистент. Отвечай так, чтобы это звучало естественно и увлеченно.'
-      );
-      if (enhanced && !enhanced.includes('Ой, что-то я')) {
-        text = enhanced;
-      }
-    } catch (enhErr) {}
-  }
-
-  // Обрезаем лишнее, очищаем от разметки Markdown, смайликов и эмодзи для идеального голосового синтеза
-  text = String(text)
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]+`/g, '')
-    .replace(/[#*_~>]/g, '')
-    .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  text = prepareVoiceText(text);
 
   if (!text) {
     console.warn("⚠️ synthesizeAndSendVoice: Текст для синтеза пуст после очистки.");
@@ -2798,11 +2813,11 @@ async function synthesizeAndSendVoice(
   // 2. Резервный вариант №1 (Edge TTS): если основной API дал сбой или не настроен
   if (!audioBuffer) {
     try {
-      console.log("🎙️ Запуск резервного Edge TTS для синтеза...");
+      console.log('🎙️ [TTS] DmitryNeural, символов: ' + text.length);
       const tts = new MsEdgeTTS();
-      const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
+      const voiceName = 'ru-RU-DmitryNeural';
       await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-      const streamRes = tts.toStream(text);
+      const streamRes = tts.toStream(text, { rate: '-8%', pitch: '-4Hz' });
       const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
 
       const chunks: Buffer[] = [];
@@ -3341,14 +3356,15 @@ async function processMultimodalMessage(
 
   if (wantsVoice) {
     try {
-      console.log('🎤 Edge TTS inside wantsVoice:', textResponse.slice(0, 50));
+      const voicePrepared = prepareVoiceText(textResponse);
+      console.log('🎙️ [TTS] DmitryNeural, символов: ' + voicePrepared.length);
       const tts = new MsEdgeTTS();
       await tts.setMetadata(
-        process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
+        'ru-RU-DmitryNeural',
         OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
       );
       
-      const { audioStream } = tts.toStream(textResponse);
+      const { audioStream } = tts.toStream(voicePrepared, { rate: '-8%', pitch: '-4Hz' });
       const chunks: Buffer[] = [];
       for await (const chunk of audioStream) {
         if (Buffer.isBuffer(chunk)) chunks.push(chunk);
@@ -3437,7 +3453,10 @@ async function generateAgentResponseHelper(user_message: string, agentRole: stri
 
     let SYSTEM_PROMPT = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
 
-Ты голосовой ассистент Selin AI. Отвечай на вопросы пользователя ПОДРОБНО и РАЗВЕРНУТО. Твой ответ должен звучать как естественная речь живого человека, продолжительностью 20-40 секунд. 
+Ты голосовой ассистент Selin AI.
+
+Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
+
    СТРОГИЕ ПРАВИЛА ДЛЯ ОЗВУЧКИ:
    - НИКОГДА не используй Markdown (никаких звездочек, решеток, тире для списков, обратных кавычек).
    - НИКОГДА не используй смайлики и эмодзи.
@@ -4556,13 +4575,15 @@ app.post("/api/tts", async (req, res) => {
   }
 
   try {
+    const voicePrepared = prepareVoiceText(textToSynthesize);
+    console.log('🎙️ [TTS] DmitryNeural, символов: ' + voicePrepared.length);
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
+      'ru-RU-DmitryNeural',
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     
-    const { audioStream } = tts.toStream(textToSynthesize);
+    const { audioStream } = tts.toStream(voicePrepared, { rate: '-8%', pitch: '-4Hz' });
     const chunks: Buffer[] = [];
     for await (const chunk of audioStream) {
       if (Buffer.isBuffer(chunk)) chunks.push(chunk);
@@ -5368,13 +5389,15 @@ app.post("/api/synthesize", async (req, res) => {
       targetVoice = (await getVoiceForChat(chatId)) || "Kore";
     }
 
+    const voicePrepared = prepareVoiceText(textToSynthesize);
+    console.log('🎙️ [TTS] DmitryNeural, символов: ' + voicePrepared.length);
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural',
+      'ru-RU-DmitryNeural',
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     
-    const { audioStream } = tts.toStream(textToSynthesize);
+    const { audioStream } = tts.toStream(voicePrepared, { rate: '-8%', pitch: '-4Hz' });
     const chunks: Buffer[] = [];
     for await (const chunk of audioStream) {
       if (Buffer.isBuffer(chunk)) chunks.push(chunk);

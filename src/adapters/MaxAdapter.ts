@@ -53,6 +53,27 @@ export function cleanForMax(text: string): string {
     .trim();
 }
 
+export function prepareVoiceText(text: string): string {
+  if (!text) return '';
+  let res = cleanForMax(text);
+  res = res.replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{27BF}\u{FE0F}]/gu, '');
+  res = res.replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '');
+  res = res.replace(/https?:\/\/\S+/g, '');
+  res = res.replace(/^(Ой|Ах|Ох|Ну|Вот|Слушай|Значит)[,! ]+/gi, '');
+  res = res.replace(/[*#]/g, '');
+  res = res.replace(/\s+/g, ' ').trim();
+  if (res.length > 700) {
+    const sub = res.slice(0, 700);
+    const lastDot = sub.lastIndexOf('.');
+    if (lastDot > 0) {
+      res = sub.slice(0, lastDot).trim() + '...';
+    } else {
+      res = sub.trim() + '...';
+    }
+  }
+  return res.trim();
+}
+
 export function splitTextSmart(text: string, maxLen: number): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
   const chunks: string[] = [];
@@ -129,45 +150,10 @@ export class MaxAdapter {
   }
 
   /**
-   * Очистка текста от Markdown, ссылок, спецсимволов, эмодзи и обрезка до 4000 символов
+   * Очистка текста перед синтезом голоса
    */
   public cleanText(text: string): string {
-    text = cleanForMax(text);
-    let cleaned = String(text || "")
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`[^`]+`/g, '')
-      .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-      .replace(/[#*_~>|]/g, '')
-      .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (!cleaned) {
-      return "";
-    }
-
-    const MAX_VOICE_LENGTH = 4000;
-    if (cleaned.length > MAX_VOICE_LENGTH) {
-      let cutIndex = -1;
-      const punctuationMarks = ['. ', '! ', '? ', '.\n', '!\n', '?\n', '\n'];
-
-      for (const p of punctuationMarks) {
-        const lastIdx = cleaned.lastIndexOf(p, MAX_VOICE_LENGTH);
-        if (lastIdx > cutIndex && lastIdx >= 120) {
-          cutIndex = lastIdx + 1;
-        }
-      }
-
-      if (cutIndex === -1) {
-        const lastSpace = cleaned.lastIndexOf(' ', MAX_VOICE_LENGTH - 25);
-        cutIndex = lastSpace > 100 ? lastSpace : MAX_VOICE_LENGTH - 25;
-      }
-
-      cleaned = cleaned.slice(0, cutIndex).trim() + " Хотите, я продолжу?";
-      logger.info(`✂️ [MaxAdapter] Text trimmed to ${cleaned.length} chars for audio speech`);
-    }
-
-    return cleaned;
+    return prepareVoiceText(text);
   }
 
   /**
@@ -322,10 +308,11 @@ export class MaxAdapter {
     // --- Шаг 2 каскада: Microsoft Edge TTS (MsEdgeTTS) ---
     if (!audioBuffer || audioBuffer.length === 0) {
       try {
+        console.log('🎙️ [TTS] DmitryNeural, символов: ' + cleanedText.length);
         const tts = new MsEdgeTTS();
-        const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
+        const voiceName = 'ru-RU-DmitryNeural';
         await tts.setMetadata(voiceName, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-        const streamRes = tts.toStream(cleanedText);
+        const streamRes = tts.toStream(cleanedText, { rate: '-8%', pitch: '-4Hz' });
         const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
 
         const chunks: Buffer[] = [];

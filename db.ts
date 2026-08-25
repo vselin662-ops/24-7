@@ -168,6 +168,22 @@ try {
       period_days INTEGER DEFAULT 365
     );
 
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      chat_id TEXT PRIMARY KEY,
+      plan TEXT,
+      paid_until TEXT,
+      active INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT,
+      plan TEXT,
+      amount INTEGER,
+      status TEXT,
+      created_at TEXT
+    );
+
     -- Business Mentor Tables
     CREATE TABLE IF NOT EXISTS business_profile (
       tenant_id TEXT PRIMARY KEY,

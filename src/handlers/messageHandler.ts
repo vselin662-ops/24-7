@@ -1,5 +1,6 @@
 import { hasUserInteractedBefore, markUserAsVisited } from '../database/sessions.db';
 import { getAIResponse } from '../services/aiOrchestrator';
+import { prepareVoiceText } from '../adapters/MaxAdapter';
 
 export async function handleIncomingMessage(
   chatId: string,
@@ -60,7 +61,10 @@ export async function handleIncomingMessage(
 
   const SYSTEM_PROMPT = `Ты говоришь на грамотном литературном русском языке, как учитель русского языка и литературы. Без markdown, без звёздочек, без решёток, без таблиц, без символов-разделителей. Обычный связный текст с абзацами и правильной пунктуацией. Тон доброжелательный, точный, богатый.
 
-Ты голосовой ассистент Selin AI. Отвечай на вопросы пользователя ПОДРОБНО и РАЗВЕРНУТО. Твой ответ должен звучать как естественная речь живого человека, продолжительностью 20-40 секунд. 
+Ты голосовой ассистент Selin AI.
+
+Правила голосовых ответов. Длину выбирай сам: если вопрос короткий и простой — отвечай одним-двумя предложениями; если просят объяснить, рассказать или разобрать — связный ответ из 4-8 предложений. Никогда не начинай с междометий "ой", "ах", "ох", "ну", "вот". Говори как профессиональный диктор: спокойно, точно, литературным русским языком.
+
 СТРОГИЕ ПРАВИЛА ДЛЯ ОЗВУЧКИ:
 - НИКОГДА не используй Markdown (никаких звездочек, решеток, тире для списков, обратных кавычек).
 - НИКОГДА не используй смайлики и эмодзи.
@@ -75,14 +79,8 @@ export async function handleIncomingMessage(
   if (shouldReplyWithText) {
     await safeSendMessageToChat(maxBot, chatId, llmResponse);
   } else {
-    // Очистка текста для TTS: убираем код, списки, спецсимволы, эмодзи, чтобы озвучивалось идеально
-    const cleanText = llmResponse
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/`[^`]+`/g, '')
-      .replace(/[#*_~>]/g, '')
-      .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '') // убираем эмодзи
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Очистка текста для TTS через prepareVoiceText
+    const cleanText = prepareVoiceText(llmResponse);
 
     if (cleanText) {
       await synthesizeAndSendVoice(maxBot, chatId, cleanText);
