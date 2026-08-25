@@ -133,6 +133,10 @@ class PrometheusMetricsRegistry {
     this.setGauge("active_tenants", count);
   }
 
+  public getContentType(): string {
+    return "text/plain; version=0.0.4; charset=utf-8";
+  }
+
   public getMetrics(): string {
     this.updateActiveTenantsGauge();
     const lines: string[] = [];

@@ -53,8 +53,8 @@ export function cleanForMax(text: string): string {
     .trim();
 }
 
-export { числительное, normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "../utils/voiceNormalizer";
-import { normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "../utils/voiceNormalizer";
+export { numberToWords, cardinal, ordinalM, ordinalF, ordinalGenM, ordinalPrepM, yearToSpeech, числительное, normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "../utils/voiceNormalizer";
+import { normalizeForVoice as normalizeVoiceUtil } from "../utils/voiceNormalizer";
 
 export function prepareVoiceText(text: string): string {
   if (!text) return '';
@@ -79,21 +79,13 @@ export function prepareVoiceText(text: string): string {
 
 /**
  * Умная нормализация чисел для голосового произношения (ТОЛЬКО для TTS)
- * Пайплайн TTS: cleanForMax -> prepareVoiceText -> normalizeForVoice -> edge-tts
+ * Пайплайн TTS: cleanForMax -> prepareVoiceText -> normalizeForVoice (ВЕСЬ текст целиком) -> ТОЛЬКО ПОТОМ разбивка на чанки для TTS
  */
 export function normalizeForVoice(text: string): string {
   if (!text) return '';
-  const initialText = text;
-  let res = prepareVoiceText(text);
-  if (!res) return '';
-
-  res = normalizeBiblicalReferences(res);
-  res = normalizeYears(res);
-  res = normalizeTimeOfDay(res);
-  res = normalizeHours12(res);
-
-  console.log('🎙️ [TTS] нормализация: ' + JSON.stringify({ in: initialText, out: res }));
-  return res;
+  const pre = prepareVoiceText(text);
+  if (!pre) return '';
+  return normalizeVoiceUtil(pre);
 }
 
 export function splitTextSmart(text: string, maxLen: number): string[] {
@@ -525,13 +517,14 @@ export class MaxAdapter {
   /**
    * Отправка ответа пользователю (голосом или текстом)
    */
-  public async sendMessage(chatId: string | number, response: AIResponse, isVoiceInput: boolean = false): Promise<void> {
+  public async sendMessage(chatId: string | number, response: AIResponse | string, isVoiceInput: boolean = false): Promise<void> {
     const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    const text = typeof response === 'string' ? response : response.text;
 
     // Если пришло голосовое или ключевое слово для голоса → отвечаем голосом
     if (isVoiceInput) {
       try {
-        await this.synthesizeAndSendVoice(cleanId, response.text);
+        await this.synthesizeAndSendVoice(cleanId, text);
         logger.info(`🎤 [MaxAdapter] Voice reply sent to chat ${cleanId}`);
         return;
       } catch (err: unknown) {
@@ -541,7 +534,12 @@ export class MaxAdapter {
     }
 
     // Если текст → отправляем текст (по умолчанию)
-    await this.safeSendMessageToChat(cleanId, response.text);
+    await this.safeSendMessageToChat(cleanId, text);
+  }
+
+  public async sendVoice(chatId: string | number, text: string): Promise<void> {
+    const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+    await this.synthesizeAndSendVoice(cleanId, text);
   }
 
   /**

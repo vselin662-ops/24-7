@@ -1,61 +1,48 @@
 /**
  * Voice Normalization Utilities for Selin AI (TTS-only)
  * 
- * Rules:
- * a) Biblical references (e.g. 'Иоанна 3:17' -> 'Иоанна, глава третья, стих семнадцатый', 'Псалом 1:13' -> 'Псалом первый, стих тринадцатый')
- * b) Years (1000-2999) in appropriate cases (e.g. '1892 год' -> 'тысяча восемьсот девяносто второго года', 'в 1812 году' -> 'в тысяча восемьсот двенадцатом году')
- * c) Time of day HH:MM (e.g. 'на часах 13:15' -> 'на часах тринадцать часов пятнадцать минут')
- * d) 12-hour format (e.g. '5 часов вечера' -> 'пять часов вечера')
+ * Strict pipeline:
+ * cleanForMax -> prepareVoiceText -> normalizeForVoice (entire text) -> chunking for TTS
+ * 
+ * Rules (strictly in order, all with /g flag):
+ * a) Biblical references (all 66 books + abbreviations + verse ranges)
+ * b) Dates (e.g. '1 сентября 2026', '25 декабря')
+ * c) Years 800-2099 (e.g. 'в 862 году', 'в 1892 году', '1945 год', '2026 год')
+ * d) Centuries Roman IV-XXI (e.g. 'XIX век', 'XXI век', 'в XIX веке')
+ * e) Time HH:MM (e.g. '13:15', '13:00')
+ * f) Money (e.g. '200 руб', '1800₽')
+ * g) Percentages (e.g. '50%')
+ * h) Phone numbers (e.g. '+7 999 123-45-67')
+ * i) Numbers 1-999 before nouns (e.g. '5 стихов', '7 часов')
  */
 
-export type OrdinalGenderCase = 'female' | 'male' | 'male_gen' | 'male_prep';
+export type Gender = 'male' | 'female' | 'neuter';
 
-const ORD_UNITS: Record<number, Record<OrdinalGenderCase, string>> = {
-  1: { female: 'первая', male: 'первый', male_gen: 'первого', male_prep: 'первом' },
-  2: { female: 'вторая', male: 'второй', male_gen: 'второго', male_prep: 'втором' },
-  3: { female: 'третья', male: 'третий', male_gen: 'третьего', male_prep: 'третьем' },
-  4: { female: 'четвёртая', male: 'четвёртый', male_gen: 'четвёртого', male_prep: 'четвёртом' },
-  5: { female: 'пятая', male: 'пятый', male_gen: 'пятого', male_prep: 'пятом' },
-  6: { female: 'шестая', male: 'шестой', male_gen: 'шестого', male_prep: 'шестом' },
-  7: { female: 'седьмая', male: 'седьмой', male_gen: 'седьмого', male_prep: 'седьмом' },
-  8: { female: 'восьмая', male: 'восьмой', male_gen: 'восьмого', male_prep: 'восьмом' },
-  9: { female: 'девятая', male: 'девятый', male_gen: 'девятого', male_prep: 'девятом' },
-  10: { female: 'десятая', male: 'десятый', male_gen: 'десятого', male_prep: 'десятом' },
-  11: { female: 'одиннадцатая', male: 'одиннадцатый', male_gen: 'одиннадцатого', male_prep: 'одиннадцатом' },
-  12: { female: 'двенадцатая', male: 'двенадцатый', male_gen: 'двенадцатого', male_prep: 'двенадцатом' },
-  13: { female: 'тринадцатая', male: 'тринадцатый', male_gen: 'тринадцатого', male_prep: 'тринадцатом' },
-  14: { female: 'четырнадцатая', male: 'четырнадцатый', male_gen: 'четырнадцатого', male_prep: 'четырнадцатом' },
-  15: { female: 'пятнадцатая', male: 'пятнадцатый', male_gen: 'пятнадцатого', male_prep: 'пятнадцатом' },
-  16: { female: 'шестнадцатая', male: 'шестнадцатый', male_gen: 'шестнадцатого', male_prep: 'шестнадцатом' },
-  17: { female: 'семнадцатая', male: 'семнадцатый', male_gen: 'семнадцатого', male_prep: 'семнадцатом' },
-  18: { female: 'восемнадцатая', male: 'восемнадцатый', male_gen: 'восемнадцатого', male_prep: 'восемнадцатом' },
-  19: { female: 'девятнадцатая', male: 'девятнадцатый', male_gen: 'девятнадцатого', male_prep: 'девятнадцатом' },
+const CARDINAL_UNITS: Record<number, Record<Gender, string>> = {
+  0: { male: 'ноль', female: 'ноль', neuter: 'ноль' },
+  1: { male: 'один', female: 'одна', neuter: 'одно' },
+  2: { male: 'два', female: 'две', neuter: 'два' },
+  3: { male: 'три', female: 'три', neuter: 'три' },
+  4: { male: 'четыре', female: 'четыре', neuter: 'четыре' },
+  5: { male: 'пять', female: 'пять', neuter: 'пять' },
+  6: { male: 'шесть', female: 'шесть', neuter: 'шесть' },
+  7: { male: 'семь', female: 'семь', neuter: 'семь' },
+  8: { male: 'восемь', female: 'восемь', neuter: 'восемь' },
+  9: { male: 'девять', female: 'девять', neuter: 'девять' },
+  10: { male: 'десять', female: 'десять', neuter: 'десять' },
+  11: { male: 'одиннадцать', female: 'одиннадцать', neuter: 'одиннадцать' },
+  12: { male: 'двенадцать', female: 'двенадцать', neuter: 'двенадцать' },
+  13: { male: 'тринадцать', female: 'тринадцать', neuter: 'тринадцать' },
+  14: { male: 'четырнадцать', female: 'четырнадцать', neuter: 'четырнадцать' },
+  15: { male: 'пятнадцать', female: 'пятнадцать', neuter: 'пятнадцать' },
+  16: { male: 'шестнадцать', female: 'шестнадцать', neuter: 'шестнадцать' },
+  17: { male: 'семнадцать', female: 'семнадцать', neuter: 'семнадцать' },
+  18: { male: 'восемнадцать', female: 'восемнадцать', neuter: 'восемнадцать' },
+  19: { male: 'девятнадцать', female: 'девятнадцать', neuter: 'девятнадцать' },
+  20: { male: 'двадцать', female: 'двадцать', neuter: 'двадцать' },
 };
 
-const ORD_TENS: Record<number, Record<OrdinalGenderCase, string>> = {
-  20: { female: 'двадцатая', male: 'двадцатый', male_gen: 'двадцатого', male_prep: 'двадцатом' },
-  30: { female: 'тридцатая', male: 'тридцатый', male_gen: 'тридцатого', male_prep: 'тридцатом' },
-  40: { female: 'сороковая', male: 'сороковой', male_gen: 'сорокового', male_prep: 'сороковом' },
-  50: { female: 'пятидесятая', male: 'пятидесятый', male_gen: 'пятидесятого', male_prep: 'пятидесятом' },
-  60: { female: 'шестидесятая', male: 'шестидесятый', male_gen: 'шестидесятого', male_prep: 'шестидесятом' },
-  70: { female: 'семидесятая', male: 'семидесятый', male_gen: 'семидесятого', male_prep: 'семидесятом' },
-  80: { female: 'восьмидесятая', male: 'восьмидесятый', male_gen: 'восьмидесятого', male_prep: 'восьмидесятом' },
-  90: { female: 'девяностая', male: 'девяностый', male_gen: 'девяностого', male_prep: 'девяностом' },
-};
-
-const ORD_HUNDREDS: Record<number, Record<OrdinalGenderCase, string>> = {
-  100: { female: 'сотая', male: 'сотый', male_gen: 'сотого', male_prep: 'сотом' },
-  200: { female: 'двухсотая', male: 'двухсотый', male_gen: 'двухсотого', male_prep: 'двухсотом' },
-  300: { female: 'трёхсотая', male: 'трёхсотый', male_gen: 'трёхсотого', male_prep: 'трёхсотом' },
-  400: { female: 'четырёхсотая', male: 'четырёхсотый', male_gen: 'четырёхсотого', male_prep: 'четырёхсотом' },
-  500: { female: 'пятисотая', male: 'пятисотый', male_gen: 'пятисотого', male_prep: 'пятисотом' },
-  600: { female: 'шестисотая', male: 'шестисотый', male_gen: 'шестисотого', male_prep: 'шестисотом' },
-  700: { female: 'семисотая', male: 'семисотый', male_gen: 'семисотого', male_prep: 'семисотом' },
-  800: { female: 'восьмисотая', male: 'восьмисотый', male_gen: 'восьмисотого', male_prep: 'восьмисотом' },
-  900: { female: 'девятисотая', male: 'девятисотый', male_gen: 'девятисотого', male_prep: 'девятисотом' },
-};
-
-const CARD_TENS: Record<number, string> = {
+const CARDINAL_TENS: Record<number, string> = {
   20: 'двадцать',
   30: 'тридцать',
   40: 'сорок',
@@ -66,7 +53,7 @@ const CARD_TENS: Record<number, string> = {
   90: 'девяносто',
 };
 
-const CARD_HUNDREDS: Record<number, string> = {
+const CARDINAL_HUNDREDS: Record<number, string> = {
   100: 'сто',
   200: 'двести',
   300: 'триста',
@@ -79,9 +66,130 @@ const CARD_HUNDREDS: Record<number, string> = {
 };
 
 /**
- * Переводит число в порядковое числительное нужного рода и падежа
- * @param n Число от 1 до 2999
- * @param genderCase 'female' (первая), 'male' (первый), 'male_gen' (первого), 'male_prep' (первом)
+ * 1. Количественные числительные 0-999999 словами
+ * numberToWords(200) -> 'двести'
+ * numberToWords(1800) -> 'тысяча восемьсот'
+ * numberToWords(5) -> 'пять'
+ */
+export function numberToWords(n: number, gender: Gender = 'male'): string {
+  if (n === 0) return 'ноль';
+  if (n < 0) return 'минус ' + numberToWords(-n, gender);
+
+  const parts: string[] = [];
+
+  // Тысячи (1 - 999 тыс)
+  const thousands = Math.floor(n / 1000);
+  let rem = n % 1000;
+
+  if (thousands > 0) {
+    const thRem100 = thousands % 100;
+    const thRem10 = thousands % 10;
+
+    let thWord = 'тысяч';
+    if (thRem100 < 10 || thRem100 >= 20) {
+      if (thRem10 === 1) thWord = 'тысяча';
+      else if (thRem10 >= 2 && thRem10 <= 4) thWord = 'тысячи';
+    }
+
+    if (thousands === 1) {
+      parts.push('тысяча');
+    } else {
+      // Для тысяч единицы склоняются по женскому роду: 'одна тысяча', 'две тысячи'
+      const thNumStr = numberToWordsUnder1000(thousands, 'female');
+      parts.push(`${thNumStr} ${thWord}`);
+    }
+  }
+
+  // Сотни, десятки, единицы (0 - 999)
+  if (rem > 0) {
+    parts.push(numberToWordsUnder1000(rem, gender));
+  }
+
+  return parts.join(' ');
+}
+
+function numberToWordsUnder1000(rem: number, gender: Gender): string {
+  const parts: string[] = [];
+  const hundreds = Math.floor(rem / 100) * 100;
+  const rem100 = rem % 100;
+
+  if (hundreds > 0) {
+    parts.push(CARDINAL_HUNDREDS[hundreds] || String(hundreds));
+  }
+
+  if (rem100 > 0) {
+    if (rem100 <= 20) {
+      parts.push(CARDINAL_UNITS[rem100]?.[gender] || String(rem100));
+    } else {
+      const tens = Math.floor(rem100 / 10) * 10;
+      const units = rem100 % 10;
+      parts.push(CARDINAL_TENS[tens] || String(tens));
+      if (units > 0) {
+        parts.push(CARDINAL_UNITS[units]?.[gender] || String(units));
+      }
+    }
+  }
+
+  return parts.join(' ');
+}
+
+// Алиас для обратной совместимости
+export const cardinal = numberToWords;
+
+// ----------------------------------------------------
+// ПОРЯДКОВЫЕ ЧИСЛИТЕЛЬНЫЕ
+// ----------------------------------------------------
+
+export type OrdinalGenderCase = 'male' | 'female' | 'male_gen' | 'male_prep';
+
+const ORD_UNITS: Record<number, Record<OrdinalGenderCase, string>> = {
+  1: { male: 'первый', female: 'первая', male_gen: 'первого', male_prep: 'первом' },
+  2: { male: 'второй', female: 'вторая', male_gen: 'второго', male_prep: 'втором' },
+  3: { male: 'третий', female: 'третья', male_gen: 'третьего', male_prep: 'третьем' },
+  4: { male: 'четвёртый', female: 'четвёртая', male_gen: 'четвёртого', male_prep: 'четвёртом' },
+  5: { male: 'пятый', female: 'пятая', male_gen: 'пятого', male_prep: 'пятом' },
+  6: { male: 'шестой', female: 'шестая', male_gen: 'шестого', male_prep: 'шестом' },
+  7: { male: 'седьмой', female: 'седьмая', male_gen: 'седьмого', male_prep: 'седьмом' },
+  8: { male: 'восьмой', female: 'восьмая', male_gen: 'восьмого', male_prep: 'восьмом' },
+  9: { male: 'девятый', female: 'девятая', male_gen: 'девятого', male_prep: 'девятом' },
+  10: { male: 'десятый', female: 'десятая', male_gen: 'десятого', male_prep: 'десятом' },
+  11: { male: 'одиннадцатый', female: 'одиннадцатая', male_gen: 'одиннадцатого', male_prep: 'одиннадцатом' },
+  12: { male: 'двенадцатый', female: 'двенадцатая', male_gen: 'двенадцатого', male_prep: 'двенадцатом' },
+  13: { male: 'тринадцатый', female: 'тринадцатая', male_gen: 'тринадцатого', male_prep: 'тринадцатом' },
+  14: { male: 'четырнадцатый', female: 'четырнадцатая', male_gen: 'четырнадцатого', male_prep: 'четырнадцатом' },
+  15: { male: 'пятнадцатый', female: 'пятнадцатая', male_gen: 'пятнадцатого', male_prep: 'пятнадцатом' },
+  16: { male: 'шестнадцатый', female: 'шестнадцатая', male_gen: 'шестнадцатого', male_prep: 'шестнадцатом' },
+  17: { male: 'семнадцатый', female: 'семнадцатая', male_gen: 'семнадцатого', male_prep: 'семнадцатом' },
+  18: { male: 'восемнадцатый', female: 'восемнадцатая', male_gen: 'восемнадцатого', male_prep: 'восемнадцатом' },
+  19: { male: 'девятнадцатый', female: 'девятнадцатая', male_gen: 'девятнадцатого', male_prep: 'девятнадцатом' },
+  20: { male: 'двадцатый', female: 'двадцатая', male_gen: 'двадцатого', male_prep: 'двадцатом' },
+};
+
+const ORD_TENS: Record<number, Record<OrdinalGenderCase, string>> = {
+  20: { male: 'двадцатый', female: 'двадцатая', male_gen: 'двадцатого', male_prep: 'двадцатом' },
+  30: { male: 'тридцатый', female: 'тридцатая', male_gen: 'тридцатого', male_prep: 'тридцатом' },
+  40: { male: 'сороковой', female: 'сороковая', male_gen: 'сорокового', male_prep: 'сороковом' },
+  50: { male: 'пятидесятый', female: 'пятидесятая', male_gen: 'пятидесятого', male_prep: 'пятидесятом' },
+  60: { male: 'шестидесятый', female: 'шестидесятая', male_gen: 'шестидесятого', male_prep: 'шестидесятом' },
+  70: { male: 'семидесятый', female: 'семидесятая', male_gen: 'семидесятого', male_prep: 'семидесятом' },
+  80: { male: 'восьмидесятый', female: 'восьмидесятая', male_gen: 'восьмидесятого', male_prep: 'восьмидесятом' },
+  90: { male: 'девяностый', female: 'девяностая', male_gen: 'девяностого', male_prep: 'девяностом' },
+};
+
+const ORD_HUNDREDS: Record<number, Record<OrdinalGenderCase, string>> = {
+  100: { male: 'сотый', female: 'сотая', male_gen: 'сотого', male_prep: 'сотом' },
+  200: { male: 'двухсотый', female: 'двухсотая', male_gen: 'двухсотого', male_prep: 'двухсотом' },
+  300: { male: 'трёхсотый', female: 'трёхсотая', male_gen: 'трёхсотого', male_prep: 'трёхсотом' },
+  400: { male: 'четырёхсотый', female: 'четырёхсотая', male_gen: 'четырёхсотого', male_prep: 'четырёхсотом' },
+  500: { male: 'пятисотый', female: 'пятисотая', male_gen: 'пятисотого', male_prep: 'пятисотом' },
+  600: { male: 'шестисотый', female: 'шестисотая', male_gen: 'шестисотого', male_prep: 'шестисотом' },
+  700: { male: 'семисотый', female: 'семисотая', male_gen: 'семисотого', male_prep: 'семисотом' },
+  800: { male: 'восьмисотый', female: 'восьмисотая', male_gen: 'восьмисотого', male_prep: 'восьмисотом' },
+  900: { male: 'девятисотый', female: 'девятисотая', male_gen: 'девятисотого', male_prep: 'девятисотом' },
+};
+
+/**
+ * Базовая функция порядкового числительного
  */
 export function числительное(n: number, genderCase: OrdinalGenderCase = 'male'): string {
   if (n <= 0) return String(n);
@@ -96,16 +204,16 @@ export function числительное(n: number, genderCase: OrdinalGenderCas
     if (rem === 0) {
       if (thousands === 1) {
         const ord1000: Record<OrdinalGenderCase, string> = {
-          female: 'тысячная',
           male: 'тысячный',
+          female: 'тысячная',
           male_gen: 'тысячного',
           male_prep: 'тысячном',
         };
         return ord1000[genderCase];
       } else if (thousands === 2) {
         const ord2000: Record<OrdinalGenderCase, string> = {
-          female: 'двухтысячная',
           male: 'двухтысячный',
+          female: 'двухтысячная',
           male_gen: 'двухтысячного',
           male_prep: 'двухтысячном',
         };
@@ -114,6 +222,7 @@ export function числительное(n: number, genderCase: OrdinalGenderCas
     } else {
       if (thousands === 1) parts.push('тысяча');
       else if (thousands === 2) parts.push('две тысячи');
+      else parts.push(`${numberToWords(thousands, 'female')} тысяч`);
     }
   }
 
@@ -126,13 +235,13 @@ export function числительное(n: number, genderCase: OrdinalGenderCas
       parts.push(ORD_HUNDREDS[hundreds]?.[genderCase] || String(hundreds));
       return parts.join(' ');
     } else {
-      parts.push(CARD_HUNDREDS[hundreds] || String(hundreds));
+      parts.push(CARDINAL_HUNDREDS[hundreds] || String(hundreds));
     }
   }
 
   // Десятки и единицы
   if (rem > 0) {
-    if (rem < 20) {
+    if (rem <= 20) {
       parts.push(ORD_UNITS[rem]?.[genderCase] || String(rem));
     } else {
       const tens = Math.floor(rem / 10) * 10;
@@ -141,7 +250,7 @@ export function числительное(n: number, genderCase: OrdinalGenderCas
       if (units === 0) {
         parts.push(ORD_TENS[tens]?.[genderCase] || String(tens));
       } else {
-        parts.push(CARD_TENS[tens] || String(tens));
+        parts.push(CARDINAL_TENS[tens] || String(tens));
         parts.push(ORD_UNITS[units]?.[genderCase] || String(units));
       }
     }
@@ -150,263 +259,435 @@ export function числительное(n: number, genderCase: OrdinalGenderCas
   return parts.join(' ');
 }
 
-// Кардинальные числительные для часов и минут
-const CARD_UNITS_HOURS: Record<number, string> = {
-  0: 'ноль',
-  1: 'один',
-  2: 'два',
-  3: 'три',
-  4: 'четыре',
-  5: 'пять',
-  6: 'шесть',
-  7: 'семь',
-  8: 'восемь',
-  9: 'девять',
-  10: 'десять',
-  11: 'одиннадцать',
-  12: 'двенадцать',
-  13: 'тринадцать',
-  14: 'четырнадцать',
-  15: 'пятнадцать',
-  16: 'шестнадцать',
-  17: 'семнадцать',
-  18: 'восемнадцать',
-  19: 'девятнадцать',
-  20: 'двадцать',
-  21: 'двадцать один',
-  22: 'двадцать два',
-  23: 'двадцать три',
+/**
+ * Порядковое числительное мужского рода: первый, третий, семнадцатый
+ */
+export function ordinalM(n: number): string {
+  return числительное(n, 'male');
+}
+
+/**
+ * Порядковое числительное женского рода: первая, третья, семнадцатая
+ */
+export function ordinalF(n: number): string {
+  return числительное(n, 'female');
+}
+
+/**
+ * Порядковое числительное мужского рода в родительном падеже для годов и дат: первого, девяносто второго, две тысячи двадцать шестого
+ */
+export function ordinalGenM(n: number): string {
+  return числительное(n, 'male_gen');
+}
+
+/**
+ * Порядковое числительное мужского рода в предложном падеже для годов: первом, девяносто втором, две тысячи двадцать шестом
+ */
+export function ordinalPrepM(n: number): string {
+  return числительное(n, 'male_prep');
+}
+
+/**
+ * Преобразование года (800-2099) в звучание для речи
+ * yearToSpeech(862) -> 'восемьсот шестьдесят второго'
+ * yearToSpeech(1892) -> 'тысяча восемьсот девяносто второго'
+ * yearToSpeech(2026) -> 'две тысячи двадцать шестого'
+ * yearToSpeech(1892, true) -> 'тысяча восемьсот девяносто втором'
+ */
+export function yearToSpeech(year: number | string, isPrepositional: boolean = false): string {
+  const y = typeof year === 'string' ? parseInt(year, 10) : year;
+  if (isNaN(y)) return String(year);
+  return isPrepositional ? ordinalPrepM(y) : ordinalGenM(y);
+}
+
+// ----------------------------------------------------
+// ПРАВИЛА ЗАМЕНЫ (ВСЕ С ФЛАГОМ g, СТРОГИЙ ПОРЯДОК)
+// ----------------------------------------------------
+
+/**
+ * а) Библейские ссылки:
+ * ПОЛНЫЙ словарь русских названий и сокращений всех 66 книг Библии
+ * (книга)\s+(\d{1,3})[:.](\d{1,3})(-\d{1,3})?
+ */
+const BIBLE_BOOKS_PATTERN = [
+  // Ветхий Завет
+  'Бытие', 'Быт', 'Бытия',
+  'Исход', 'Исх', 'Исхода',
+  'Левит', 'Лев', 'Левита',
+  'Числа', 'Чис', 'Числ', 'Чисел',
+  'Второзаконие', 'Втор', 'Второзакония',
+  'Иисус Навин', 'Иисуса Навина', 'Навин', 'Нав',
+  'Судьи', 'Судей', 'Суд',
+  'Руфь', 'Руфи', 'Руф',
+  '1\\s*Царств', '1-я\\s*Царств', '1Цар', '1\\s*Цар',
+  '2\\s*Царств', '2-я\\s*Царств', '2Цар', '2\\s*Цар',
+  '3\\s*Царств', '3-я\\s*Царств', '3Цар', '3\\s*Цар',
+  '4\\s*Царств', '4-я\\s*Царств', '4Цар', '4\\s*Цар',
+  '1\\s*Паралипоменон', '1-я\\s*Паралипоменон', '1Пар', '1\\s*Пар',
+  '2\\s*Паралипоменон', '2-я\\s*Паралипоменон', '2Пар', '2\\s*Пар',
+  'Ездра', 'Ездры', 'Езд',
+  'Неемия', 'Неемии', 'Неем',
+  'Есфирь', 'Есфири', 'Есф',
+  'Иов', 'Иова',
+  'Псалтирь', 'Псалом', 'Псалмы', 'Пс',
+  'Притчи', 'Притчей', 'Притча', 'Притч', 'Прит',
+  'Екклесиаст', 'Екклесиаста', 'Экклезиаст', 'Еккл', 'Екк',
+  'Песнь\\s+Песней', 'Песни\\s+Песней', 'Песн', 'Песнь',
+  'Исаия', 'Исаии', 'Исайи', 'Ис',
+  'Иеремия', 'Иеремии', 'Иер',
+  'Плач\\s+Иеремии', 'Плач',
+  'Иезекииль', 'Иезекииля', 'Иез',
+  'Даниил', 'Даниила', 'Дан',
+  'Осия', 'Осии', 'Ос',
+  'Иоиль', 'Иоиля', 'Иоил',
+  'Амос', 'Амоса', 'Ам',
+  'Авдий', 'Авдия', 'Авд',
+  'Иона', 'Ионы', 'Ион',
+  'Михей', 'Михея', 'Мих',
+  'Наум', 'Наума',
+  'Аввакум', 'Аввакума', 'Авв',
+  'Софония', 'Софонии', 'Соф',
+  'Аггей', 'Аггея', 'Агг',
+  'Захария', 'Захарии', 'Зах',
+  'Малахия', 'Малахии', 'Мал',
+
+  // Новый Завет
+  'Матфея', 'От\\s+Матфея', 'Матфей', 'Мф', 'Мт',
+  'Марка', 'От\\s+Марка', 'Марк', 'Мк', 'Мр',
+  'Луки', 'От\\s+Луки', 'Лука', 'Лк',
+  'Иоанна', 'От\\s+Иоанна', 'Иоанн', 'Ин', 'Инн',
+  'Деяния(?:\\s+апостолов)?', 'Деяний', 'Деян', 'Дея',
+  'Иакова', 'Иак',
+  '1\\s*Петра', '1-е\\s*Петра', '1Пет', '1\\s*Пет',
+  '2\\s*Петра', '2-е\\s*Петра', '2Пет', '2\\s*Пет',
+  '1\\s*Иоанна', '1-е\\s*Иоанна', '1Ин', '1\\s*Ин',
+  '2\\s*Иоанна', '2-е\\s*Иоанна', '2Ин', '2\\s*Ин',
+  '3\\s*Иоанна', '3-е\\s*Иоанна', '3Ин', '3\\s*Ин',
+  'Иуды', 'Иуд',
+  'Римлянам', 'К\\s+Римлянам', 'Рим',
+  '1\\s*Коринфянам', '1-е\\s*Коринфянам', '1Кор', '1\\s*Кор',
+  '2\\s*Коринфянам', '2-е\\s*Коринфянам', '2Кор', '2\\s*Кор',
+  'Галатам', 'К\\s+Галатам', 'Гал',
+  'Ефесянам', 'К\\s+Ефесянам', 'Еф', 'Ефес',
+  'Филиппийцам', 'К\\s+Филиппийцам', 'Флп', 'Фил',
+  'Колоссянам', 'К\\s+Колоссянам', 'Кол',
+  '1\\s*Фессалоникийцам', '1\\s*Солунянам', '1Фесс', '1Сол',
+  '2\\s*Фессалоникийцам', '2\\s*Солунянам', '2Фесс', '2Сол',
+  '1\\s*Тимофею', '1-е\\s*Тимофею', '1Тим', '1\\s*Тим',
+  '2\\s*Тимофею', '2-е\\s*Тимофею', '2Тим', '2\\s*Тим',
+  'Титу', 'К\\s+Титу', 'Тит',
+  'Филимону', 'К\\s+Филимону', 'Флм',
+  'Евреям', 'К\\s+Евреям', 'Евр',
+  'Откровение', 'Откровения', 'Апокалипсис', 'Откр', 'Отк',
+].join('|');
+
+export function replaceBiblicalReferences(text: string, countRef?: { count: number }): string {
+  const bibleRegex = new RegExp(
+    `(?<![а-яА-ЯёЁ0-9a-zA-Z])(${BIBLE_BOOKS_PATTERN})\\s+(\\d{1,3})[:.](\\d{1,3})(?:-(\\d{1,3}))?(?!\\d)`,
+    'gi'
+  );
+
+  return text.replace(bibleRegex, (_match, book, chStr, vStartStr, vEndStr) => {
+    if (countRef) countRef.count++;
+    const ch = parseInt(chStr, 10);
+    const vStart = parseInt(vStartStr, 10);
+    const isPsalm = /^(?:псалом|псалтирь|псалмы|пс)$/i.test(book.trim());
+
+    if (vEndStr) {
+      const vEnd = parseInt(vEndStr, 10);
+      if (isPsalm) {
+        return `${book} ${ordinalM(ch)}, стихи с ${ordinalGenM(vStart)} по ${ordinalM(vEnd)}`;
+      }
+      return `${book}, глава ${ordinalF(ch)}, стихи с ${ordinalGenM(vStart)} по ${ordinalM(vEnd)}`;
+    }
+
+    if (isPsalm) {
+      return `${book} ${ordinalM(ch)}, стих ${ordinalM(vStart)}`;
+    }
+    return `${book}, глава ${ordinalF(ch)}, стих ${ordinalM(vStart)}`;
+  });
+}
+
+/**
+ * б) Даты:
+ * (\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(\s+(1\d{3}|20\d{2}))?
+ * -> ordinalGenM(день) + ' ' + месяц (+ ' ' + yearToSpeech(год) + ' года')
+ */
+export function replaceDates(text: string, countRef?: { count: number }): string {
+  const datesRegex = /(?<!\d)(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+(8\d{2}|9\d{2}|1\d{3}|20\d{2})(?:\s*года)?)?(?![а-яА-ЯёЁ])/gi;
+
+  return text.replace(datesRegex, (_match, dayStr, monthStr, yearStr) => {
+    if (countRef) countRef.count++;
+    const day = parseInt(dayStr, 10);
+    const daySpeech = ordinalGenM(day);
+
+    if (yearStr) {
+      const y = parseInt(yearStr, 10);
+      return `${daySpeech} ${monthStr} ${yearToSpeech(y, false)} года`;
+    }
+
+    return `${daySpeech} ${monthStr}`;
+  });
+}
+
+/**
+ * в) Годы:
+ * \b(8\d{2}|9\d{2}|1\d{3}|20\d{2})\s*(года|году|год|лет|г\.)
+ * -> yearToSpeech + падеж из оригинала
+ */
+export function replaceYears(text: string, countRef?: { count: number }): string {
+  const yearsRegex = /(?<!\d)(8\d{2}|9\d{2}|1\d{3}|20\d{2})\s*(года|году|год|лет|г\.)(?![а-яА-ЯёЁ])/gi;
+
+  return text.replace(yearsRegex, (_match, yStr, suffix) => {
+    if (countRef) countRef.count++;
+    const y = parseInt(yStr, 10);
+    const sufLower = suffix.toLowerCase();
+
+    if (sufLower === 'году') {
+      return `${yearToSpeech(y, true)} году`;
+    }
+    return `${yearToSpeech(y, false)} года`;
+  });
+}
+
+/**
+ * г) Века:
+ * \b(IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|XXI)\s*(век|века|веке)
+ * -> ordinalM(римское) + ' ' + склонение('век')
+ */
+const ROMAN_CENTURIES: Record<string, number> = {
+  IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10,
+  XI: 11, XII: 12, XIII: 13, XIV: 14, XV: 15, XVI: 16, XVII: 17, XVIII: 18, XIX: 19, XX: 20, XXI: 21
 };
 
-function formatHoursText(h: number): string {
-  const word = CARD_UNITS_HOURS[h] || String(h);
-  if (h === 1 || h === 21) {
-    return `${word} час`;
-  }
-  if ((h >= 2 && h <= 4) || (h >= 22 && h <= 24)) {
-    return `${word} часа`;
-  }
-  return `${word} часов`;
-}
+export function replaceCenturies(text: string, countRef?: { count: number }): string {
+  const centuriesRegex = /(?<![а-яА-ЯёЁa-zA-Z0-9])(IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX|XXI)\s*(век|века|веке|веком|веках)(?![а-яА-ЯёЁa-zA-Z0-9])/gi;
 
-function formatMinutesText(m: number): string {
-  if (m === 0) return '';
-  let word = '';
-  if (m < 20) {
-    if (m === 1) word = 'одна';
-    else if (m === 2) word = 'две';
-    else word = CARD_UNITS_HOURS[m] || String(m);
-  } else {
-    const tens = Math.floor(m / 10) * 10;
-    const units = m % 10;
-    const tensWord = CARD_TENS[tens] || String(tens);
-    if (units === 0) {
-      word = tensWord;
-    } else if (units === 1) {
-      word = `${tensWord} одна`;
-    } else if (units === 2) {
-      word = `${tensWord} две`;
-    } else {
-      word = `${tensWord} ${CARD_UNITS_HOURS[units]}`;
+  return text.replace(centuriesRegex, (_match, roman, form) => {
+    const n = ROMAN_CENTURIES[roman.toUpperCase()];
+    if (!n) return _match;
+
+    if (countRef) countRef.count++;
+    const formLower = form.toLowerCase();
+
+    if (formLower === 'веке') {
+      return `${ordinalPrepM(n)} веке`;
     }
-  }
-
-  const lastDigit = m % 10;
-  const isTeen = m >= 11 && m <= 19;
-  let unitForm = 'минут';
-  if (!isTeen) {
-    if (lastDigit === 1) unitForm = 'минута';
-    else if (lastDigit >= 2 && lastDigit <= 4) unitForm = 'минуты';
-  }
-
-  return `${word} ${unitForm}`;
-}
-
-// Список библейских книг
-const BIBLE_BOOKS_PATTERN =
-  '(?:(?:1[-е]?|2[-е]?|3[-е]?|1|2|3|Первое|Второе|Третье)\\s+)?(?:Иоанна|Иоанн|Матфея|Матфей|Марка|Марк|Луки|Лука|Псалом|Псалмы|Псалтирь|Притчи|Притчей|Бытие|Бытия|Исход|Исхода|Левит|Числа|Чисел|Второзаконие|Второзакония|Иисуса\\s+Навина|Иисус\\s+Навин|Судей|Руфь|Царств|Паралипоменон|Ездры|Неемии|Есфирь|Иова|Иов|Екклесиаст|Екклесиаста|Песнь\\s+Песней|Песни\\s+Песней|Исаии|Исаия|Иеремии|Иеремия|Плач\\s+Иеремии|Иезекииля|Иезекииль|Даниила|Даниил|Осии|Осия|Иоиля|Иоиль|Амоса|Амос|Авдия|Авдий|Ионы|Иона|Михея|Михей|Наума|Наум|Аввакума|Аввакум|Софонии|Софония|Аггея|Аггей|Захарии|Захария|Малахии|Малахия|Деяния|Деяний|Деяниях|Римлянам|Коринфянам|Галатам|Ефесянам|Филиппийцам|Колоссянам|Фессалоникийцам|Солунянам|Тимофею|Титу|Филимону|Евреям|Иакова|Петра|Иуды|Откровение|Откровения)';
-
-/**
- * а) Библейские ссылки
- * 'Иоанна 3:17' → 'Иоанна, глава третья, стих семнадцатый'
- * 'Псалом 1:13' → 'Псалом первый, стих тринадцатый'
- * 'Матфея 5:3' → 'Матфея, глава пятая, стих третий'
- */
-export function normalizeBiblicalReferences(text: string): string {
-  if (!text) return text;
-
-  // 1. Поиск: "Книга X:Y" или "Книга X : Y"
-  const regex = new RegExp(`(?<![а-яА-ЯёЁ0-9a-zA-Z])(${BIBLE_BOOKS_PATTERN})\\s+(\\d{1,3})\\s*:\\s*(\\d{1,3})(?![0-9])`, 'gi');
-
-  let result = text.replace(regex, (_match, book, chStr, vStr) => {
-    const chapterNum = parseInt(chStr, 10);
-    const verseNum = parseInt(vStr, 10);
-
-    const isPsalm = /^псалом|^псалтирь/i.test(book.trim());
-    if (isPsalm) {
-      const psOrd = числительное(chapterNum, 'male');
-      const vOrd = числительное(verseNum, 'male');
-      return `${book} ${psOrd}, стих ${vOrd}`;
+    if (formLower === 'века') {
+      return `${ordinalGenM(n)} века`;
     }
-
-    const chOrd = числительное(chapterNum, 'female');
-    const vOrd = числительное(verseNum, 'male');
-    return `${book}, глава ${chOrd}, стих ${vOrd}`;
+    if (formLower === 'веком') {
+      return `${ordinalM(n)} веком`;
+    }
+    return `${ordinalM(n)} век`;
   });
-
-  // 2. Обработка конструкций типа "глава X, стих Y" или "глава X:Y" без указания книги
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])глав[аеы]\s+(\\d{1,3})\\s*:\\s*(\\d{1,3})(?![0-9])/gi, (_match, chStr, vStr) => {
-    const chapterNum = parseInt(chStr, 10);
-    const verseNum = parseInt(vStr, 10);
-    const chOrd = числительное(chapterNum, 'female');
-    const vOrd = числительное(verseNum, 'male');
-    return `глава ${chOrd}, стих ${vOrd}`;
-  });
-
-  return result;
 }
 
 /**
- * б) Годы (1000-2999)
- * '1892 год' → 'тысяча восемьсот девяносто второго года'
- * '1945 год' → 'тысяча девятьсот сорок пятого года'
- * '2026 год' → 'две тысячи двадцать шестого года'
- * 'в 1812 году' → 'в тысяча восемьсот двенадцатом году'
- * '1917-го' → 'тысяча девятьсот семнадцатого'
- * '1917-м' → 'тысяча девятьсот семнадцатом'
+ * д) Время:
+ * \b([01]?\d|2[0-3]):([0-5]\d)\b
+ * -> numberToWords(ч)+' часов '+numberToWords(м)+' минут' (м==0 -> 'ровно')
  */
-export function normalizeYears(text: string): string {
-  if (!text) return text;
+export function replaceTime(text: string, countRef?: { count: number }): string {
+  const timeRegex = /(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)/g;
 
-  let result = text;
-
-  // 1. "в 1812 году" / "в 1812-м году"
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])в\s+([12]\d{3})\s*(?:-м|-ом|-ем)?\s*(?:году|годе)(?![а-яА-ЯёЁ0-9])/gi, (_match, yStr) => {
-    const y = parseInt(yStr, 10);
-    return `в ${числительное(y, 'male_prep')} году`;
-  });
-
-  // 2. "в 1812-м"
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])в\s+([12]\d{3})-(?:м|ом|ем)(?![а-яА-ЯёЁ0-9])/gi, (_match, yStr) => {
-    const y = parseInt(yStr, 10);
-    return `в ${числительное(y, 'male_prep')}`;
-  });
-
-  // 3. "1917-го" / "1917-ого"
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])([12]\d{3})-(?:го|ого)(?![а-яА-ЯёЁ0-9])/gi, (_match, yStr) => {
-    const y = parseInt(yStr, 10);
-    return числительное(y, 'male_gen');
-  });
-
-  // 4. "1917-й" / "1917-ый"
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])([12]\d{3})-(?:й|ый|ий)(?![а-яА-ЯёЁ0-9])/gi, (_match, yStr) => {
-    const y = parseInt(yStr, 10);
-    return числительное(y, 'male');
-  });
-
-  // 5. "1917-м" / "1917-ом"
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])([12]\d{3})-(?:м|ом|ем)(?![а-яА-ЯёЁ0-9])/gi, (_match, yStr) => {
-    const y = parseInt(yStr, 10);
-    return числительное(y, 'male_prep');
-  });
-
-  // 6. "1892 год" / "1945 год" / "2026 год" / "1892 года" / "1892 г." / "1892 г"
-  result = result.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])([12]\d{3})\s*(?:год|года|г\.|г)(?![а-яА-ЯёЁ0-9])/gi, (_match, yStr) => {
-    const y = parseInt(yStr, 10);
-    return `${числительное(y, 'male_gen')} года`;
-  });
-
-  return result;
-}
-
-/**
- * в) Время суток (паттерн «HH:MM» в контексте времени)
- * «на часах 13:15» и «13:15» в контексте времени → «тринадцать часов пятнадцать минут»
- * Маркеры: 'час', 'время', 'сейчас', 'на часах', 'в', 'к', 'с', 'до', 'ровно', 'около'
- * Не трогать если двоеточие после 'глава'/'стих'/книги
- */
-export function normalizeTimeOfDay(text: string): string {
-  if (!text) return text;
-
-  // Проверяем паттерн HH:MM (0-23 : 00-59) с возможным маркером
-  const timeRegex = /(?<![а-яА-ЯёЁ0-9a-zA-Z])(?:\b(на\s+часах|время|сейчас|в|к|с|до|около|ровно|час(?:а|ов)?)\s+)?([01]?\d|2[0-3])\s*:\s*([0-5]\d)(?![0-9])/gi;
-
-  return text.replace(timeRegex, (match, marker, hStr, mStr, offset, fullStr) => {
-    // Проверка: не идёт ли перед этим слово "глава", "стих", "псалом" или библейская книга
-    const prefix = fullStr.slice(Math.max(0, offset - 40), offset).toLowerCase();
+  return text.replace(timeRegex, (match, hStr, mStr, offset, fullStr) => {
+    // Защита от стихов Библии
+    const prefix = fullStr.slice(Math.max(0, offset - 30), offset).toLowerCase();
     if (/(?:глав[аеы]|стих[ае]?|псалом|псалтирь|притч[ией]|быти[ея]|исход[а]?)\s*$/i.test(prefix)) {
       return match;
     }
 
+    if (countRef) countRef.count++;
     const h = parseInt(hStr, 10);
     const m = parseInt(mStr, 10);
 
-    const hText = formatHoursText(h);
-    const mText = formatMinutesText(m);
-    const timeFormatted = mText ? `${hText} ${mText}` : hText;
+    const hWord = numberToWords(h);
+    if (m === 0) {
+      return `${hWord} часов ровно`;
+    }
+    const mWord = numberToWords(m);
+    return `${hWord} часов ${mWord} минут`;
+  });
+}
 
-    if (marker) {
-      return `${marker} ${timeFormatted}`;
+/**
+ * е) Деньги:
+ * (\d[\d\s]*)\s*(₽|руб|руб\.|рублей|рубля) -> numberToWords+' рублей'
+ */
+export function replaceMoney(text: string, countRef?: { count: number }): string {
+  const moneyRegex = /(?<!\d)(\d[\d\s]{0,8}\d|\d)\s*(₽|руб\.?|рублей|рубля|рубль)(?![а-яА-ЯёЁ\d])/gi;
+
+  return text.replace(moneyRegex, (_match, amountStr) => {
+    const cleanNum = parseInt(amountStr.replace(/\s+/g, ''), 10);
+    if (isNaN(cleanNum)) return _match;
+
+    if (countRef) countRef.count++;
+    const numWord = numberToWords(cleanNum);
+
+    const rem100 = cleanNum % 100;
+    const rem10 = cleanNum % 10;
+
+    let unit = 'рублей';
+    if (rem100 < 10 || rem100 >= 20) {
+      if (rem10 === 1) unit = 'рубль';
+      else if (rem10 >= 2 && rem10 <= 4) unit = 'рубля';
     }
 
-    return timeFormatted;
+    return `${numWord} ${unit}`;
   });
 }
 
 /**
- * г) Часы в 12-часовом формате
- * '5 часов вечера' → 'пять часов вечера'
- * '1 час ночи' → 'один час ночи'
- * '2 часа дня' → 'два часа дня'
+ * ж) Проценты:
+ * (\d+)\s*(%|процентов|процент|процента) -> numberToWords+' процентов'
  */
-export function normalizeHours12(text: string): string {
-  if (!text) return text;
+export function replacePercentages(text: string, countRef?: { count: number }): string {
+  const percentRegex = /(?<!\d)(\d+)\s*(%|процентов|процент|процента)(?![а-яА-ЯёЁ\d])/gi;
 
-  const hours12Words: Record<number, string> = {
-    1: 'один',
-    2: 'два',
-    3: 'три',
-    4: 'четыре',
-    5: 'пять',
-    6: 'шесть',
-    7: 'семь',
-    8: 'восемь',
-    9: 'девять',
-    10: 'десять',
-    11: 'одиннадцать',
-    12: 'двенадцать',
-  };
+  return text.replace(percentRegex, (_match, numStr) => {
+    const n = parseInt(numStr, 10);
+    if (isNaN(n)) return _match;
 
-  return text.replace(/(?<![а-яА-ЯёЁ0-9a-zA-Z])([1-9]|1[0-2])\s+(час(?:а|ов)?\s+(?:утра|дня|вечера|ночи))(?![а-яА-ЯёЁ0-9])/gi, (_match, digitStr, tail) => {
-    const digit = parseInt(digitStr, 10);
-    const word = hours12Words[digit] || digitStr;
-    return `${word} ${tail}`;
+    if (countRef) countRef.count++;
+    const numWord = numberToWords(n);
+
+    const rem100 = n % 100;
+    const rem10 = n % 10;
+
+    let unit = 'процентов';
+    if (rem100 < 10 || rem100 >= 20) {
+      if (rem10 === 1) unit = 'процент';
+      else if (rem10 >= 2 && rem10 <= 4) unit = 'процента';
+    }
+
+    return `${numWord} ${unit}`;
   });
 }
 
 /**
- * Главная функция нормализации для голосового синтеза
- * Текст в чат отправляется БЕЗ этих замен.
- * Пайплайн TTS: cleanForMax -> prepareVoiceText -> normalizeForVoice -> edge-tts
+ * з) Телефоны:
+ * \+?7?[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}) -> 'плюс семь, '+каждую цифру отдельно через запятую
+ */
+const DIGIT_WORDS: Record<string, string> = {
+  '0': 'ноль',
+  '1': 'один',
+  '2': 'два',
+  '3': 'три',
+  '4': 'четыре',
+  '5': 'пять',
+  '6': 'шесть',
+  '7': 'семь',
+  '8': 'восемь',
+  '9': 'девять',
+};
+
+export function replacePhoneNumbers(text: string, countRef?: { count: number }): string {
+  const phoneRegex = /(?:\+7|8|\b7)?[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})\b/g;
+
+  return text.replace(phoneRegex, (_match, g1, g2, g3, g4) => {
+    if (countRef) countRef.count++;
+    const digits = `${g1}${g2}${g3}${g4}`.split('');
+    const words = digits.map(d => DIGIT_WORDS[d] || d);
+
+    return `плюс семь, ${words.join(', ')}`;
+  });
+}
+
+/**
+ * и) Остальные числа 1-999 перед существительными
+ * (стихов, вопросов, дней, минут, секунд, раз, часов, человек, лет и т.д.)
+ */
+const NOUN_PATTERNS = [
+  'стихов', 'стиха', 'стих',
+  'вопросов', 'вопроса', 'вопрос',
+  'дней', 'дня', 'день',
+  'минут', 'минуты', 'минута',
+  'секунд', 'секунды', 'секунда',
+  'раз', 'раза',
+  'часов', 'часа', 'час',
+  'глав', 'главы', 'глава',
+  'человек', 'людей',
+  'месяцев', 'месяца', 'месяц',
+  'лет'
+].join('|');
+
+export function replaceNumbersBeforeNouns(text: string, countRef?: { count: number }): string {
+  const nounRegex = new RegExp(`(?<!\\d)(\\d{1,3})\\s+(${NOUN_PATTERNS})(?![а-яА-ЯёЁ])`, 'gi');
+
+  return text.replace(nounRegex, (_match, numStr, noun) => {
+    if (countRef) countRef.count++;
+    const n = parseInt(numStr, 10);
+
+    // Определение рода для правильного согласования единиц
+    const isFemale = /^(?:минут[аы]?|секунд[аы]?|глав[аы]?)$/i.test(noun);
+    const isNeuter = false;
+    const gender: Gender = isFemale ? 'female' : isNeuter ? 'neuter' : 'male';
+
+    const numWord = numberToWords(n, gender);
+    return `${numWord} ${noun}`;
+  });
+}
+
+/**
+ * Главный универсальный нормализатор для голосового синтеза (TTS-only).
+ * Обрабатывает ВЕСЬ текст целиком ДО разбивки на чанки.
+ * 
+ * Строгий порядок правил (все с флагом /g):
+ * а) Библейские ссылки
+ * б) Даты
+ * в) Годы
+ * г) Века
+ * д) Время
+ * е) Деньги
+ * ж) Проценты
+ * з) Телефоны
+ * и) Остальные числа перед существительными
  */
 export function normalizeForVoice(text: string, prepareFn?: (t: string) => string): string {
   if (!text) return '';
-  const initialText = text;
 
-  // 1. Вызываем prepareVoiceText в начале (если передана функция или базовая логика)
   let res = prepareFn ? prepareFn(text) : text;
   if (!res) return '';
 
-  // 2. Последовательно применяем правила нормализации:
-  // а) Библейские ссылки (ПЕРВЫМИ, чтобы книги X:Y не путались со временем)
-  res = normalizeBiblicalReferences(res);
-  // б) Годы
-  res = normalizeYears(res);
-  // в) Время суток
-  res = normalizeTimeOfDay(res);
-  // г) 12-часовой формат
-  res = normalizeHours12(res);
+  const counter = { count: 0 };
 
-  console.log('🎙️ [TTS] нормализация: ' + JSON.stringify({ in: initialText, out: res }));
+  // а) Библейские ссылки
+  res = replaceBiblicalReferences(res, counter);
+
+  // б) Даты
+  res = replaceDates(res, counter);
+
+  // в) Годы
+  res = replaceYears(res, counter);
+
+  // г) Века
+  res = replaceCenturies(res, counter);
+
+  // д) Время
+  res = replaceTime(res, counter);
+
+  // е) Деньги
+  res = replaceMoney(res, counter);
+
+  // ж) Проценты
+  res = replacePercentages(res, counter);
+
+  // з) Телефоны
+  res = replacePhoneNumbers(res, counter);
+
+  // и) Остальные числа перед существительными
+  res = replaceNumbersBeforeNouns(res, counter);
+
+  if (counter.count > 0) {
+    console.log('🎙️ [TTS] norm замен: ' + counter.count);
+  }
+
   return res;
 }
+
+// Алиасы для обратной совместимости
+export const normalizeBiblicalReferences = (text: string) => replaceBiblicalReferences(text);
+export const normalizeYears = (text: string) => replaceYears(text);
+export const normalizeTimeOfDay = (text: string) => replaceTime(text);
+export const normalizeHours12 = (text: string) => replaceNumbersBeforeNouns(text);

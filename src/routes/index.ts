@@ -1,17 +1,17 @@
-/**
- * Selin AI 2.0 Routes Module
- * Экспорт маршрутов API:
- * - language.routes: Эндпоинты языкового обучения и трекинга прогресса
- * - security.routes: Эндпоинты аудита безопасности и мониторинга
- */
-
-import languageRouter from './language.routes';
-import securityRouter from './security.routes';
+import languageRouter from "./language.routes";
+import securityRouter from "./security.routes";
+import voiceRouter from "./voice.routes";
+import adminRouter from "./admin.routes";
+import aiRouter from "./ai.routes";
+import mcpRouter from "./mcp.routes";
+import legalRouter from "./legal.routes";
 
 export {
   languageRouter,
-  securityRouter
+  securityRouter,
+  voiceRouter,
+  adminRouter,
+  aiRouter,
+  mcpRouter,
+  legalRouter
 };
-
-export * from './language.routes';
-export * from './security.routes';
