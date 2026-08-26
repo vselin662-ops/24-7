@@ -252,6 +252,62 @@ export class MaxAdapter {
   }
 
   /**
+   * Вспомогательный метод отправки одного буфера аудио в MAX Storage
+   */
+  private async sendSingleAudioBuffer(numericId: number, audioBuffer: Buffer): Promise<boolean> {
+    if (!audioBuffer || audioBuffer.length === 0 || !this.bot) return false;
+    try {
+      const mp3Buffer = await ensureMp3Buffer(audioBuffer);
+      const maxToken = this.token || process.env.MAX_BOT_TOKEN;
+      const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
+        method: 'POST',
+        headers: { 'Authorization': maxToken || '' },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (initRes.ok) {
+        const initData: any = await initRes.json();
+        const uploadToken = initData?.token;
+        const uploadUrl = initData?.url;
+
+        if (uploadToken && uploadUrl) {
+          const form = new FormData();
+          const fileBlob = new Blob([mp3Buffer], { type: 'audio/mpeg' });
+          form.append('data', fileBlob, 'voice.mp3');
+
+          const uploadRes = await fetch(uploadUrl, {
+            method: 'POST',
+            body: form,
+            signal: AbortSignal.timeout(20000)
+          });
+
+          if (uploadRes.ok) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            await this.bot.api.sendMessageToChat(numericId, '', {
+              attachments: [{
+                type: 'audio',
+                payload: {
+                  token: uploadToken,
+                  filename: 'voice.mp3'
+                }
+              }] as any
+            });
+            logger.info(`🎤 [MaxAdapter] Voice message chunk successfully sent to chat ${numericId}`);
+            return true;
+          } else {
+            logger.warn(`⚠️ [MaxAdapter] Upload to MAX storage failed with status ${uploadRes.status}`);
+          }
+        }
+      } else {
+        logger.warn(`⚠️ [MaxAdapter] Failed to init MAX storage upload: ${initRes.status}`);
+      }
+    } catch (err: any) {
+      logger.error(`❌ [MaxAdapter] sendSingleAudioBuffer error: ${err.message || err}`);
+    }
+    return false;
+  }
+
+  /**
    * Синтез и отправка голосового сообщения (MP3) в чат MAX
    * 1. Очистка текста через cleanText (до 500 символов)
    * 2. Каскад TTS: OpenAI TTS -> Edge TTS -> VoiceService
@@ -275,73 +331,49 @@ export class MaxAdapter {
       return;
     }
 
-    logger.info(`🎙️ [MaxAdapter] Starting voice synthesis for chat ${numericId} (${cleanedText.length} chars)`);
-
-    let audioBuffer: Buffer | null = null;
-
-    try {
-      audioBuffer = await synthesizeForChat(chatId, text);
-    } catch (err: any) {
-      logger.error(`❌ [MaxAdapter] synthesizeForChat failed: ${err.message || err}`);
+    // 2. Логика озвучки длинного текста:
+    // - ответ до 280 символов -> одно голосовое сообщение;
+    // - ответ больше -> разбить по предложениям на чанки, озвучить последовательно;
+    let chunks: string[] = [];
+    if (cleanedText.length <= 280) {
+      chunks = [cleanedText];
+    } else {
+      const sentences = cleanedText.match(/[^.!?\n]+[.!?\n]*/g) || [cleanedText];
+      chunks = sentences.map(s => s.trim()).filter(Boolean);
     }
 
-    // --- Шаг 4: Загрузка в MAX Storage (MP3) и отправка в чат ---
-    if (audioBuffer && audioBuffer.length > 0 && this.bot) {
+    const n = chunks.length;
+    console.log('📚 [VoiceBook] chat=' + chatId + ' чанков=' + n);
+
+    let sentAtLeastOne = false;
+    for (const chunk of chunks) {
       try {
-        audioBuffer = await ensureMp3Buffer(audioBuffer);
-
-        const maxToken = this.token || process.env.MAX_BOT_TOKEN;
-        const initRes = await fetch('https://platform-api.max.ru/uploads?type=audio', {
-          method: 'POST',
-          headers: { 'Authorization': maxToken || '' },
-          signal: AbortSignal.timeout(15000)
-        });
-
-        if (initRes.ok) {
-          const initData: any = await initRes.json();
-          const uploadToken = initData?.token;
-          const uploadUrl = initData?.url;
-
-          if (uploadToken && uploadUrl) {
-            const form = new FormData();
-            const fileBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
-            form.append('data', fileBlob, 'voice.mp3');
-
-            const uploadRes = await fetch(uploadUrl, {
-              method: 'POST',
-              body: form,
-              signal: AbortSignal.timeout(20000)
-            });
-
-            if (uploadRes.ok) {
-              await new Promise(resolve => setTimeout(resolve, 1500));
-              await this.bot.api.sendMessageToChat(numericId, '', {
-                attachments: [{
-                  type: 'audio',
-                  payload: {
-                    token: uploadToken,
-                    filename: 'voice.mp3'
-                  }
-                }] as any
-              });
-              logger.info(`🎤 [MaxAdapter] Voice message (MP3) successfully sent to chat ${numericId}`);
-              return;
-            } else {
-              logger.warn(`⚠️ [MaxAdapter] Upload to MAX storage failed with status ${uploadRes.status}`);
-            }
-          }
-        } else {
-          logger.warn(`⚠️ [MaxAdapter] Failed to init MAX storage upload: ${initRes.status}`);
+        const audioBuffer = await synthesizeForChat(chatId, chunk);
+        const success = await this.sendSingleAudioBuffer(numericId, audioBuffer);
+        if (success) {
+          sentAtLeastOne = true;
         }
-      } catch (uploadErr: unknown) {
-        const errorMsg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
-        logger.error(`❌ [MaxAdapter] Storage upload error: ${errorMsg}`);
+      } catch (err: any) {
+        logger.error(`❌ [MaxAdapter] Failed to send chunk voice: ${err.message || err}`);
       }
     }
 
-    // --- Шаг 5: Фолбэк на текстовое сообщение ---
-    logger.warn(`⚠️ [MaxAdapter] Voice cascade completed without audio delivery, falling back to text for chat ${numericId}`);
-    await this.safeSendMessageToChat(numericId, cleanedText);
+    // - если это глава книги -> озвучить главу полностью по чанкам + в конце текстом: "Хотите следующую главу? Напишите: далее".
+    const isBookChapter = 
+      text.toLowerCase().includes('глава') || 
+      text.toLowerCase().includes('ион') || 
+      text.toLowerCase().includes('книг') ||
+      /глава\s+\d+/i.test(text);
+
+    if (isBookChapter) {
+      const nextChapterMsg = "Хотите следующую главу? Напишите: далее";
+      await this.safeSendMessageToChat(chatId, nextChapterMsg);
+    }
+
+    if (!sentAtLeastOne) {
+      logger.warn(`⚠️ [MaxAdapter] Voice cascade completed without audio delivery, falling back to text for chat ${numericId}`);
+      await this.safeSendMessageToChat(numericId, cleanedText);
+    }
   }
 
   /**
