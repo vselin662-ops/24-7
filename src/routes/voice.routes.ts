@@ -1,12 +1,12 @@
 import { Router } from "express";
 import multer from "multer";
-import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { getVoiceConfig, setVoiceGender } from "../../db";
 import { normalizeForVoice } from "../utils/textUtils";
 import { detectVoiceWakeWord } from "../utils/wakeWord";
 import { transcribeAudioBuffer } from "../services/voiceProcessingService";
 import { VoiceMode } from "../core/types";
 import { logger } from "../logger";
+import { synthesizeForChat } from "../services/TTSService";
 
 const voiceRouter = Router();
 
@@ -84,23 +84,9 @@ voiceRouter.post("/tts", async (req, res) => {
   }
 
   try {
-    const voicePrepared = normalizeForVoice(textToSynthesize);
-    const voiceConfig = getVoiceConfig(chatId);
-    logger.info(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${voicePrepared.length}`);
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(
-      voiceConfig.voice,
-      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
-    );
-
-    const { audioStream } = tts.toStream(voicePrepared, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
-    const chunks: Buffer[] = [];
-    for await (const chunk of audioStream) {
-      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
-    }
-    const audioBuffer = Buffer.concat(chunks);
+    const audioBuffer = await synthesizeForChat(chatId, textToSynthesize);
     const dataUrl = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
+    const voiceConfig = getVoiceConfig(chatId);
     return res.json({
       audioUrl: dataUrl,
       voice: voiceConfig.gender === 'female' ? 'Kore' : 'Charon',
@@ -131,23 +117,9 @@ voiceRouter.post("/synthesize", async (req, res) => {
       textToSynthesize = wakeResult.confirmationSpeech;
     }
 
-    const voicePrepared = normalizeForVoice(textToSynthesize);
-    const voiceConfig = getVoiceConfig(chatId);
-    logger.info(`🎙️ [TTS Synthesize] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${voicePrepared.length}`);
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(
-      voiceConfig.voice,
-      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
-    );
-
-    const { audioStream } = tts.toStream(voicePrepared, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
-    const chunks: Buffer[] = [];
-    for await (const chunk of audioStream) {
-      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-      else if (chunk instanceof Uint8Array) chunks.push(Buffer.from(chunk));
-    }
-    const audioBuffer = Buffer.concat(chunks);
+    const audioBuffer = await synthesizeForChat(chatId, textToSynthesize);
     const base64Audio = audioBuffer.toString('base64');
+    const voiceConfig = getVoiceConfig(chatId);
 
     res.json({
       audio: base64Audio,

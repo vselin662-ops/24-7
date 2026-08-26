@@ -11,6 +11,7 @@
  */
 
 export * from './BaseAgent';
+export * from './WeatherAgent';
 export * from './OrderAgent';
 export * from './TravelAgent';
 export * from './NewsAgent';

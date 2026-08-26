@@ -9,6 +9,7 @@ import {
 import { LLMService, llmService } from './LLMService';
 import { SalesAgent } from '../agents/sales.agent';
 import { SupportAgent } from '../agents/support.agent';
+import { WeatherAgent } from '../agents/WeatherAgent';
 import { TutorAgent } from '../agents/tutor.agent';
 import { BusinessAgent } from '../agents/business.agent';
 import { ConciergeAgent } from '../agents/concierge.agent';
@@ -53,6 +54,7 @@ export class AgentOrchestrator {
     this.registerAgents([
       new SalesAgent(),
       new SupportAgent(),
+      new WeatherAgent(this.llm),
       new TutorAgent(),
       new BusinessAgent(),
       new ConciergeAgent(),

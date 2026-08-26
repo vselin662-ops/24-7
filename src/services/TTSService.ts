@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import { logger } from '../logger';
+import { getVoiceGender } from '../../db';
+import { normalizeForVoice, splitTextSmart } from '../utils/textUtils';
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 
 export interface TTSSynthesisOptions {
   voice?: string;
@@ -345,3 +348,64 @@ export class TTSService {
 }
 
 export const ttsService = new TTSService();
+
+export async function synthesizeForChat(chatId: string | number | null | undefined, text: string): Promise<Buffer> {
+  const cleanId = chatId ? String(chatId) : 'default';
+  const gender = getVoiceGender(cleanId);
+  
+  let voice = 'ru-RU-DmitryNeural';
+  let rate = '-8%';
+  let pitch = '-4Hz';
+  
+  if (gender === 'female') {
+    voice = 'ru-RU-SvetlanaNeural';
+    rate = '-5%';
+    pitch = '-2Hz';
+  }
+  
+  // 1. Применяет cleanForMax -> prepareVoiceText -> normalizeForVoice (ВЕСЬ текст целиком)
+  const normalizedText = normalizeForVoice(text);
+  if (!normalizedText.trim()) {
+    return ttsService.synthesize("");
+  }
+  
+  // 2. Подсчет количества заменяемых чисел/диапазонов для логирования
+  const count = (text.match(/\d+/g) || []).length;
+  console.log('🎙️ [TTS] voice=' + voice + ' chat=' + cleanId + ' замен=' + count);
+  
+  // 3. ТОЛЬКО ПОТОМ разбивка на чанки
+  const chunks = splitTextSmart(normalizedText, 250);
+  const audioChunks: Buffer[] = [];
+  
+  try {
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      const streamRes = tts.toStream(chunk, { rate, pitch });
+      const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
+      
+      const chunkBuffers: Buffer[] = [];
+      for await (const b of readable) {
+        if (Buffer.isBuffer(b)) {
+          chunkBuffers.push(b);
+        } else if (b instanceof Uint8Array) {
+          chunkBuffers.push(Buffer.from(b));
+        }
+      }
+      if (chunkBuffers.length > 0) {
+        audioChunks.push(Buffer.concat(chunkBuffers));
+      }
+    }
+    
+    if (audioChunks.length > 0) {
+      return Buffer.concat(audioChunks);
+    }
+    throw new Error("Empty audio stream from MsEdgeTTS");
+  } catch (err: any) {
+    logger.warn(`⚠️ [synthesizeForChat] MsEdgeTTS failed: ${err.message || err}. Falling back to default ttsService.`);
+    // Fallback: use ttsService.synthesize on normalized text
+    return ttsService.synthesize(normalizedText, { voice, speed: gender === 'female' ? 0.95 : 0.92 });
+  }
+}

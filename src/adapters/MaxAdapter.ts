@@ -5,6 +5,7 @@ import { SelinCore } from "../core/SelinCore";
 import { AIResponse, MessageContext, ChannelType, VoiceMode } from "../core/types";
 import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
+import { synthesizeForChat } from "../services/TTSService";
 import { ensureMp3Buffer } from "../lib/audioConvert";
 import { callVision, stripMarkdown } from "../core/LLMService";
 import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
@@ -278,84 +279,10 @@ export class MaxAdapter {
 
     let audioBuffer: Buffer | null = null;
 
-    // --- Шаг 1 каскада: OpenAI TTS API ---
-    const ttsBaseUrl = process.env.OPENAI_BASE_URL || process.env.TEAMO_BASE_URL || process.env.AGENT_ROUTER_BASE_URL;
-    const ttsApiKey = process.env.OPENAI_API_KEY || process.env.TEAMO_API_KEY || process.env.AGENT_ROUTER_API_KEY;
-    const ttsModel = process.env.OPENAI_TTS_MODEL || 'tts-1';
-    const ttsVoice = process.env.OPENAI_TTS_VOICE || 'alloy';
-
-    if (ttsBaseUrl && ttsApiKey) {
-      try {
-        let formattedUrl = ttsBaseUrl.trim();
-        if (!formattedUrl.endsWith('/v1') && !formattedUrl.endsWith('/v1beta') && !formattedUrl.includes('/v1/') && !formattedUrl.includes('/v1beta/')) {
-          formattedUrl = formattedUrl.replace(/\/$/, '') + '/v1';
-        }
-
-        const response = await fetch(`${formattedUrl}/audio/speech`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ttsApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: ttsModel,
-            input: cleanedText,
-            voice: ttsVoice,
-            response_format: 'mp3'
-          }),
-          signal: AbortSignal.timeout(15000)
-        });
-
-        if (response.ok) {
-          const arrayBuf = await response.arrayBuffer();
-          audioBuffer = Buffer.from(arrayBuf);
-          logger.info(`✅ [MaxAdapter] Speech synthesized via OpenAI TTS (${audioBuffer.length} bytes)`);
-        } else {
-          logger.warn(`⚠️ [MaxAdapter] OpenAI TTS returned status ${response.status}`);
-        }
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.warn(`⚠️ [MaxAdapter] OpenAI TTS failed, falling back to Edge TTS: ${errorMsg}`);
-      }
-    }
-
-    // --- Шаг 2 каскада: Microsoft Edge TTS (MsEdgeTTS) ---
-    if (!audioBuffer || audioBuffer.length === 0) {
-      try {
-        const voiceConfig = getVoiceConfig(chatId);
-        console.log(`🎙️ [TTS] ${voiceConfig.gender === 'female' ? 'SvetlanaNeural' : 'DmitryNeural'}, символов: ${cleanedText.length}`);
-        const tts = new MsEdgeTTS();
-        await tts.setMetadata(voiceConfig.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-        const streamRes = tts.toStream(cleanedText, { rate: voiceConfig.rate, pitch: voiceConfig.pitch });
-        const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
-
-        const chunks: Buffer[] = [];
-        for await (const chunk of readable) {
-          if (Buffer.isBuffer(chunk)) {
-            chunks.push(chunk);
-          } else if (chunk instanceof Uint8Array) {
-            chunks.push(Buffer.from(chunk));
-          }
-        }
-        audioBuffer = Buffer.concat(chunks);
-        logger.info(`✅ [MaxAdapter] Speech synthesized via Edge TTS (${audioBuffer.length} bytes, voice: ${voiceConfig.voice})`);
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.warn(`⚠️ [MaxAdapter] Edge TTS failed, falling back to VoiceService: ${errorMsg}`);
-      }
-    }
-
-    // --- Шаг 3 каскада: VoiceService (Google Translate / Fallback) ---
-    if (!audioBuffer || audioBuffer.length === 0) {
-      try {
-        audioBuffer = await this.voiceService.synthesize(cleanedText, { provider: 'auto', lang: 'ru' });
-        if (audioBuffer && audioBuffer.length > 0) {
-          logger.info(`✅ [MaxAdapter] Speech synthesized via VoiceService (${audioBuffer.length} bytes)`);
-        }
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.warn(`⚠️ [MaxAdapter] VoiceService synthesis failed: ${errorMsg}`);
-      }
+    try {
+      audioBuffer = await synthesizeForChat(chatId, text);
+    } catch (err: any) {
+      logger.error(`❌ [MaxAdapter] synthesizeForChat failed: ${err.message || err}`);
     }
 
     // --- Шаг 4: Загрузка в MAX Storage (MP3) и отправка в чат ---

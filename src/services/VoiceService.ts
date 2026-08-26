@@ -1,5 +1,5 @@
 // src/services/VoiceService.ts
-import { TTSService, TTSSynthesisOptions } from './TTSService';
+import { TTSService, TTSSynthesisOptions, synthesizeForChat } from './TTSService';
 import { STTService } from './stt.service';
 import { logger } from '../logger';
 
@@ -16,9 +16,14 @@ export class VoiceService {
     return this.tts.synthesize(text, options);
   }
 
+  public async synthesizeForChat(chatId: string | number | null | undefined, text: string): Promise<Buffer> {
+    return synthesizeForChat(chatId, text);
+  }
+
   public async transcribe(audioBuffer: Buffer, language: string = 'ru'): Promise<string> {
     return this.stt.transcribe(audioBuffer, language);
   }
 }
 
 export const voiceService = new VoiceService();
+export { synthesizeForChat };

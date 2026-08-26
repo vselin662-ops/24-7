@@ -4,7 +4,7 @@ import { memorySystem, type Memory } from './memory';
 import { decisionEngine, type Action } from './decision-engine';
 import { emotionEngine } from './emotion-engine';
 import { planner } from './planner';
-import { ttsService } from '../services/tts.service';
+import { ttsService, synthesizeForChat } from '../services/tts.service';
 import { processMessage as processLanguageMessage, startLesson } from '../modules/language/language.module';
 import { businessModule } from '../modules/business';
 import { servicesModule } from '../modules/services';
@@ -145,7 +145,7 @@ export class Orchestrator {
       case 'respond_voice': {
         const text = action.payload.text as string;
         if (adapter) {
-          const audio = await ttsService.synthesize(text);
+          const audio = await synthesizeForChat(event.userId, text);
           if (audio) {
             await adapter.sendVoice(event.userId, audio);
           } else {

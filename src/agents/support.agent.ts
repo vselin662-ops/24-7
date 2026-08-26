@@ -19,7 +19,7 @@ export class SupportAgent extends BaseAgent {
       {
         name: 'support_faq',
         description: 'Ответы на вопросы и база знаний',
-        supportedTaskTypes: [TaskType.CUSTOMER_SUPPORT, TaskType.NEWS, TaskType.WEATHER],
+        supportedTaskTypes: [TaskType.CUSTOMER_SUPPORT, TaskType.NEWS],
         capabilities: [] as any,
         supportsVoice: true,
         supportsCamera: true,
@@ -29,7 +29,7 @@ export class SupportAgent extends BaseAgent {
   }
 
   public canHandle(task: Task): boolean {
-    return task.type === TaskType.CUSTOMER_SUPPORT || task.type === TaskType.NEWS || task.type === TaskType.WEATHER;
+    return task.type === TaskType.CUSTOMER_SUPPORT || task.type === TaskType.NEWS;
   }
 
   public async process(message: string, _context: MessageContext): Promise<AIResponse> {
