@@ -511,6 +511,79 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // Check if event is bot_started
+      const isBotStarted = 
+        String(raw.event || '').toLowerCase() === 'bot_started' || 
+        String(raw.body?.event || '').toLowerCase() === 'bot_started' || 
+        String(raw.payload?.event || '').toLowerCase() === 'bot_started' || 
+        String(raw.type || '').toLowerCase() === 'bot_started' || 
+        String(raw.body?.type || '').toLowerCase() === 'bot_started' || 
+        String(raw.payload?.type || '').toLowerCase() === 'bot_started' ||
+        String(raw.action || '').toLowerCase() === 'bot_started' ||
+        String(raw.payload?.action || '').toLowerCase() === 'bot_started';
+
+      if (isBotStarted) {
+        const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+        
+        // Extract name
+        let rawName = '';
+        const payloadObj = raw.payload || raw.body || raw;
+        if (payloadObj) {
+          if (payloadObj.user) {
+            if (typeof payloadObj.user === 'object') {
+              rawName = payloadObj.user.first_name || payloadObj.user.name || '';
+            } else if (typeof payloadObj.user === 'string') {
+              rawName = payloadObj.user;
+            }
+          }
+          if (!rawName) {
+            rawName = payloadObj.first_name || payloadObj.name || '';
+          }
+        }
+        if (!rawName) {
+          rawName = raw.user?.first_name || raw.user?.name || raw.body?.user?.first_name || raw.body?.user?.name || raw.first_name || raw.name || '';
+        }
+
+        const cleanName = String(rawName).replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '').trim();
+        const name = cleanName || '';
+
+        // Text composition
+        let textToSynthesize = '';
+        if (name) {
+          textToSynthesize = `Здравствуйте, ${name}! Я — Селин, ваш личный AI-помощник. Отвечаю голосом, ищу в интернете, подсказываю погоду, напоминаю о делах и отвечаю на вопросы о вере по Библии. Спросите о чём угодно!`;
+        } else {
+          textToSynthesize = `Здравствуйте! Я — Селин, ваш личный AI-помощник. Отвечаю голосом, ищу в интернете, подсказываю погоду, напоминаю о делах и отвечаю на вопросы о вере по Библии. Спросите о чём угодно!`;
+        }
+
+        // Save user to database with name and login date if not saved yet
+        if (sqliteDb) {
+          try {
+            sqliteDb.exec(`
+              CREATE TABLE IF NOT EXISTS max_users (
+                chat_id TEXT PRIMARY KEY,
+                name TEXT,
+                joined_at TEXT NOT NULL
+              );
+            `);
+            const exists = sqliteDb.prepare("SELECT 1 FROM max_users WHERE chat_id = ?").get(cleanId);
+            if (!exists) {
+              sqliteDb.prepare("INSERT INTO max_users (chat_id, name, joined_at) VALUES (?, ?, ?)").run(cleanId, name || null, new Date().toISOString());
+            }
+          } catch (dbErr: any) {
+            logger.error(`❌ [MaxAdapter] Error saving user to database: ${dbErr.message || dbErr}`);
+          }
+        }
+
+        // Log requirement
+        console.log('👋 [MAX] приветствие: ' + (name || 'без имени') + ' chat=' + chatId);
+
+        // Send text first, then voice
+        await this.safeSendMessageToChat(cleanId, textToSynthesize);
+        await this.synthesizeAndSendVoice(cleanId, textToSynthesize);
+
+        return res.status(200).send('ok');
+      }
+
       // 2. Извлекаем текст
       let text = '';
       const textCandidates = [

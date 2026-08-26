@@ -239,6 +239,20 @@ async function startServer() {
         await modernMaxAdapter.sendVoice(chatId, text);
       }
     );
+
+    // Run Voice Synthesis Self-Test
+    (async () => {
+      try {
+        const { synthesizeForChat } = await import("./src/services/TTSService");
+        logger.info("🧪 [Voice Self-Test] Initiating voice synthesis self-test...");
+        const testChatId = "test_self_check_chat";
+        const testText = "Здравствуйте, я Селин, ваш помощник";
+        const audioBuffer = await synthesizeForChat(testChatId, testText);
+        logger.info(`🧪 [Voice Self-Test] Successfully synthesized "${testText}" for chat ${testChatId}. Buffer size: ${audioBuffer.length} bytes.`);
+      } catch (err: any) {
+        logger.error(`❌ [Voice Self-Test] Voice self-test failed: ${err.message || err}`);
+      }
+    })();
   });
 
   function gracefulShutdown(signal: string) {

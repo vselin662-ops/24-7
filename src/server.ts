@@ -206,7 +206,8 @@ export function createServerApp(): ServerServices {
         return res.status(400).json({ error: 'Text parameter is required' });
       }
 
-      const audioBuffer = await selinTTS.synthesize(String(text), options || {});
+      const chatId = options?.chatId || (req.query.chatId ? String(req.query.chatId) : 'default');
+      const audioBuffer = await synthesizeForChat(chatId, String(text));
       res.set({
         'Content-Type': 'audio/mpeg',
         'Content-Length': audioBuffer.length,
