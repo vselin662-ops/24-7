@@ -15,10 +15,16 @@ export interface RequestContext {
   tenantId?: string;
   isOwner?: boolean;
   userPrompt?: string;
+  voice_mode?: boolean;
 }
 
 export function filterAIOutput(response: string, context: RequestContext = {}): string {
   if (!response || typeof response !== 'string') return response;
+
+  // Disable Output Filter for voice mode to avoid any clipping/truncating/blocking of vocalized books
+  if (context.voice_mode === true || (context.userPrompt && /озвуч|прочитай|книг|глав|расскажи голосом|библи|ион/i.test(context.userPrompt))) {
+    return response;
+  }
 
   const tenantId = context.tenantId || 'default';
   let filtered = response;

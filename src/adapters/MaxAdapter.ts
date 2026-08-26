@@ -12,7 +12,7 @@ import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
-const MAX_TEXT_LIMIT = 1800;
+const MAX_TEXT_LIMIT = 8000;
 
 export function getImageMimeType(buf: Buffer, contentTypeHeader?: string | null): string {
   if (contentTypeHeader && contentTypeHeader.startsWith('image/')) {
@@ -66,8 +66,8 @@ export function prepareVoiceText(text: string): string {
   res = res.replace(/^(Ой|Ах|Ох|Ну|Вот|Слушай|Значит)[,! ]+/gi, '');
   res = res.replace(/[*#]/g, '');
   res = res.replace(/\s+/g, ' ').trim();
-  if (res.length > 4000) {
-    const sub = res.slice(0, 4000);
+  if (res.length > 8000) {
+    const sub = res.slice(0, 8000);
     const lastDot = sub.lastIndexOf('.');
     if (lastDot > 0) {
       res = sub.slice(0, lastDot).trim() + '...';
@@ -118,6 +118,7 @@ export class MaxAdapter {
     this.token = token || process.env.MAX_BOT_TOKEN;
     this.voiceService = new VoiceService();
     this.defaultVoiceMode = defaultMode;
+    console.log('🔓 [Unblock] удалено запретов=4 лимит поднят до 8000');
   }
 
   /**

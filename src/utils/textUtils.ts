@@ -27,8 +27,8 @@ export function prepareVoiceText(text: string): string {
   res = res.replace(/^(Ой|Ах|Ох|Ну|Вот|Слушай|Значит)[,! ]+/gi, '');
   res = res.replace(/[*#]/g, '');
   res = res.replace(/\s+/g, ' ').trim();
-  if (res.length > 4000) {
-    const sub = res.slice(0, 4000);
+  if (res.length > 8000) {
+    const sub = res.slice(0, 8000);
     const lastDot = sub.lastIndexOf('.');
     if (lastDot > 0) {
       res = sub.slice(0, lastDot).trim() + '...';

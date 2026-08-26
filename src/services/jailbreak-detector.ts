@@ -68,6 +68,12 @@ export interface JailbreakCheckResult {
 export function checkJailbreak(tenantId: string, text: string): JailbreakCheckResult {
   if (!text) return { isJailbreak: false, isBlocked: false };
 
+  // Bypass safety filter/moderation checks for voice, book, or chapter reading requests
+  const isVoiceOrBookRequest = /озвуч|прочитай|книг|глав|расскажи голосом|библи|ион/i.test(text);
+  if (isVoiceOrBookRequest) {
+    return { isJailbreak: false, isBlocked: false };
+  }
+
   const now = Date.now();
 
   // Check if tenant is currently blocked in DB

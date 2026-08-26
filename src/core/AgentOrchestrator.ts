@@ -19,6 +19,7 @@ import { NewsAgent } from '../agents/NewsAgent';
 import { ContentAgent } from '../agents/ContentAgent';
 import { CodingAgent } from '../agents/CodingAgent';
 import { logger } from '../logger';
+import { tryExecuteSwarm } from './SpecialistSwarm';
 
 /**
  * Приоритетные веса задач для очереди
@@ -101,6 +102,20 @@ export class AgentOrchestrator {
     const rawText = userMessage.trim();
     const isWake = this.checkWakeWord(rawText) || context.isVoice;
     const cleanMessage = this.stripWakeWord(rawText);
+
+    // 0. Проверка на запрос к Рою Специалистов
+    try {
+      const swarmResponse = await tryExecuteSwarm(cleanMessage, context);
+      if (swarmResponse) {
+        return {
+          text: swarmResponse,
+          confidence: 1.0,
+          metadata: { isSwarm: true }
+        };
+      }
+    } catch (swarmErr) {
+      logger.error('Error executing Specialist Swarm in AgentOrchestrator:', swarmErr);
+    }
 
     logger.info(`[AgentOrchestrator] Processing message from chat ${context.chatId} (wake=${isWake}): "${cleanMessage.slice(0, 60)}"`);
 
