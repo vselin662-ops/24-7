@@ -414,60 +414,20 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
       pitch = '-2Hz';
     }
 
-    // Пробуем сначала SSML (с прямым REST-запросом)
+    // Литературный синтез через Edge TTS с естественными текстовыми паузами
     try {
-      const ssmlText = literarySSML(normalized, true);
-      pauses = (ssmlText.match(/<break/g) || []).length;
-      const chunks = splitIntoLiteraryChunks(ssmlText, 280);
+      rate = '-12%';
+      const textPausesStr = literarySSML(normalized, false);
+      pauses = (textPausesStr.match(/…/g) || []).length;
+      
+      const chunks = splitIntoLiteraryChunks(textPausesStr, 280);
       const n = chunks.length;
-
+      
       console.log('🎭 [Literary] engine=' + engine + ' пауз=' + pauses + ' чанков=' + n);
-
-      const audioChunks: Buffer[] = [];
-      for (const chunk of chunks) {
-        if (!chunk.trim()) continue;
-        const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='ru-RU'><voice name='${voice}'><prosody rate='${rate}' pitch='${pitch}'>${chunk}</prosody></voice></speak>`;
-
-        const response = await fetch('https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/ssml+xml',
-            'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-          },
-          body: ssml
-        });
-
-        if (response.ok) {
-          const arrayBuffer = await response.arrayBuffer();
-          audioChunks.push(Buffer.from(arrayBuffer));
-        } else {
-          throw new Error(`Direct Edge TTS SSML status ${response.status}`);
-        }
-      }
       
-      if (audioChunks.length > 0) {
-        audioBuffer = Buffer.concat(audioChunks);
-      }
-    } catch (ssmlErr: any) {
-      logger.warn(`⚠️ [synthesizeForChat] SSML synthesis failed: ${ssmlErr.message || ssmlErr}. Falling back to non-SSML textual pauses.`);
-      
-      // Попытка 2: Безопасный режим без SSML (текстовые паузы '…', rate '-12%')
-      try {
-        rate = '-12%'; // Если НЕ принимает — текстовые паузы: '…' после точек, переносы строк между абзацами, rate '-12%'
-        const textPausesStr = literarySSML(normalized, false);
-        pauses = (textPausesStr.match(/…/g) || []).length;
-        
-        const chunks = splitIntoLiteraryChunks(textPausesStr, 280);
-        const n = chunks.length;
-        
-        console.log('🎭 [Literary] engine=' + engine + ' пауз=' + pauses + ' чанков=' + n);
-        
-        // Обычный синтез через стандартный REST-запрос без SSML тегов
-        audioBuffer = await ttsService.synthesize(textPausesStr, { voice, rate, pitch });
-      } catch (fallbackErr: any) {
-        logger.error(`❌ [synthesizeForChat] All literary Edge TTS attempts failed: ${fallbackErr.message || fallbackErr}`);
-      }
+      audioBuffer = await ttsService.synthesize(textPausesStr, { voice, rate, pitch });
+    } catch (fallbackErr: any) {
+      logger.error(`❌ [synthesizeForChat] Literary Edge TTS attempt failed: ${fallbackErr.message || fallbackErr}`);
     }
   }
 

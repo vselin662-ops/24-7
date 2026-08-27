@@ -515,39 +515,19 @@ export class MaxAdapter {
         }
       ]
     };
-
-    // 1. Отправляем текст с кнопками (это не блокирует голос)
     await this.safeSendMessageToChat(cleanId, welcomeText, extra);
-
-    // 2. Запускаем озвучку в try/catch асинхронно, чтобы не блокировать выполнение
     (async () => {
       try {
         const audioBuffer = await synthesizeForChat(cleanId, welcomeText);
         const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
         if (!isNaN(numericId) && numericId > 0) {
           await this.sendSingleAudioBuffer(numericId, audioBuffer);
+          console.log('🎙️ [MAX] голосовое приветствие отправлено chat=' + cleanId);
         }
-      } catch (err) {
-        logger.error(`❌ [MaxAdapter] Greeting voice synthesis failed: ${err}`);
+      } catch (err: any) {
+        console.log('❌ [MAX] голосовое приветствие упало: ' + (err.message || err));
       }
     })();
-
-    // 3. Сохраняем флаг greeted в бд
-    if (sqliteDb) {
-      try {
-        sqliteDb.exec(`
-          CREATE TABLE IF NOT EXISTS users (
-            chat_id TEXT PRIMARY KEY,
-            greeted INTEGER DEFAULT 0
-          );
-        `);
-        try { sqliteDb.exec('ALTER TABLE users ADD COLUMN greeted INTEGER DEFAULT 0'); } catch (e) {}
-        sqliteDb.prepare("INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)").run(cleanId);
-        console.log('👋 [MAX] greeted сохранён chat=' + cleanId);
-      } catch (dbErr: any) {
-        logger.error(`❌ [MaxAdapter] Error saving user greeted status: ${dbErr.message || dbErr}`);
-      }
-    }
   }
 
   /**
@@ -605,30 +585,20 @@ export class MaxAdapter {
 
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
 
-      // Инициализируем таблицу users и проверяем флаг greeted
       let isAlreadyGreeted = false;
       if (sqliteDb) {
         try {
-          sqliteDb.exec(`
-            CREATE TABLE IF NOT EXISTS users (
-              chat_id TEXT PRIMARY KEY,
-              greeted INTEGER DEFAULT 0
-            );
-          `);
-          try { sqliteDb.exec('ALTER TABLE users ADD COLUMN greeted INTEGER DEFAULT 0'); } catch (e) {}
-          const row = sqliteDb.prepare("SELECT greeted FROM users WHERE chat_id = ?").get(cleanId);
-          if (row && row.greeted === 1) {
-            isAlreadyGreeted = true;
-          }
+          sqliteDb.exec('CREATE TABLE IF NOT EXISTS greeted_users (chat_id TEXT PRIMARY KEY, greeted_at TEXT);');
+          const row = sqliteDb.prepare('SELECT chat_id FROM greeted_users WHERE chat_id = ?').get(cleanId);
+          if (row) isAlreadyGreeted = true;
         } catch (dbErr: any) {
-          logger.error(`❌ [MaxAdapter] Error checking users table: ${dbErr.message || dbErr}`);
+          logger.error('❌ [MaxAdapter] greeted check error: ' + (dbErr.message || dbErr));
         }
       }
 
-      // 2. Извлекаем текст
       let text = '';
       let callbackData = raw.callback_data || raw.payload?.callback_data || raw.body?.callback_data || raw.message?.callback_data || raw.payload?.data || raw.body?.data || raw.body?.payload?.callback_data || raw.message?.body?.callback_data;
-      
+
       const textCandidates = [
         raw.text, raw.payload?.text, raw.body?.text,
         raw.message?.text, raw.message?.body?.text,
@@ -636,33 +606,25 @@ export class MaxAdapter {
         raw.body?.message?.text, raw.body?.message?.body?.text
       ];
       for (const cand of textCandidates) {
-        if (cand !== undefined && cand !== null && String(cand).trim() !== '') {
-          text = String(cand).trim();
-          break;
-        }
+        if (cand !== undefined && cand !== null && String(cand).trim() !== '') { text = String(cand).trim(); break; }
       }
-
-      if (callbackData) {
-        text = String(callbackData).trim();
-      }
+      if (callbackData) { text = String(callbackData).trim(); }
 
       const lowerTextForStartCheck = text.toLowerCase().trim();
       const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
 
       if (isStartCommand) {
-        console.log('👋 [MAX] bot_started приветствие chat=' + chatId);
+        console.log('👋 [MAX] bot_started: ПОЛНОЕ приветствие chat=' + chatId);
         await this.sendWelcomeGreeting(cleanId);
+        if (sqliteDb) { try { sqliteDb.prepare('INSERT OR REPLACE INTO greeted_users (chat_id, greeted_at) VALUES (?, ?)').run(cleanId, new Date().toISOString()); } catch (e) {} }
         return res.status(200).send('ok');
       }
+
       if (!isAlreadyGreeted && !callbackData) {
         console.log('👋 [MAX] первое сообщение: короткий привет и ПРОДОЛЖАЮ chat=' + chatId);
         await this.safeSendMessageToChat(cleanId, 'Здравствуйте! Я — Селин.');
-        if (sqliteDb) {
-          try { sqliteDb.exec('ALTER TABLE users ADD COLUMN greeted INTEGER DEFAULT 0'); } catch (e) {}
-          try { sqliteDb.prepare('INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)').run(cleanId); console.log('👋 [MAX] greeted сохранён chat=' + cleanId); } catch (e) {}
-        }
+        if (sqliteDb) { try { sqliteDb.prepare('INSERT OR REPLACE INTO greeted_users (chat_id, greeted_at) VALUES (?, ?)').run(cleanId, new Date().toISOString()); console.log('👋 [MAX] greeted сохранён chat=' + cleanId); } catch (e) {} }
       }
-      // ВАЖНО: после этого блока НЕТ return — код идёт дальше к распознаванию голоса и processMessage.
 
       // 3. Проверяем аудио-вложения и извлекаем прямой URL/токен
       let isVoiceInput = false;
