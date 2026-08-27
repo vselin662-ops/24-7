@@ -502,6 +502,56 @@ export class MaxAdapter {
     await this.synthesizeAndSendVoice(cleanId, text);
   }
 
+  public async sendWelcomeGreeting(cleanId: string): Promise<void> {
+    const welcomeText = 'Здравствуйте! Я — Селин, ваш личный AI-помощник.';
+    const extra = {
+      attachments: [
+        {
+          type: 'inline_keyboard',
+          payload: {
+            buttons: [
+              [
+                { text: '🚀 Настроить', callback_data: 'onboarding_start' },
+                { text: '⏭ Позже', callback_data: 'onboarding_later' }
+              ]
+            ]
+          }
+        }
+      ]
+    };
+
+    // 1. Отправляем текст с кнопками (это не блокирует голос)
+    await this.safeSendMessageToChat(cleanId, welcomeText, extra);
+
+    // 2. Запускаем озвучку в try/catch асинхронно, чтобы не блокировать выполнение
+    (async () => {
+      try {
+        const audioBuffer = await synthesizeForChat(cleanId, welcomeText);
+        const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
+        if (!isNaN(numericId) && numericId > 0) {
+          await this.sendSingleAudioBuffer(numericId, audioBuffer);
+        }
+      } catch (err) {
+        logger.error(`❌ [MaxAdapter] Greeting voice synthesis failed: ${err}`);
+      }
+    })();
+
+    // 3. Сохраняем флаг greeted в бд
+    if (sqliteDb) {
+      try {
+        sqliteDb.exec(`
+          CREATE TABLE IF NOT EXISTS users (
+            chat_id TEXT PRIMARY KEY,
+            greeted INTEGER DEFAULT 0
+          );
+        `);
+        sqliteDb.prepare("INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)").run(cleanId);
+      } catch (dbErr: any) {
+        logger.error(`❌ [MaxAdapter] Error saving user greeted status: ${dbErr.message || dbErr}`);
+      }
+    }
+  }
+
   /**
    * Обработка входящего webhook запроса от MAX Messenger
    */
@@ -555,70 +605,31 @@ export class MaxAdapter {
         String(raw.action || '').toLowerCase() === 'bot_started' ||
         String(raw.payload?.action || '').toLowerCase() === 'bot_started';
 
-      if (isBotStarted) {
-        const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-        
-        // Extract name
-        let rawName = '';
-        const payloadObj = raw.payload || raw.body || raw;
-        if (payloadObj) {
-          if (payloadObj.user) {
-            if (typeof payloadObj.user === 'object') {
-              rawName = payloadObj.user.first_name || payloadObj.user.name || '';
-            } else if (typeof payloadObj.user === 'string') {
-              rawName = payloadObj.user;
-            }
+      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+
+      // Инициализируем таблицу users и проверяем флаг greeted
+      let isAlreadyGreeted = false;
+      if (sqliteDb) {
+        try {
+          sqliteDb.exec(`
+            CREATE TABLE IF NOT EXISTS users (
+              chat_id TEXT PRIMARY KEY,
+              greeted INTEGER DEFAULT 0
+            );
+          `);
+          const row = sqliteDb.prepare("SELECT greeted FROM users WHERE chat_id = ?").get(cleanId);
+          if (row && row.greeted === 1) {
+            isAlreadyGreeted = true;
           }
-          if (!rawName) {
-            rawName = payloadObj.first_name || payloadObj.name || '';
-          }
+        } catch (dbErr: any) {
+          logger.error(`❌ [MaxAdapter] Error checking users table: ${dbErr.message || dbErr}`);
         }
-        if (!rawName) {
-          rawName = raw.user?.first_name || raw.user?.name || raw.body?.user?.first_name || raw.body?.user?.name || raw.first_name || raw.name || '';
-        }
-
-        const cleanName = String(rawName).replace(/[^a-zA-Zа-яА-ЯёЁ]/g, '').trim();
-        const name = cleanName || '';
-
-        // Text composition
-        let textToSynthesize = '';
-        if (name) {
-          textToSynthesize = `Здравствуйте, ${name}! Я — Селин, ваш личный AI-помощник. Отвечаю голосом, ищу в интернете, подсказываю погоду, напоминаю о делах и отвечаю на вопросы о вере по Библии. Спросите о чём угодно!`;
-        } else {
-          textToSynthesize = `Здравствуйте! Я — Селин, ваш личный AI-помощник. Отвечаю голосом, ищу в интернете, подсказываю погоду, напоминаю о делах и отвечаю на вопросы о вере по Библии. Спросите о чём угодно!`;
-        }
-
-        // Save user to database with name and login date if not saved yet
-        if (sqliteDb) {
-          try {
-            sqliteDb.exec(`
-              CREATE TABLE IF NOT EXISTS max_users (
-                chat_id TEXT PRIMARY KEY,
-                name TEXT,
-                joined_at TEXT NOT NULL
-              );
-            `);
-            const exists = sqliteDb.prepare("SELECT 1 FROM max_users WHERE chat_id = ?").get(cleanId);
-            if (!exists) {
-              sqliteDb.prepare("INSERT INTO max_users (chat_id, name, joined_at) VALUES (?, ?, ?)").run(cleanId, name || null, new Date().toISOString());
-            }
-          } catch (dbErr: any) {
-            logger.error(`❌ [MaxAdapter] Error saving user to database: ${dbErr.message || dbErr}`);
-          }
-        }
-
-        // Log requirement
-        console.log('👋 [MAX] приветствие: ' + (name || 'без имени') + ' chat=' + chatId);
-
-        // Send text first, then voice
-        await this.safeSendMessageToChat(cleanId, textToSynthesize);
-        await this.synthesizeAndSendVoice(cleanId, textToSynthesize);
-
-        return res.status(200).send('ok');
       }
 
       // 2. Извлекаем текст
       let text = '';
+      let callbackData = raw.callback_data || raw.payload?.callback_data || raw.body?.callback_data || raw.message?.callback_data || raw.payload?.data || raw.body?.data || raw.body?.payload?.callback_data || raw.message?.body?.callback_data;
+      
       const textCandidates = [
         raw.text, raw.payload?.text, raw.body?.text,
         raw.message?.text, raw.message?.body?.text,
@@ -630,6 +641,20 @@ export class MaxAdapter {
           text = String(cand).trim();
           break;
         }
+      }
+
+      if (callbackData) {
+        text = String(callbackData).trim();
+      }
+
+      const lowerTextForStartCheck = text.toLowerCase().trim();
+      const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
+
+      if (isStartCommand || (!isAlreadyGreeted && !callbackData)) {
+        // Log requirement
+        console.log('👋 [MAX] приветствие chat=' + chatId);
+        await this.sendWelcomeGreeting(cleanId);
+        return res.status(200).send('ok');
       }
 
       // 3. Проверяем аудио-вложения и извлекаем прямой URL/токен
@@ -788,7 +813,22 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+      const lowerText = text.toLowerCase().trim();
+
+      // Команда 'статистика' от OWNER
+      const ownerId = process.env.ADMIN_USER_ID || process.env.OWNER_CHAT_ID;
+      if (ownerId && String(cleanId) === String(ownerId).trim()) {
+        if (lowerText === 'статистика') {
+          const { getOwnerStatistics } = await import("../utils/stats");
+          const stats = await getOwnerStatistics();
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, stats);
+          } else {
+            await this.safeSendMessageToChat(cleanId, stats);
+          }
+          return res.status(200).send('ok');
+        }
+      }
 
       const norm = text.toLowerCase().trim().replace(/[\s\-_.,!?:;]+/g, '');
       if (norm === 'селин777' || norm === 'selin777' || norm.includes('селин777') || norm.includes('selin777')) {

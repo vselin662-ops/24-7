@@ -86,6 +86,40 @@ export async function handleBibleSubscription(
     }
   }
 
+  // 1.5. Ручной тест рассылки (отправка 3 стихов)
+  if (lower === 'тест рассылки' || lower === 'тест_рассылки') {
+    logger.info(`📖 [Bible Test] Running manual test broadcast of 3 verses for chatId ${cleanId}`);
+    
+    const sampleVerses = [
+      { ru: "Псалом 22:1 — Господь — Пастырь мой; я ни в чем не буду нуждаться.", en: "Psalm 23:1" },
+      { ru: "Иоанна 3:16 — Ибо так возлюбил Бог мир, что отдал Сына Своего Единородного...", en: "John 3:16" },
+      { ru: "Римлянам 8:28 — Притом знаем, что любящим Бога, призванным по Его изволению, все содействует ко благу.", en: "Romans 8:28" }
+    ];
+
+    (async () => {
+      try {
+        const { modernMaxAdapter } = await import("../../server");
+        for (let i = 0; i < sampleVerses.length; i++) {
+          const verse = sampleVerses[i];
+          const textMsg = `[Тест Рассылки] Стих ${i+1}:\n${verse.ru}`;
+          await modernMaxAdapter.safeSendMessageToChat(cleanId, textMsg);
+          
+          try {
+            await modernMaxAdapter.sendVoice(cleanId, `Разбор тестового стиха номер ${i+1}. ${verse.ru}`);
+          } catch (vErr) {
+            logger.error(`❌ [Bible Test] Voice send error: ${vErr}`);
+          }
+          
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      } catch (err: any) {
+        logger.error(`❌ [Bible Test] Error in test broadcast: ${err.message || err}`);
+      }
+    })();
+
+    return 'Запущен ручной тест: отправляю 3 стиха (текст и голос) в ваш чат.';
+  }
+
   // 2. Обработка команды «бог благ и милость его велика»
   if (!lower.includes('бог благ и милость его велика')) {
     return null;

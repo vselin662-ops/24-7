@@ -1,126 +1,27 @@
 # Selin AI
+**Автономный интеллект. Учит. Помогает. Управляет.**
 
-> Автономный интеллект. Учит, помогает, управляет.
-
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com/)
-[![License](https://img.shields.io/badge/License-Proprietary-red.svg)]()
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
+![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=nodedotjs)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)
+![License](https://img.shields.io/badge/License-Proprietary-red)
 
 ## Что это
 
-Selin AI — enterprise-grade автономный AI-сотрудник для бизнеса. Не чат-бот, а цифровой офис: мультиагентная система с голосом, памятью, базой знаний и подключением к внешним сервисам через MCP.
+Selin AI — автономный AI-сотрудник класса enterprise. Не чат-бот, а цифровой офис: мультиагентная система с голосом, долговременной памятью, базой знаний и подключением внешних сервисов через MCP. Работает 24/7, отвечает голосом, оперирует данными в реальном времени.
 
 ## Возможности
 
-- 🧠 Мультиагентный оркестратор (Gemini 2.5)
-- 🎤 Голосовой ввод/вывод (TTS + STT)
-- 📚 RAG — база знаний из документов (PDF, DOCX)
-- 💬 Интеграция с Max Messenger
-- 📋 SMART-планировщик задач
-- 🔌 MCP — подключение внешних сервисов
-- 🛡️ Enterprise безопасность (JWT, Rate Limiting, Zod)
-- 🐳 Docker-ready, CI/CD через GitHub Actions
+- 🧠 **Мультиагентный оркестратор** — команда специализированных агентов под единым управлением
+- 🌐 **Живой интернет** — погода, пробки, цены, скидки, курсы валют и экономика «здесь и сейчас»
+- 🎤 **Голосовой ввод/вывод** — литературный синтез речи с паузами и интонациями (TTS + STT)
+- 📚 **RAG** — база знаний из документов (PDF, DOCX)
+- 📋 **SMART-планировщик** — цели → квартал → неделя → день, утренние брифинги
+- 📖 **Библиографический модуль** — Синодальный перевод, корректное чтение книг и псалмов голосом
+- 💬 **Интеграция с MAX Messenger** + веб-интерфейс
+- 🔌 **MCP** — подключение внешних сервисов
+- 🛡️ **Безопасность класса enterprise** — JWT, Rate Limiting, санитизация, маскировка PII, Zod
+- 💳 **Подписка** — 199 ₽/мес или 1 490 ₽/год (2 месяца в подарок)
+- 🐳 **Docker-ready**, CI/CD через GitHub Actions
 
 ## Архитектура
-
-```text
-               ┌───────────────────────────────────────────────┐
-               │              Клиентский интерфейс            │
-               │   (React 18 + Tailwind + Voice Input)        │
-               └───────────────────────┬───────────────────────┘
-                                       │
-                                       ▼
-               ┌───────────────────────────────────────────────┐
-               │            API Server (Express / Node.js)     │
-               │        (JWT Auth / Rate Limiters / Zod)       │
-               └───────────────────────┬───────────────────────┘
-                                       │
-                ┌──────────────────────┼──────────────────────┐
-                ▼                      ▼                      ▼
-    ┌──────────────────────┐┌──────────────────────┐┌──────────────────────┐
-    │  Intent & Emotion    ││  Multi-Agent Engine  ││    Knowledge RAG     │
-    │  Engine (Gemini 2.5) ││ (Staff, SMM, Sales)  ││ (PDF, DOCX, Search)  │
-    └──────────────────────┘└──────────────────────┘└──────────────────────┘
-                │                      │                      │
-                └──────────────────────┼──────────────────────┘
-                                       ▼
-               ┌───────────────────────────────────────────────┐
-               │          SQLite Storage & Vector DB           │
-               └───────────────────────────────────────────────┘
-```
-
-## Быстрый старт
-
-### Требования
-- Node.js 20+
-- FFmpeg (для голосовых функций)
-- Docker (опционально)
-
-### Локальный запуск
-
-```bash
-# Клонировать
-git clone https://github.com/vselin662-ops/24-7.git
-cd 24-7
-
-# Зависимости
-npm install
-
-# Переменные окружения
-cp .env.example .env
-# Заполни GEMINI_API_KEY, MAX_BOT_TOKEN, JWT_SECRET
-
-# Запуск
-npm run dev
-```
-
-### Docker
-
-```bash
-docker build -t selin-ai .
-docker run -d -p 3000:3000 --env-file .env selin-ai
-```
-
-## API Endpoints
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| POST | /api/enterprise/process | Главный AI-процессор |
-| POST | /api/knowledge/upload | Загрузка в базу знаний |
-| POST | /api/smart-plan | Генерация SMART-плана |
-| POST | /api/mcp/execute | Выполнение MCP команды |
-| GET  | /api/health | Health check |
-
-## Переменные окружения
-
-| Переменная | Обязательна | Описание |
-|-----------|------------|----------|
-| GEMINI_API_KEY | ✅ | API ключ Google Gemini |
-| MAX_BOT_TOKEN | ✅ | Токен бота Max Messenger |
-| JWT_SECRET | ✅ | Секрет для подписи токенов |
-| PORT | ❌ | Порт сервера (по умолчанию 3000) |
-
-## Стек
-
-- **Runtime:** Node.js 20+, TypeScript 5.8
-- **Framework:** Express.js
-- **AI:** Google Gemini 2.5 (@google/genai)
-- **Frontend:** React 19, Vite 6, Tailwind CSS 4
-- **Database:** SQLite (локальная), Firebase Admin (опционально)
-- **Protocol:** MCP (Model Context Protocol)
-- **Security:** JWT, express-rate-limit, Zod validation
-- **Deploy:** Docker, GitHub Actions CI/CD
-
-## Лицензия
-
-Proprietary — Selin AI © 2026
-
-##  Legal & Contacts
-
-- **Author:** Selin Vadim Yurievich
-- **Email:** vselin662@gmail.com
-- **License:** Proprietary (See [LICENSE](docs/LICENSE.md))
-- **Privacy Policy:** See [PRIVACY_POLICY](docs/PRIVACY_POLICY.md)
-- **Architecture:** See [ARCHITECTURE](docs/ARCHITECTURE.md)
-
