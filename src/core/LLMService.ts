@@ -209,6 +209,47 @@ export class LLMService {
     }
   }
 
+  public async callWithWebSearch(message: string, systemPrompt?: string): Promise<string> {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey || apiKey.includes('your_') || apiKey.includes('placeholder')) {
+      logger.warn("⚠️ OPENROUTER_API_KEY is missing, falling back to standard LLM");
+      throw new Error("OPENROUTER_API_KEY is missing");
+    }
+
+    try {
+      const client = new OpenAI({
+        baseURL: 'https://openrouter.ai/api/v1',
+        apiKey: apiKey,
+        defaultHeaders: {
+          'HTTP-Referer': 'https://selin.ai',
+          'X-Title': 'SelinAI'
+        }
+      });
+
+      const messages: any[] = [];
+      if (systemPrompt) {
+        messages.push({ role: 'system', content: systemPrompt });
+      }
+      messages.push({ role: 'user', content: message });
+
+      const completion = await client.chat.completions.create({
+        model: 'google/gemini-2.0-flash-exp:free:online',
+        messages: messages,
+        temperature: 0.7,
+      });
+
+      const response = completion.choices[0]?.message?.content?.trim();
+      if (response) {
+        logger.info("🌐 [WebSearch] Web search response retrieved successfully via OpenRouter");
+        return response;
+      }
+      throw new Error("Empty response from OpenRouter");
+    } catch (err: any) {
+      logger.error(`❌ [WebSearch] callWithWebSearch error: ${err?.message || err}`);
+      throw err;
+    }
+  }
+
   public async smartCall(
     chatId: string,
     userMessage: string,
@@ -238,16 +279,32 @@ export class LLMService {
 
 ВАЖНЕЙШИЕ ПРАВИЛА:
 1. ОТВЕЧАЙ ТОЛЬКО АКТУАЛЬНОЙ ИНФОРМАЦИЕЙ (2025-2026).
-2. НЕ используй устаревшие данные из 2023-2024, если они не исторические.
-3. Если не знаешь точного актуального ответа — СКАЖИ ОБ ЭТОМ ЧЕСТНО и предложи пользователю уточнить запрос.
-4. При ответе указывай, откуда ты знаешь эту информацию (если это важно).
-5. Всегда учитывай текущую дату в ответах на вопросы о времени, событиях, ценах, новостях.
-6. Если пользователь спрашивает "кто сейчас президент?" или "какая сейчас дата?" — давай ответ на основе текущей даты.
+2. Если не знаешь точного актуального ответа — СКАЖИ ОБ ЭТОМ ЧЕСТНО и предложи пользователю уточнить запрос.
+3. При ответе указывай, откуда ты знаешь эту информацию (если это важно).
+4. Всегда учитывай текущую дату в ответах на вопросы о времени, событиях, ценах, новостях.
+5. Если пользователь спрашивает "кто сейчас президент?" или "какая сейчас дата?" — давай ответ на основе текущей даты.
 
 Твой стиль: дружелюбный, экспертный, полезный. Отвечай как живой человек — коротко и по делу, но с душой.
 `;
 
     const finalSystem = systemPrompt || defaultSystem;
+
+    // В smartCall: если в запросе есть ключевые слова -> использовать callWithWebSearch
+    const containsKeyword = ['новости', 'сегодня', 'сейчас', 'цена', 'курс', 'погода', 'пробки', 'актуальное'].some(k => userMessage.toLowerCase().includes(k));
+    if (containsKeyword) {
+      try {
+        const response = await this.callWithWebSearch(userMessage, finalSystem);
+        if (response) {
+          memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+          if (memory.history.length > 30) {
+            memory.history = memory.history.slice(-30);
+          }
+          return response;
+        }
+      } catch (err) {
+        logger.warn("⚠️ [smartCall] Web search call failed, falling back to standard LLM", err);
+      }
+    }
 
     // 1. Попытка через Gemini для максимального интеллекта
     if (this.gemini) {

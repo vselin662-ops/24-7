@@ -53,6 +53,7 @@ export {
   getDayIndex
 } from "./src/services/bibleService";
 import { startBibleScheduler } from "./src/services/bibleService";
+import { startMorningScheduler } from "./src/services/morningBriefing";
 
 dotenv.config();
 checkRequiredEnvVars();
@@ -239,6 +240,7 @@ async function startServer() {
         await modernMaxAdapter.sendVoice(chatId, text);
       }
     );
+    startMorningScheduler();
 
     // Run Voice Synthesis Self-Test
     (async () => {

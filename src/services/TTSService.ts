@@ -51,7 +51,7 @@ export class TTSService {
     let contentType = 'audio/mpeg';
 
     const voice = options.voice || 'ru-RU-DmitryNeural';
-    const rate = options.rate || (voice === 'ru-RU-SvetlanaNeural' ? '-5%' : '-8%');
+    const rate = options.rate || '-10%';
     const pitch = options.pitch || (voice === 'ru-RU-SvetlanaNeural' ? '-2Hz' : '-4Hz');
 
     // Попытка 1: MsEdgeTTS library (WebSocket)

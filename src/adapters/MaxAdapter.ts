@@ -333,18 +333,35 @@ export class MaxAdapter {
     }
 
     // 2. Логика озвучки длинного текста:
-    // - ответ до 280 символов -> одно голосовое сообщение;
-    // - ответ больше -> разбить по предложениям на чанки, озвучить последовательно;
     let chunks: string[] = [];
-    if (cleanedText.length <= 280) {
+    if (cleanedText.length <= 800) {
       chunks = [cleanedText];
     } else {
       const sentences = cleanedText.match(/[^.!?\n]+[.!?\n]*/g) || [cleanedText];
-      chunks = sentences.map(s => s.trim()).filter(Boolean);
+      let currentChunk = "";
+      for (const sentence of sentences) {
+        const s = sentence.trim();
+        if (!s) continue;
+        if (currentChunk.length + s.length + 1 > 1500) {
+          if (currentChunk.trim().length >= 10) {
+            chunks.push(currentChunk.trim());
+          }
+          currentChunk = s;
+        } else {
+          currentChunk = currentChunk ? currentChunk + " " + s : s;
+        }
+      }
+      if (currentChunk.trim().length >= 10) {
+        chunks.push(currentChunk.trim());
+      }
     }
 
-    const n = chunks.length;
-    console.log('📚 [VoiceBook] chat=' + chatId + ' чанков=' + n);
+    chunks = chunks.filter(c => c.trim().length >= 10);
+    if (chunks.length > 4) {
+      chunks = chunks.slice(0, 4);
+    }
+
+    logger.info('🎙️ [TTS] символов=' + text.length + ' чанков=' + chunks.length);
 
     let sentAtLeastOne = false;
     for (const chunk of chunks) {
@@ -545,7 +562,9 @@ export class MaxAdapter {
             greeted INTEGER DEFAULT 0
           );
         `);
+        try { sqliteDb.exec('ALTER TABLE users ADD COLUMN greeted INTEGER DEFAULT 0'); } catch (e) {}
         sqliteDb.prepare("INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)").run(cleanId);
+        console.log('👋 [MAX] greeted сохранён chat=' + cleanId);
       } catch (dbErr: any) {
         logger.error(`❌ [MaxAdapter] Error saving user greeted status: ${dbErr.message || dbErr}`);
       }
@@ -617,6 +636,7 @@ export class MaxAdapter {
               greeted INTEGER DEFAULT 0
             );
           `);
+          try { sqliteDb.exec('ALTER TABLE users ADD COLUMN greeted INTEGER DEFAULT 0'); } catch (e) {}
           const row = sqliteDb.prepare("SELECT greeted FROM users WHERE chat_id = ?").get(cleanId);
           if (row && row.greeted === 1) {
             isAlreadyGreeted = true;
@@ -650,11 +670,19 @@ export class MaxAdapter {
       const lowerTextForStartCheck = text.toLowerCase().trim();
       const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
 
-      if (isStartCommand || (!isAlreadyGreeted && !callbackData)) {
-        // Log requirement
-        console.log('👋 [MAX] приветствие chat=' + chatId);
+      if (isStartCommand) {
         await this.sendWelcomeGreeting(cleanId);
         return res.status(200).send('ok');
+      } else if (!isAlreadyGreeted && !callbackData) {
+        await this.safeSendMessageToChat(cleanId, 'Здравствуйте! Я — Селин.');
+        if (sqliteDb) {
+          try {
+            sqliteDb.prepare("INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)").run(cleanId);
+            console.log('👋 [MAX] greeted сохранён chat=' + cleanId);
+          } catch (dbErr: any) {
+            logger.error(`❌ [MaxAdapter] Error saving user greeted status: ${dbErr.message || dbErr}`);
+          }
+        }
       }
 
       // 3. Проверяем аудио-вложения и извлекаем прямой URL/токен
