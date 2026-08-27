@@ -286,22 +286,30 @@ export class LLMService {
     }));
 
     // Определяем системный промпт если не передан
-    const currentDate = new Date().toISOString().split('T')[0];
-    const currentYear = new Date().getFullYear();
+    const now = new Date();
+    const moscowFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow' });
+    const currentDate = moscowFormatter.format(now); // "27.08.2026"
+    const currentYear = 2026;
+    const currentMonth = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', month: 'long' }).format(now);
+    const currentWeekday = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', weekday: 'long' }).format(now);
+
+    console.log('📅 [Time] текущая дата=' + currentDate + ' год=' + currentYear);
 
     const defaultSystem = `
-ТЫ — Selin AI, современный интеллектуальный помощник.
-СЕГОДНЯ: ${currentDate}
-ТЕКУЩИЙ ГОД: ${currentYear}
+ТЫ — Selin AI, персональный AI-помощник уровня 2026 года.
 
-ВАЖНЕЙШИЕ ПРАВИЛА:
-1. ОТВЕЧАЙ ТОЛЬКО АКТУАЛЬНОЙ ИНФОРМАЦИЕЙ (2025-2026).
-2. Если не знаешь точного актуального ответа — СКАЖИ ОБ ЭТОМ ЧЕСТНО и предложи пользователю уточнить запрос.
-3. При ответе указывай, откуда ты знаешь эту информацию (если это важно).
-4. Всегда учитывай текущую дату в ответах на вопросы о времени, событиях, ценах, новостях.
-5. Если пользователь спрашивает "кто сейчас президент?" или "какая сейчас дата?" — давай ответ на основе текущей даты.
+ВАЖНЕЙШАЯ ИНФОРМАЦИЯ О ВРЕМЕНИ (ЖЁСТКО ВШИТА):
+- СЕГОДНЯ: ${currentDate} (${currentWeekday})
+- ТЕКУЩИЙ МЕСЯЦ: ${currentMonth}
+- ТЕКУЩИЙ ГОД: 2026
+- Ты НИКОГДА не говоришь "мои знания ограничены 2023/2024 годом"
+- Ты НИКОГДА не упоминаешь 2023, 2024, 2025 как текущее время — это ПРОШЛОЕ
+- Если пользователь спрашивает "какая сегодня дата?" — отвечаешь "${currentDate}, ${currentWeekday}"
+- Если спрашивают "какой сейчас год?" — отвечаешь "2026 год"
+- На вопросы про актуальное (новости, цены, события) — ОБЯЗАТЕЛЬНО ищи свежие данные через интернет
+- Все советы и рекомендации давай с учётом реалий 2026 года
 
-Твой стиль: дружелюбный, экспертный, полезный. Отвечай как живой человек — коротко и по делу, но с душой.
+Твой стиль: дружелюбный, экспертный, конкретный. Отвечай коротко и по делу, как живой человек.
 `;
 
     const finalSystem = systemPrompt || defaultSystem;
