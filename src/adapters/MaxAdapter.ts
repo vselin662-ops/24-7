@@ -337,31 +337,10 @@ export class MaxAdapter {
     if (cleanedText.length <= 800) {
       chunks = [cleanedText];
     } else {
-      const sentences = cleanedText.match(/[^.!?\n]+[.!?\n]*/g) || [cleanedText];
-      let currentChunk = "";
-      for (const sentence of sentences) {
-        const s = sentence.trim();
-        if (!s) continue;
-        if (currentChunk.length + s.length + 1 > 1500) {
-          if (currentChunk.trim().length >= 10) {
-            chunks.push(currentChunk.trim());
-          }
-          currentChunk = s;
-        } else {
-          currentChunk = currentChunk ? currentChunk + " " + s : s;
-        }
-      }
-      if (currentChunk.trim().length >= 10) {
-        chunks.push(currentChunk.trim());
-      }
+      chunks = splitTextSmart(cleanedText, 1400).slice(0, 4);
     }
-
-    chunks = chunks.filter(c => c.trim().length >= 10);
-    if (chunks.length > 4) {
-      chunks = chunks.slice(0, 4);
-    }
-
-    logger.info('🎙️ [TTS] символов=' + text.length + ' чанков=' + chunks.length);
+    chunks = chunks.filter(c => c && c.trim().length >= 10);
+    console.log('🎙️ [TTS] символов=' + cleanedText.length + ' чанков=' + chunks.length);
 
     let sentAtLeastOne = false;
     for (const chunk of chunks) {
@@ -520,7 +499,7 @@ export class MaxAdapter {
   }
 
   public async sendWelcomeGreeting(cleanId: string): Promise<void> {
-    const welcomeText = 'Здравствуйте! Я — Селин, ваш личный AI-помощник.';
+    const welcomeText = 'Приветствую вас! Рад видеть вас у себя. Я — Selin AI, ваш личный помощник. Я озвучиваю книги и Библию, нахожу свежие новости, цены и погоду в интернете, помогаю с бизнесом и планами, понимаю фото и голос. Спрашивайте о чём угодно!';
     const extra = {
       attachments: [
         {
@@ -671,19 +650,19 @@ export class MaxAdapter {
       const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
 
       if (isStartCommand) {
+        console.log('👋 [MAX] bot_started приветствие chat=' + chatId);
         await this.sendWelcomeGreeting(cleanId);
         return res.status(200).send('ok');
-      } else if (!isAlreadyGreeted && !callbackData) {
+      }
+      if (!isAlreadyGreeted && !callbackData) {
+        console.log('👋 [MAX] первое сообщение: короткий привет и ПРОДОЛЖАЮ chat=' + chatId);
         await this.safeSendMessageToChat(cleanId, 'Здравствуйте! Я — Селин.');
         if (sqliteDb) {
-          try {
-            sqliteDb.prepare("INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)").run(cleanId);
-            console.log('👋 [MAX] greeted сохранён chat=' + cleanId);
-          } catch (dbErr: any) {
-            logger.error(`❌ [MaxAdapter] Error saving user greeted status: ${dbErr.message || dbErr}`);
-          }
+          try { sqliteDb.exec('ALTER TABLE users ADD COLUMN greeted INTEGER DEFAULT 0'); } catch (e) {}
+          try { sqliteDb.prepare('INSERT OR REPLACE INTO users (chat_id, greeted) VALUES (?, 1)').run(cleanId); console.log('👋 [MAX] greeted сохранён chat=' + cleanId); } catch (e) {}
         }
       }
+      // ВАЖНО: после этого блока НЕТ return — код идёт дальше к распознаванию голоса и processMessage.
 
       // 3. Проверяем аудио-вложения и извлекаем прямой URL/токен
       let isVoiceInput = false;

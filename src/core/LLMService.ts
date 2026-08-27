@@ -164,6 +164,23 @@ export async function callVision(userText: string, dataUrl: string): Promise<str
   throw new Error('All Vision providers failed');
 }
 
+export async function callWithWebSearch(userMessage: string, systemPrompt: string): Promise<string | null> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://selin.ai', 'X-Title': 'SelinAI' },
+      body: JSON.stringify({ model: 'google/gemini-2.0-flash-exp:free:online', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }], temperature: 0.7 }),
+      signal: AbortSignal.timeout(30000)
+    });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    return text && text.trim() ? text.trim() : null;
+  } catch { return null; }
+}
+
 export class LLMService {
   private gemini: GoogleGenAI | null = null;
   private groq: Groq | null = null;
@@ -289,20 +306,13 @@ export class LLMService {
 
     const finalSystem = systemPrompt || defaultSystem;
 
-    // В smartCall: если в запросе есть ключевые слова -> использовать callWithWebSearch
-    const containsKeyword = ['новости', 'сегодня', 'сейчас', 'цена', 'курс', 'погода', 'пробки', 'актуальное'].some(k => userMessage.toLowerCase().includes(k));
-    if (containsKeyword) {
-      try {
-        const response = await this.callWithWebSearch(userMessage, finalSystem);
-        if (response) {
-          memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
-          if (memory.history.length > 30) {
-            memory.history = memory.history.slice(-30);
-          }
-          return response;
-        }
-      } catch (err) {
-        logger.warn("⚠️ [smartCall] Web search call failed, falling back to standard LLM", err);
+    const needsWeb = /новост|сегодня|сейчас|цен|курс|погод|пробк|актуальн|скидк|2025|2026/i.test(userMessage);
+    if (needsWeb) {
+      const webAnswer = await callWithWebSearch(userMessage, finalSystem);
+      if (webAnswer) {
+        memory.history.push({ role: 'assistant', content: webAnswer, timestamp: Date.now() });
+        console.log('🌐 [Web] ответ через :online');
+        return webAnswer;
       }
     }
 

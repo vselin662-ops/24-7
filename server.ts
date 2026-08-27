@@ -54,6 +54,7 @@ export {
 } from "./src/services/bibleService";
 import { startBibleScheduler } from "./src/services/bibleService";
 import { startMorningScheduler } from "./src/services/morningBriefing";
+import { SecurityGateway } from "./src/core/SecurityGateway";
 
 dotenv.config();
 checkRequiredEnvVars();
@@ -72,7 +73,7 @@ app.use((req, res, next) => {
     const tenantId = (req as any).user?.tenant_id || (req as any).user?.chatId || (req as any).tenant_id || "default";
     const routePath = req.route ? req.route.path : req.path;
 
-    logger.info(`HTTP ${req.method} ${req.path} ${res.statusCode}`, {
+    logger.info(SecurityGateway.maskPII(`HTTP ${req.method} ${req.path} ${res.statusCode}`), {
       method: req.method,
       path: req.path,
       statusCode: res.statusCode,
@@ -99,7 +100,7 @@ app.use((req, res, next) => {
 });
 
 // 2. Global Parsers
-app.use(cors());
+app.use(cors({ origin: (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(','), credentials: true }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -240,7 +241,14 @@ async function startServer() {
         await modernMaxAdapter.sendVoice(chatId, text);
       }
     );
-    startMorningScheduler();
+    startMorningScheduler(
+      async (chatId, text) => {
+        await modernMaxAdapter.sendMessage(chatId, text);
+      },
+      async (chatId, text) => {
+        await modernMaxAdapter.sendVoice(chatId, text);
+      }
+    );
 
     // Run Voice Synthesis Self-Test
     (async () => {

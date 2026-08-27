@@ -34,11 +34,16 @@ fintechRouter.post("/api/yookassa/webhook", async (req: Request, res: Response) 
       const chatId = metadata.chat_id || metadata.chatId;
       const plan = metadata.plan || "plan";
 
-      if (chatId) {
-        activateSubscription(chatId, plan, 30);
-        await sendMaxNotification(chatId, "Оплата подтверждена! Тариф активен 30 дней.");
-        logger.info(`💳 [Pay] подтверждено ${chatId}`);
-      }
+      const shopId = process.env.YOOKASSA_SHOP_ID; const secret = process.env.YOOKASSA_SECRET; const paymentId = body.object?.id;
+      if (shopId && secret && paymentId) {
+        const check = await fetch('https://api.yookassa.ru/v3/payments/' + paymentId, { headers: { 'Authorization': 'Basic ' + Buffer.from(shopId + ':' + secret).toString('base64') }, signal: AbortSignal.timeout(10000) });
+        if (!check.ok) { logger.warn('🚨 [Pay] проверка платежа не прошла'); return res.status(200).send('OK'); }
+        const pdata: any = await check.json();
+        if (pdata.status !== 'succeeded') return res.status(200).send('OK');
+        const realChatId = pdata.metadata?.chat_id || chatId; const realPlan = pdata.metadata?.plan || plan;
+        activateSubscription(realChatId, realPlan, 30);
+        await sendMaxNotification(realChatId, 'Оплата подтверждена! Тариф активен 30 дней.');
+      } else if (chatId) { activateSubscription(chatId, plan, 30); }
     }
   } catch (err: any) {
     logger.error(`❌ [Fintech] Ошибка в webhook ЮKassa: ${err?.message || err}`);
@@ -105,12 +110,7 @@ export async function handleFintechCommand(
 
   // 1. Команда 'тарифы'
   if (lower === 'тарифы' || lower === '/tariffs' || lower === '/plans' || lower === 'тариф') {
-    const replyText = `Доступные тарифы Selin AI:
-
-1. План победы — 299 руб/мес (годовой библейский план, утренние, дневные и вечерние стихи с голосовыми разборами).
-2. Премиум — 999 руб/мес (полный доступ ко всем возможностям и ассистентам).
-
-Нажмите кнопку ниже или отправьте команду pay:plan / pay:premium для оплаты:`;
+    const replyText = 'Доступные тарифы Selin AI:\n\n1. План победы — 199 руб/мес или 1490 руб/год (2 месяца в подарок)\n2. Премиум — 499 руб/мес или 3990 руб/год.';
 
     const extra = {
       attachments: [
@@ -119,10 +119,10 @@ export async function handleFintechCommand(
           payload: {
             buttons: [
               [
-                { text: 'План победы - 299 руб', callback_data: 'pay:plan' }
+                { text: 'План победы - 199 руб', callback_data: 'pay:plan' }
               ],
               [
-                { text: 'Премиум - 999 руб', callback_data: 'pay:premium' }
+                { text: 'Премиум - 499 руб', callback_data: 'pay:premium' }
               ]
             ]
           }
