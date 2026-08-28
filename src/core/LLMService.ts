@@ -366,8 +366,7 @@ export class LLMService {
 
     // === ПРАВКА 3: АВТОЗАПРОС ВРЕМЕНИ ===
     const timeKeywords = /врем[яе]|час|который час|сейчас врем|какое время|дата|сегодня|какой день/i;
-    const weatherKeywords = /погод|температур|тепл|холод|жар|дожд|снег|ветер|прогноз/i;
-    if (timeKeywords.test(userMessage) && !weatherKeywords.test(userMessage)) {
+    if (timeKeywords.test(userMessage) && !/погод|температур|тепл|холод|жар|дожд|снег|ветер|прогноз/i.test(userMessage)) {
       const timeAnswer = `Сейчас ${moscowTime} по Москве. 2026 год.`;
       console.log('⏰ [Time] ответ: ' + timeAnswer);
       memory.history.push({ role: 'assistant', content: timeAnswer, timestamp: Date.now() });
@@ -385,6 +384,7 @@ export class LLMService {
     }
 
     // === ПРАВКА 2: АВТОЗАПРОС ПОГОДЫ ПРИ КЛЮЧЕВЫХ СЛОВАХ ===
+    const weatherKeywords = /погод|температур|тепл|холод|жар|дожд|снег|ветер|прогноз/i;
     if (weatherKeywords.test(userMessage)) {
       console.log('🌤️ [Weather] запрос погоды');
       try {
