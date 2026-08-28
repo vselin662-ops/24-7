@@ -275,6 +275,44 @@ export class LLMService {
     return null;
   }
 
+  private async callWithSystemDirect(userMessage: string, systemPrompt: string): Promise<string | null> {
+    try {
+      const groq = this.getGroqClient();
+      if (groq) {
+        const model = await pickGroqModel();
+        const completion = await groq.chat.completions.create({
+          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
+          model: model,
+          temperature: 0.7,
+          max_tokens: 2000,
+        });
+        const res = completion.choices[0]?.message?.content?.trim();
+        if (res) return res;
+      }
+    } catch (e) {
+      console.log('⚠️ [callWithSystemDirect] Groq failed, trying Gemini...');
+    }
+
+    try {
+      if (this.gemini) {
+        const completion = await this.gemini.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          config: {
+            systemInstruction: systemPrompt,
+            temperature: 0.7
+          }
+        });
+        const res = completion.text?.trim();
+        if (res) return res;
+      }
+    } catch (e) {
+      console.log('⚠️ [callWithSystemDirect] Gemini failed...');
+    }
+
+    return null;
+  }
+
   public getMemory(chatId: string): ChatMemory {
     if (!this.chatMemories.has(chatId)) {
       this.chatMemories.set(chatId, { history: [] });
@@ -358,6 +396,16 @@ export class LLMService {
     }).format(now);
 
     const defaultSystem = `
+🚫 АБСОЛЮТНЫЙ ЗАПРЕТ НА УТОЧНЕНИЯ:
+- НИКОГДА не переспрашивай «вам точно это нужно?», «правильно ли я понял?», «уточните запрос» — если пользователь уже дал конкрестный запрос.
+- Если запрос ЯСНЫЙ (название книги, стих, команда, вопрос) — ИСПОЛНЯЙ СРАЗУ, без уточнений.
+- Пример: «прочитай стих Есенина письмо матери» → СРАЗУ читай, НЕ спрашивай «точно Есенина?».
+- Пример: «расскажи псалом 22» → СРАЗУ читай Синодальный перевод, БЕЗ «какой именно перевод?».
+- Пример: «что за погода?» → СРАЗУ дай погоду, БЕЗ «где именно?».
+- Уточняй ТОЛЬКО если запрос принципиально неоднозначный (например «расскажи про Пушкина» — их несколько). В 99% случаев НЕ уточняй.
+- Запрещены фразы: «давайте я уточню», «подтвердите, пожалуйста», «вы уверены?», «правильно ли я понял?».
+- Отвечай как уверенный эксперт, который УЖЕ понял что нужно.
+
 ТЫ — Selin AI, персональный AI-помощник 2026 года.
 
 ⏰ ТЕКУЩЕЕ ВРЕМЯ (ЖЁСТКО ВШИТО, НЕ СОМНЕВАЙСЯ):
@@ -434,6 +482,17 @@ export class LLMService {
         }
       } catch (e) {
         console.log('⚠️ [Weather] fetch error: ' + (e as any).message);
+      }
+    }
+
+    // === Спец-режим для книг/стихов/Библии ===
+    const isBookRequest = /прочитай|озвучь|расскажи.*(стих|поэм|глав|книг|псалом|библи|сказк)|зачитай/i.test(userMessage);
+    if (isBookRequest) {
+      const directSystem = (systemPrompt || defaultSystem) + '\n\n⚠️ РЕЖИМ КНИГИ: запрос конкретный — читай/озвучивай СРАЗУ полностью, БЕЗ уточнений, БЕЗ «вы уверены?». Просто делай.';
+      const answer = await this.callWithSystemDirect(userMessage, directSystem);
+      if (answer) {
+        memory.history.push({ role: "assistant", content: answer, timestamp: Date.now() });
+        return answer;
       }
     }
 
