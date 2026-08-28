@@ -213,6 +213,44 @@ export class LLMService {
     return this.groq;
   }
 
+  private async callWithSystem(userMessage: string, systemPrompt: string): Promise<string | null> {
+    try {
+      const groq = this.getGroqClient();
+      if (groq) {
+        const model = await pickGroqModel();
+        const completion = await groq.chat.completions.create({
+          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
+          model: model,
+          temperature: 0.7,
+          max_tokens: 800,
+        });
+        const res = completion.choices[0]?.message?.content?.trim();
+        if (res) return res;
+      }
+    } catch (e) {
+      console.log('⚠️ [callWithSystem] Groq failed, trying Gemini...');
+    }
+
+    try {
+      if (this.gemini) {
+        const completion = await this.gemini.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          config: {
+            systemInstruction: systemPrompt,
+            temperature: 0.7
+          }
+        });
+        const res = completion.text?.trim();
+        if (res) return res;
+      }
+    } catch (e) {
+      console.log('⚠️ [callWithSystem] Gemini failed...');
+    }
+
+    return null;
+  }
+
   public getMemory(chatId: string): ChatMemory {
     if (!this.chatMemories.has(chatId)) {
       this.chatMemories.set(chatId, { history: [] });
@@ -287,40 +325,89 @@ export class LLMService {
 
     // Определяем системный промпт если не передан
     const now = new Date();
-    const moscowFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow' });
-    const currentDate = moscowFormatter.format(now); // "27.08.2026"
-    const currentYear = 2026;
-    const currentMonth = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', month: 'long' }).format(now);
-    const currentWeekday = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', weekday: 'long' }).format(now);
-
-    console.log('📅 [Time] текущая дата=' + currentDate + ' год=' + currentYear);
+    const moscowTime = new Intl.DateTimeFormat('ru-RU', { 
+      timeZone: 'Europe/Moscow', 
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+      weekday: 'long',
+      hour12: false 
+    }).format(now);
 
     const defaultSystem = `
-ТЫ — Selin AI, персональный AI-помощник уровня 2026 года.
+ТЫ — Selin AI, персональный AI-помощник 2026 года.
 
-ВАЖНЕЙШАЯ ИНФОРМАЦИЯ О ВРЕМЕНИ (ЖЁСТКО ВШИТА):
-- СЕГОДНЯ: ${currentDate} (${currentWeekday})
-- ТЕКУЩИЙ МЕСЯЦ: ${currentMonth}
-- ТЕКУЩИЙ ГОД: 2026
-- Ты НИКОГДА не говоришь "мои знания ограничены 2023/2024 годом"
-- Ты НИКОГДА не упоминаешь 2023, 2024, 2025 как текущее время — это ПРОШЛОЕ
-- Если пользователь спрашивает "какая сегодня дата?" — отвечаешь "${currentDate}, ${currentWeekday}"
-- Если спрашивают "какой сейчас год?" — отвечаешь "2026 год"
-- На вопросы про актуальное (новости, цены, события) — ОБЯЗАТЕЛЬНО ищи свежие данные через интернет
-- Все советы и рекомендации давай с учётом реалий 2026 года
+⏰ ТЕКУЩЕЕ ВРЕМЯ (ЖЁСТКО ВШИТО, НЕ СОМНЕВАЙСЯ):
+Сейчас: ${moscowTime} по Москве.
+Ты НИКОГДА не говоришь что не знаешь время — ВСЕГДА знаешь.
+Если спрашивают "который час?" — отвечаешь текущее время из переменной выше.
+Если спрашивают "какой год?" — отвечаешь 2026.
+Если спрашивают "какая дата?" — отвечаешь текущую дату.
 
-Твой стиль: дружелюбный, экспертный, конкретный. Отвечай коротко и по делу, как живой человек.
+🎭 ИДЕНТИЧНОСТЬ:
+Ты — Селин. НИКОГДА не упоминай GPT, OpenAI, Gemini, Llama.
+На "кто ты?" → "Я — Селин, ваш личный AI-помощник".
+
+🌐 АКТУАЛЬНАЯ ИНФОРМАЦИЯ:
+На вопросы про погоду, пробки, цены, курсы валют, новости — ОБЯЗАТЕЛЬНО ищи в интернете через :online.
+Никогда не говори "я не могу узнать погоду" — у тебя есть интернет.
+
+📚 БИБЛИЯ:
+Все библейские цитаты — ТОЛЬКО Синодальный перевод.
+Ты — справочник, не пастор. Не проповедуешь, не даёшь духовных советов.
+
+🚫 ЗАПРЕТЫ:
+Политика, президент, митинги, войны — вежливый отказ: "Я не обсуждаю политические темы. Могу помочь с бизнесом, планами, знаниями."
+Устаревшие данные 2023-2024 — не использовать как текущие.
+
+Твой стиль: дружелюбный, конкретный, как живой эксперт. Короткие ответы по делу.
 `;
 
     const finalSystem = systemPrompt || defaultSystem;
 
-    const needsWeb = /новост|сегодня|сейчас|цен|курс|погод|пробк|актуальн|скидк|2025|2026/i.test(userMessage);
+    // === ПРАВКА 3: АВТОЗАПРОС ВРЕМЕНИ ===
+    const timeKeywords = /врем[яе]|час|который час|сейчас врем|какое время|дата|сегодня|какой день/i;
+    const weatherKeywords = /погод|температур|тепл|холод|жар|дожд|снег|ветер|прогноз/i;
+    if (timeKeywords.test(userMessage) && !weatherKeywords.test(userMessage)) {
+      const timeAnswer = `Сейчас ${moscowTime} по Москве. 2026 год.`;
+      console.log('⏰ [Time] ответ: ' + timeAnswer);
+      memory.history.push({ role: 'assistant', content: timeAnswer, timestamp: Date.now() });
+      return timeAnswer;
+    }
+
+    const needsWeb = /новост|сегодня|сейчас|цен|курс|пробк|актуальн|скидк|2025|2026/i.test(userMessage);
     if (needsWeb) {
       const webAnswer = await callWithWebSearch(userMessage, finalSystem);
       if (webAnswer) {
         memory.history.push({ role: 'assistant', content: webAnswer, timestamp: Date.now() });
         console.log('🌐 [Web] ответ через :online');
         return webAnswer;
+      }
+    }
+
+    // === ПРАВКА 2: АВТОЗАПРОС ПОГОДЫ ПРИ КЛЮЧЕВЫХ СЛОВАХ ===
+    if (weatherKeywords.test(userMessage)) {
+      console.log('🌤️ [Weather] запрос погоды');
+      try {
+        const weatherRes = await fetch('https://wttr.in/Moscow?format=j1', { signal: AbortSignal.timeout(8000) });
+        if (weatherRes.ok) {
+          const wd: any = await weatherRes.json();
+          const current = wd?.current_condition?.[0];
+          if (current) {
+            const temp = current.temp_C;
+            const feels = current.FeelsLikeC;
+            const desc = current.lang_ru?.[0]?.value || current.weatherDesc?.[0]?.value || 'ясно';
+            const wind = current.windspeedKmph;
+            const weatherInfo = `Актуальная погода в Москве: ${temp}°C (ощущается как ${feels}°C), ${desc}, ветер ${wind} км/ч.`;
+            const fullPrompt = finalSystem + '\n\nДОПОЛНИТЕЛЬНО: ' + weatherInfo + '\nИспользуй эти данные в ответе.';
+            const reply = await this.callWithSystem(userMessage, fullPrompt);
+            if (reply) {
+              memory.history.push({ role: 'assistant', content: reply, timestamp: Date.now() });
+              return reply;
+            }
+          }
+        }
+      } catch (e) {
+        console.log('⚠️ [Weather] fetch error: ' + (e as any).message);
       }
     }
 
