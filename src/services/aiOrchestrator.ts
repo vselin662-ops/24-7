@@ -32,7 +32,7 @@ class AIOrchestrator {
         name: 'orca',
         baseURL: process.env.ORCA_BASE_URL || 'https://api.orcarouter.ai/v1',
         apiKey: process.env.ORCA_API_KEY || '',
-        model: process.env.ORCA_MODEL || 'openai/gpt-4o-mini',
+        model: process.env.ORCA_MODEL || 'google/gemini-2.5-flash',
         priority: 2,
       },
       {

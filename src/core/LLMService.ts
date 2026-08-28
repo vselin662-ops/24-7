@@ -55,7 +55,7 @@ export async function pickGroqModel(): Promise<string> {
   let chosen = '';
 
   if (models.length > 0) {
-    const priorities = ['gpt-oss-20b', 'qwen', 'llama-3.3', 'gpt-oss-120b'];
+    const priorities = ["llama-3.3", "qwen", "gemini", "deepseek"];
     
     for (const p of priorities) {
       const match = models.find(id => id.toLowerCase().includes(p));
@@ -77,7 +77,7 @@ export async function pickGroqModel(): Promise<string> {
   }
 
   if (!chosen) {
-    chosen = 'openai/gpt-oss-20b';
+    chosen = "llama-3.3-70b-8192";
   }
 
   logger.info(`🧠 [Groq] Выбрана живая модель: ${chosen}`);
@@ -370,6 +370,7 @@ export class LLMService {
 🎭 ИДЕНТИЧНОСТЬ:
 Ты — Selin AI. НИКОГДА не упоминай GPT, OpenAI, Gemini, Llama.
 На "кто ты?" → "Я — Selin AI, ваш личный AI-помощник".
+Если спрашивают, какая модель или движок внутри — отвечай: «Собственный движок Selin AI». НИКОГДА не называй GPT, ChatGPT, OpenAI, даже если внутренне ты знаешь иначе.
 
 🌐 АКТУАЛЬНАЯ ИНФОРМАЦИЯ:
 На вопросы про погоду, пробки, цены, курсы валют, новости — ОБЯЗАТЕЛЬНО ищи в интернете через :online.
@@ -445,50 +446,7 @@ export class LLMService {
       }))
     ] as any;
 
-    // 1. OpenAI (gpt-5-mini)
-    try {
-      const oaiKey = process.env.OPENAI_API_KEY;
-      if (oaiKey && !oaiKey.includes('your_') && !oaiKey.includes('placeholder') && oaiKey.length > 10) {
-        console.log('🤖 [Router] Attempting OpenAI (gpt-5-mini)');
-        const openai = new OpenAI({ apiKey: oaiKey });
-        try {
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-5-mini',
-            messages,
-            temperature: 0.8,
-            max_tokens: 2000,
-          });
-          const response = completion.choices[0]?.message?.content?.trim();
-          if (response) {
-            memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
-            if (memory.history.length > 30) {
-              memory.history = memory.history.slice(-30);
-            }
-            return response;
-          }
-        } catch (err: any) {
-          console.log('⚠️ [Router] OpenAI gpt-5-mini failed, trying fallback gpt-4o-mini: ' + err.message);
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages,
-            temperature: 0.8,
-            max_tokens: 2000,
-          });
-          const response = completion.choices[0]?.message?.content?.trim();
-          if (response) {
-            memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
-            if (memory.history.length > 30) {
-              memory.history = memory.history.slice(-30);
-            }
-            return response;
-          }
-        }
-      }
-    } catch (e: any) {
-      console.log('⚠️ [Router] OpenAI provider failed: ' + e.message);
-    }
-
-    // 2. OpenRouter (gpt-5-mini → gemini-2.5 → claude → llama)
+    // 1. OpenRouter (gemini-2.5 → claude → llama)
     try {
       const orKey = process.env.OPENROUTER_API_KEY;
       if (orKey && !orKey.includes('your_') && !orKey.includes('placeholder') && orKey.length > 10) {
@@ -503,15 +461,10 @@ export class LLMService {
         });
 
         const chainModels = [
-          'openai/gpt-5-mini',
-          'openai/gpt-4o-mini', // gpt-5-mini fallback
-          'google/gemini-2.5-flash',
-          'google/gemini-2.5-pro',
-          'google/gemini-2.0-flash', // gemini-2.5 fallback
-          'anthropic/claude-3.5-haiku',
-          'anthropic/claude-3-haiku', // claude fallback
-          'meta-llama/llama-3.3-70b-instruct',
-          'meta-llama/llama-3.1-8b-instruct' // llama fallback
+          "google/gemini-2.5-flash",
+          "anthropic/claude-sonnet-4",
+          "meta-llama/llama-3.3-70b-instruct",
+          "qwen/qwen-2.5-72b-instruct"
         ];
 
         for (const model of chainModels) {
@@ -906,7 +859,7 @@ export class LLMService {
     const key = process.env.ORCA_API_KEY;
     if (!key || key.length < 10 || isBlocked("orca")) return null;
     const base = process.env.ORCA_BASE_URL || "https://api.orcarouter.ai/v1";
-    const model = process.env.ORCA_MODEL || "openai/gpt-4o-mini";
+    const model = process.env.ORCA_MODEL || "google/gemini-2.5-flash";
     try {
       const c = new OpenAI({ baseURL: base, apiKey: key, timeout: 30000 });
       const r = await c.chat.completions.create({ messages, model, temperature: 0.7, max_tokens: 2000 });
