@@ -622,7 +622,7 @@ export class MaxAdapter {
 
       if (!isAlreadyGreeted && !callbackData) {
         console.log('👋 [MAX] первое сообщение: короткий привет и ПРОДОЛЖАЮ chat=' + chatId);
-        await this.safeSendMessageToChat(cleanId, 'Здравствуйте! Я — Селин.');
+        await this.safeSendMessageToChat(cleanId, 'Здравствуйте! Я — Selin AI.');
         if (sqliteDb) { try { sqliteDb.prepare('INSERT OR REPLACE INTO greeted_users (chat_id, greeted_at) VALUES (?, ?)').run(cleanId, new Date().toISOString()); console.log('👋 [MAX] greeted сохранён chat=' + cleanId); } catch (e) {} }
       }
 

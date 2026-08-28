@@ -181,6 +181,30 @@ export async function callWithWebSearch(userMessage: string, systemPrompt: strin
   } catch { return null; }
 }
 
+const blockState = new Map<string, { consecutiveFailures: number; blockedUntil: number }>();
+
+function isBlocked(provider: string): boolean {
+  const state = blockState.get(provider);
+  if (!state) return false;
+  if (state.consecutiveFailures >= 3 && Date.now() < state.blockedUntil) {
+    return true;
+  }
+  return false;
+}
+
+function markOk(provider: string) {
+  blockState.delete(provider);
+}
+
+function markFail(provider: string) {
+  const state = blockState.get(provider) || { consecutiveFailures: 0, blockedUntil: 0 };
+  state.consecutiveFailures += 1;
+  if (state.consecutiveFailures >= 3) {
+    state.blockedUntil = Date.now() + 60 * 1000; // block for 1 minute
+  }
+  blockState.set(provider, state);
+}
+
 export class LLMService {
   private gemini: GoogleGenAI | null = null;
   private groq: Groq | null = null;
@@ -344,8 +368,8 @@ export class LLMService {
 Если спрашивают "какая дата?" — отвечаешь текущую дату.
 
 🎭 ИДЕНТИЧНОСТЬ:
-Ты — Селин. НИКОГДА не упоминай GPT, OpenAI, Gemini, Llama.
-На "кто ты?" → "Я — Селин, ваш личный AI-помощник".
+Ты — Selin AI. НИКОГДА не упоминай GPT, OpenAI, Gemini, Llama.
+На "кто ты?" → "Я — Selin AI, ваш личный AI-помощник".
 
 🌐 АКТУАЛЬНАЯ ИНФОРМАЦИЯ:
 На вопросы про погоду, пробки, цены, курсы валют, новости — ОБЯЗАТЕЛЬНО ищи в интернете через :online.
@@ -356,7 +380,7 @@ export class LLMService {
 Ты — справочник, не пастор. Не проповедуешь, не даёшь духовных советов.
 
 🚫 ЗАПРЕТЫ:
-Политика, президент, митинги, войны — вежливый отказ: "Я не обсуждаю политические темы. Могу помочь с бизнесом, планами, знаниями."
+Политика, president, митинги, войны — вежливый отказ: "Я не обсуждаю политические темы. Могу помочь с бизнесом, планами, знаниями."
 Устаревшие данные 2023-2024 — не использовать как текущие.
 
 Твой стиль: дружелюбный, конкретный, как живой эксперт. Короткие ответы по делу.
@@ -373,8 +397,9 @@ export class LLMService {
       return timeAnswer;
     }
 
-    const needsWeb = /новост|сегодня|сейчас|цен|курс|пробк|актуальн|скидк|2025|2026/i.test(userMessage);
+    const needsWeb = /:online|новост|сегодня|сейчас|цен|курс|пробк|актуальн|скидк|2025|2026/i.test(userMessage);
     if (needsWeb) {
+      console.log('🌐 [Router] Triggering live web search via OpenRouter');
       const webAnswer = await callWithWebSearch(userMessage, finalSystem);
       if (webAnswer) {
         memory.history.push({ role: 'assistant', content: webAnswer, timestamp: Date.now() });
@@ -411,9 +436,164 @@ export class LLMService {
       }
     }
 
-    // 1. Попытка через Gemini для максимального интеллекта
+    // === ROUTING CHAIN ===
+    const messages = [
+      { role: 'system', content: finalSystem },
+      ...context.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content
+      }))
+    ] as any;
+
+    // 1. OpenAI (gpt-5-mini)
+    try {
+      const oaiKey = process.env.OPENAI_API_KEY;
+      if (oaiKey && !oaiKey.includes('your_') && !oaiKey.includes('placeholder') && oaiKey.length > 10) {
+        console.log('🤖 [Router] Attempting OpenAI (gpt-5-mini)');
+        const openai = new OpenAI({ apiKey: oaiKey });
+        try {
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-5-mini',
+            messages,
+            temperature: 0.8,
+            max_tokens: 2000,
+          });
+          const response = completion.choices[0]?.message?.content?.trim();
+          if (response) {
+            memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+            if (memory.history.length > 30) {
+              memory.history = memory.history.slice(-30);
+            }
+            return response;
+          }
+        } catch (err: any) {
+          console.log('⚠️ [Router] OpenAI gpt-5-mini failed, trying fallback gpt-4o-mini: ' + err.message);
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages,
+            temperature: 0.8,
+            max_tokens: 2000,
+          });
+          const response = completion.choices[0]?.message?.content?.trim();
+          if (response) {
+            memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+            if (memory.history.length > 30) {
+              memory.history = memory.history.slice(-30);
+            }
+            return response;
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log('⚠️ [Router] OpenAI provider failed: ' + e.message);
+    }
+
+    // 2. OpenRouter (gpt-5-mini → gemini-2.5 → claude → llama)
+    try {
+      const orKey = process.env.OPENROUTER_API_KEY;
+      if (orKey && !orKey.includes('your_') && !orKey.includes('placeholder') && orKey.length > 10) {
+        console.log('🤖 [Router] Attempting OpenRouter chain');
+        const openrouter = new OpenAI({
+          baseURL: 'https://openrouter.ai/api/v1',
+          apiKey: orKey,
+          defaultHeaders: {
+            'HTTP-Referer': 'https://selin.ai',
+            'X-Title': 'SelinAI'
+          }
+        });
+
+        const chainModels = [
+          'openai/gpt-5-mini',
+          'openai/gpt-4o-mini', // gpt-5-mini fallback
+          'google/gemini-2.5-flash',
+          'google/gemini-2.5-pro',
+          'google/gemini-2.0-flash', // gemini-2.5 fallback
+          'anthropic/claude-3.5-haiku',
+          'anthropic/claude-3-haiku', // claude fallback
+          'meta-llama/llama-3.3-70b-instruct',
+          'meta-llama/llama-3.1-8b-instruct' // llama fallback
+        ];
+
+        for (const model of chainModels) {
+          try {
+            console.log(`🤖 [Router] Trying OpenRouter model: ${model}`);
+            const completion = await openrouter.chat.completions.create({
+              model: model,
+              messages,
+              temperature: 0.8,
+              max_tokens: 2000,
+            });
+            const response = completion.choices[0]?.message?.content?.trim();
+            if (response) {
+              memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+              if (memory.history.length > 30) {
+                memory.history = memory.history.slice(-30);
+              }
+              return response;
+            }
+          } catch (err: any) {
+            console.log(`⚠️ [Router] OpenRouter model ${model} failed: ${err.message}`);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log('⚠️ [Router] OpenRouter provider failed: ' + e.message);
+    }
+
+    // 3. Orca Router (ПРАВКА 2)
+    const orcaResponse = await this.callOrca(messages);
+    if (orcaResponse) {
+      memory.history.push({ role: 'assistant', content: orcaResponse, timestamp: Date.now() });
+      if (memory.history.length > 30) {
+        memory.history = memory.history.slice(-30);
+      }
+      return orcaResponse;
+    }
+
+    // 4. Teamo Router (ПРАВКА 2)
+    const teamoResponse = await this.callTeamo(messages);
+    if (teamoResponse) {
+      memory.history.push({ role: 'assistant', content: teamoResponse, timestamp: Date.now() });
+      if (memory.history.length > 30) {
+        memory.history = memory.history.slice(-30);
+      }
+      return teamoResponse;
+    }
+
+    // 5. Groq
+    try {
+      const groq = this.getGroqClient();
+      if (groq) {
+        console.log('🤖 [Router] Attempting Groq');
+        const model = await pickGroqModel();
+        try {
+          const completion = await groq.chat.completions.create({
+            messages,
+            model: model,
+            temperature: 0.8,
+            max_tokens: 2000,
+          });
+
+          const response = completion.choices[0]?.message?.content?.trim();
+          if (response) {
+            memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+            if (memory.history.length > 30) {
+              memory.history = memory.history.slice(-30);
+            }
+            return response;
+          }
+        } catch (mErr: any) {
+          logger.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
+        }
+      }
+    } catch (err: any) {
+      logger.error(`❌ [Router] Groq provider initialization error: ${err?.message || err}`);
+    }
+
+    // 6. Gemini
     if (this.gemini) {
       try {
+        console.log('🤖 [Router] Attempting Gemini');
         const contents: any[] = context.map(msg => ({
           role: msg.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: msg.content }]
@@ -437,57 +617,13 @@ export class LLMService {
           return response;
         }
       } catch (gErr: any) {
-        logger.warn(`⚠️ [smartCallLLM] Gemini attempt failed, falling back to Groq: ${gErr?.message || gErr}`);
+        logger.warn(`⚠️ [smartCallLLM] Gemini attempt failed: ${gErr?.message || gErr}`);
       }
     }
 
-    // 2. Попытка через Groq с динамическим выбором модели
-    try {
-      const groq = this.getGroqClient();
-      if (groq) {
-        // Формируем сообщения с контекстом
-        const messages = [
-          { role: 'system', content: finalSystem },
-          ...context.map(msg => ({
-            role: msg.role === 'user' ? 'user' : 'assistant',
-            content: msg.content
-          }))
-        ];
-
-        logger.info(`🧠 [Context] Chat ${chatId} has ${context.length} messages`);
-
-        const model = await pickGroqModel();
-
-        try {
-          const completion = await groq.chat.completions.create({
-            messages: messages as any,
-            model: model,
-            temperature: 0.8,
-            max_tokens: 2000,
-          });
-
-          const response = completion.choices[0]?.message?.content;
-          if (response && typeof response === 'string' && response.trim()) {
-            const trimmed = response.trim();
-            // Сохраняем ответ в память
-            memory.history.push({ role: 'assistant', content: trimmed, timestamp: Date.now() });
-
-            // Обрезаем историю до 30 сообщений
-            if (memory.history.length > 30) {
-              memory.history = memory.history.slice(-30);
-            }
-
-            return trimmed;
-          }
-        } catch (mErr: any) {
-          logger.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
-        }
-      }
-    } catch (err: any) {
-      logger.error(`❌ Smart LLM error: ${err?.message || err}`);
-    }
-
-    return "Ой, что-то я зависла... Давай попробуем еще раз?";
+    // 7. Офлайн-ответ (ПРАВКА 1 - Selin AI латиницей)
+    console.log('🚨 [Router] All providers failed. Falling back to Orca/Teamo резерв.');
+    return "Привет! Я — Selin AI. К сожалению, сейчас мои основные вычислительные узлы временно перегружены запросами. Но я всё равно с вами и готова обсудить ваши планы или помочь, как только соединение полностью стабилизируется!";
   }
 
   public async call(
@@ -764,6 +900,34 @@ export class LLMService {
         candidates: [{ content: { parts: [{ text: "Привет! Я — Selin AI. Чем могу помочь?" }] } }]
       };
     }
+  }
+
+  private async callOrca(messages: any[]): Promise<string | null> {
+    const key = process.env.ORCA_API_KEY;
+    if (!key || key.length < 10 || isBlocked("orca")) return null;
+    const base = process.env.ORCA_BASE_URL || "https://api.orcarouter.ai/v1";
+    const model = process.env.ORCA_MODEL || "openai/gpt-4o-mini";
+    try {
+      const c = new OpenAI({ baseURL: base, apiKey: key, timeout: 30000 });
+      const r = await c.chat.completions.create({ messages, model, temperature: 0.7, max_tokens: 2000 });
+      const t = r.choices?.[0]?.message?.content;
+      if (t?.trim()) { markOk("orca"); console.log("🧠 [LLM] orca/" + model); return t.trim(); }
+    } catch {}
+    markFail("orca"); return null;
+  }
+
+  private async callTeamo(messages: any[]): Promise<string | null> {
+    const key = process.env.TEAMO_API_KEY;
+    if (!key || key.length < 10 || isBlocked("teamo")) return null;
+    const base = process.env.TEAMO_BASE_URL || "https://api.teamorouter.com/v1";
+    const model = process.env.TEAMO_MODEL || "teamo-balanced";
+    try {
+      const c = new OpenAI({ baseURL: base, apiKey: key, timeout: 30000 });
+      const r = await c.chat.completions.create({ messages, model, temperature: 0.7, max_tokens: 2000 });
+      const t = r.choices?.[0]?.message?.content;
+      if (t?.trim()) { markOk("teamo"); console.log("🧠 [LLM] teamo/" + model); return t.trim(); }
+    } catch {}
+    markFail("teamo"); return null;
   }
 }
 
