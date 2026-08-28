@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Users, TrendingUp, Zap, Award, Activity, CheckCircle2 } from 'lucide-react';
+import { adminApi } from '../lib/adminApi';
 
 export const AnalyticsPanel: React.FC = () => {
   const [feedCount, setFeedCount] = useState<number>(0);
@@ -9,25 +10,23 @@ export const AnalyticsPanel: React.FC = () => {
 
   useEffect(() => {
     // Fetch live counts from actual system APIs
-    fetch('/api/feed')
+    adminApi('/api/admin/feed')
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data)) {
-          setFeedCount(data.length);
-        }
+        const feedList = Array.isArray(data) ? data : (data?.feed || []);
+        setFeedCount(feedList.length);
       })
       .catch(() => {});
 
-    fetch('/api/moderation/pending')
+    adminApi('/api/moderation/pending')
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data)) {
-          setPendingCount(data.length);
-        }
+        const pendingList = Array.isArray(data) ? data : (data?.queue || []);
+        setPendingCount(pendingList.length);
       })
       .catch(() => {});
 
-    fetch('/api/get-config')
+    adminApi('/api/admin/config')
       .then(res => res.json())
       .then(data => {
         if (data?.config) {

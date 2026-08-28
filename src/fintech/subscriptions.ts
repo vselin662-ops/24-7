@@ -65,6 +65,20 @@ export function activateSubscription(chatId: string | number, plan: string = 'pl
     }
   }
 
+  // Duplicate to Redis
+  import("../services/RedisService").then(({ redisService }) => {
+    if (redisService.isAvailable()) {
+      const subData = { chat_id: cleanId, plan: planKey, paid_until: paidUntil, active: 1 };
+      redisService.set(`sub:${cleanId}`, JSON.stringify(subData)).then(() => {
+        if (redisService['client']) {
+          redisService['client'].sadd('selin:subscriptions_set', cleanId).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }).catch((rErr) => {
+    logger.warn('⚠️ [Fintech] Redis subscription duplication failed:', rErr);
+  });
+
   logger.info(`💳 [Fintech] Подписка активирована: chat_id=${cleanId}, тариф=${planKey}, до=${paidUntil}`);
   return {
     chat_id: cleanId,

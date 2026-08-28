@@ -90,6 +90,12 @@ export async function initSessionsDb(): Promise<void> {
       last_active DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  await queryExec(`
+    CREATE TABLE IF NOT EXISTS processed_payments (
+      payment_id TEXT PRIMARY KEY,
+      processed_at TEXT
+    );
+  `);
 }
 
 export async function hasUserInteractedBefore(chatId: string): Promise<boolean> {

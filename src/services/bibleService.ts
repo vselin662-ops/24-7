@@ -167,6 +167,40 @@ export async function handleBibleSubscription(
 }
 
 const executedBibleSlots = new Set<string>();
+const localBroadcastSent = new Set<string>();
+
+async function acquireLock(slotKey: string, chatId: string): Promise<boolean> {
+  const userSlotKey = `${slotKey}:${chatId}`;
+
+  // 1. Local lock
+  if (localBroadcastSent.has(userSlotKey)) {
+    return false;
+  }
+  localBroadcastSent.add(userSlotKey);
+
+  // Keep local set size under control
+  if (localBroadcastSent.size > 10000) {
+    const oldest = Array.from(localBroadcastSent).slice(0, 2000);
+    oldest.forEach(k => localBroadcastSent.delete(k));
+  }
+
+  // 2. Redis lock
+  try {
+    const { redisService } = await import("./RedisService");
+    if (redisService.isAvailable() && redisService['client']) {
+      const redisKey = `lock:bible_broadcast:${slotKey}:${chatId}`;
+      const res = await redisService['client'].set(redisKey, "1", "EX", 3600, "NX");
+      if (res !== "OK") {
+        logger.info(`♻️ [Bible] Duplicate broadcast prevented by Redis lock for ${chatId} (slot: ${slotKey})`);
+        return false;
+      }
+    }
+  } catch (err) {
+    logger.warn(`⚠️ [Bible] Redis lock error for ${chatId}:`, err);
+  }
+
+  return true;
+}
 
 export async function checkAndSendBibleBroadcast(
   sendTextMessageFn?: (chatId: number, text: string) => Promise<void>,
@@ -232,6 +266,11 @@ export async function checkAndSendBibleBroadcast(
       const dayPlan = BIBLE_PLAN[dayIndex] || BIBLE_PLAN[0];
       const item = dayPlan[slotConfig.slotIndex];
       if (!item) continue;
+
+      const lockAcquired = await acquireLock(slotKey, cleanId);
+      if (!lockAcquired) {
+        continue;
+      }
 
       if (slotConfig.type === 'text') {
         let verseText = '';

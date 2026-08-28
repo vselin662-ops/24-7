@@ -26,24 +26,78 @@ export async function sendMaxNotification(chatId: string | number, message: stri
 // POST /api/yookassa/webhook
 fintechRouter.post("/api/yookassa/webhook", async (req: Request, res: Response) => {
   try {
+    const shopId = process.env.YOOKASSA_SHOP_ID;
+    const secretKey = process.env.YOOKASSA_SECRET_KEY || process.env.YOOKASSA_SECRET;
+
+    // 1. Verify Basic Auth if keys are configured
+    if (shopId && secretKey) {
+      const expectedHeader = "Basic " + Buffer.from(`${shopId}:${secretKey}`).toString("base64");
+      const authHeader = req.headers.authorization;
+      if (!authHeader || authHeader !== expectedHeader) {
+        logger.warn("🚫 [YooKassa] webhook without valid auth");
+        return res.status(403).send("Forbidden");
+      }
+    }
+
     const body = req.body || {};
     const event = body.event || body.type;
+    const paymentId = body.object?.id;
 
-    if (event === "payment.succeeded" || event === "payment.waiting_for_capture") {
+    // 2. Automated mode check and idempotency
+    if (shopId && secretKey && paymentId) {
+      const basicAuth = Buffer.from(`${shopId}:${secretKey}`).toString("base64");
+      const check = await fetch('https://api.yookassa.ru/v3/payments/' + paymentId, {
+        headers: { 'Authorization': 'Basic ' + basicAuth },
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (!check.ok) {
+        logger.warn('🚨 [Pay] проверка платежа не прошла');
+        return res.status(200).send('OK');
+      }
+
+      const pdata: any = await check.json();
+      const pStatus = pdata.status;
+
+      if (pStatus !== 'succeeded') {
+        return res.status(200).send('OK');
+      }
+
+      // Idempotency check:
+      const { queryGet, queryRun } = await import("../database/sessions.db");
+      const alreadyProcessed = await queryGet<any>(
+        "SELECT payment_id FROM processed_payments WHERE payment_id = ?",
+        [paymentId]
+      );
+
+      if (alreadyProcessed) {
+        logger.info(`♻️ [YooKassa] duplicate ignored: ${paymentId}`);
+        return res.status(200).send("OK");
+      }
+
+      const metadata = pdata.metadata || {};
+      const realChatId = metadata.chat_id || metadata.chatId;
+      const realPlan = metadata.plan || "plan";
+
+      if (realChatId) {
+        await queryRun(
+          "INSERT INTO processed_payments (payment_id, processed_at) VALUES (?, ?)",
+          [paymentId, new Date().toISOString()]
+        );
+
+        activateSubscription(realChatId, realPlan, 30);
+        await sendMaxNotification(realChatId, 'Оплата подтверждена! Тариф активен 30 дней.');
+      }
+    } else {
+      // Manual fallback if YooKassa keys not configured
       const metadata = body.object?.metadata || body.metadata || {};
       const chatId = metadata.chat_id || metadata.chatId;
       const plan = metadata.plan || "plan";
 
-      const shopId = process.env.YOOKASSA_SHOP_ID; const secret = process.env.YOOKASSA_SECRET; const paymentId = body.object?.id;
-      if (shopId && secret && paymentId) {
-        const check = await fetch('https://api.yookassa.ru/v3/payments/' + paymentId, { headers: { 'Authorization': 'Basic ' + Buffer.from(shopId + ':' + secret).toString('base64') }, signal: AbortSignal.timeout(10000) });
-        if (!check.ok) { logger.warn('🚨 [Pay] проверка платежа не прошла'); return res.status(200).send('OK'); }
-        const pdata: any = await check.json();
-        if (pdata.status !== 'succeeded') return res.status(200).send('OK');
-        const realChatId = pdata.metadata?.chat_id || chatId; const realPlan = pdata.metadata?.plan || plan;
-        activateSubscription(realChatId, realPlan, 30);
-        await sendMaxNotification(realChatId, 'Оплата подтверждена! Тариф активен 30 дней.');
-      } else if (chatId) { activateSubscription(chatId, plan, 30); }
+      if (chatId && (event === "payment.succeeded" || event === "payment.waiting_for_capture")) {
+        activateSubscription(chatId, plan, 30);
+        await sendMaxNotification(chatId, 'Оплата подтверждена! Тариф активен 30 дней.');
+      }
     }
   } catch (err: any) {
     logger.error(`❌ [Fintech] Ошибка в webhook ЮKassa: ${err?.message || err}`);

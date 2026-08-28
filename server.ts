@@ -27,6 +27,7 @@ import adminRouter from "./src/routes/admin.routes";
 import aiRouter from "./src/routes/ai.routes";
 import mcpRouter from "./src/routes/mcp.routes";
 import legalRouter from "./src/routes/legal.routes";
+import { adminGuard, adminLoginHandler } from "./src/middleware/adminAuth";
 
 // Re-exports for voice normalizer, text utilities, and bible service
 export {
@@ -187,6 +188,34 @@ app.use((req, res, next) => {
 });
 
 // 6. Mount Modular API Routers
+app.post("/api/admin/login", adminLoginHandler);
+
+app.use((req, res, next) => {
+  const url = req.originalUrl;
+  
+  // Skip logic: if /api/admin/login or /api/admin/status, proceed without adminGuard
+  if (
+    url === "/api/admin/login" || 
+    url.startsWith("/api/admin/login?") || 
+    url === "/api/admin/status" || 
+    url.startsWith("/api/admin/status?")
+  ) {
+    return next();
+  }
+
+  // Apply adminGuard for specified endpoints
+  if (
+    url.startsWith("/api/admin") ||
+    url.startsWith("/api/moderation") ||
+    url.startsWith("/api/knowledge") ||
+    url.startsWith("/api/security")
+  ) {
+    return adminGuard(req, res, next);
+  }
+
+  next();
+});
+
 app.use(fintechRouter);
 app.use("/api", (req, res, next) => {
   if (req.originalUrl.startsWith("/api/max/webhook") || req.originalUrl.startsWith("/api/ai/") || req.originalUrl.startsWith("/api/yookassa") || req.originalUrl.startsWith("/api/robokassa") || req.originalUrl.startsWith("/api/payments")) return next();
@@ -212,6 +241,13 @@ async function startServer() {
   try {
     await initSessionsDb();
     logger.info("📁 Sessions Database initialized successfully using sqlite3 (async/await)");
+
+    try {
+      const { restoreFromRedis } = await import("./src/fintech/restore");
+      await restoreFromRedis();
+    } catch (restErr) {
+      logger.error("❌ Error running restoreFromRedis:", restErr);
+    }
   } catch (err) {
     logger.error("❌ Error initializing sessions database:", { error: err });
   }

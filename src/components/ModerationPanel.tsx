@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GlassPanel } from './GlassPanel';
 import { NeonButton } from './NeonButton';
 import { ModerationItem, ModerationLogEntry } from '../types';
+import { adminApi } from '../lib/adminApi';
 import { 
   Shield, 
   Check, 
@@ -32,7 +33,7 @@ export const ModerationPanel: React.FC = () => {
   const fetchModerationData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch('/api/moderation/queue');
+      const res = await adminApi('/api/moderation/queue');
       if (res.ok) {
         const data = await res.json();
         setQueue(data.queue || []);
@@ -67,7 +68,7 @@ export const ModerationPanel: React.FC = () => {
     const correctedText = editableResponses[itemId];
 
     try {
-      const res = await fetch('/api/moderation/action', {
+      const res = await adminApi('/api/moderation/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

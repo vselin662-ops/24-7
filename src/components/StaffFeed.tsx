@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, DollarSign, PenTool, BarChart3, CheckSquare, Activity } from 'lucide-react';
+import { adminApi } from '../lib/adminApi';
 // @ts-ignore
 import natureForest from '../assets/images/nature_forest_1785822465712.jpg';
 
@@ -28,7 +29,7 @@ export const StaffFeed: React.FC = () => {
 
   const fetchFeed = async () => {
     try {
-      const res = await fetch('/api/feed');
+      const res = await adminApi('/api/admin/feed');
       if (res.ok) {
         const data = await res.json();
         const newFeed: FeedEvent[] = data.feed || [];

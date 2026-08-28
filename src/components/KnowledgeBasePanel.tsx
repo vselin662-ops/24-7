@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GlassPanel } from './GlassPanel';
 import { NeonButton } from './NeonButton';
+import { adminApi } from '../lib/adminApi';
 import { 
   BookOpen, 
   Database, 
@@ -51,7 +52,7 @@ export function KnowledgeBasePanel() {
   // Fetch KB stats
   const fetchKBStatus = async () => {
     try {
-      const res = await fetch('/api/knowledge/status');
+      const res = await adminApi('/api/knowledge/status');
       if (res.ok) {
         const data = await res.json();
         setStats(data);
@@ -78,7 +79,7 @@ export function KnowledgeBasePanel() {
 
     setLoading(true);
     try {
-      const res = await fetch('/api/knowledge/upload', {
+      const res = await adminApi('/api/knowledge/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -115,7 +116,7 @@ export function KnowledgeBasePanel() {
       const base64Content = result.split(',')[1];
 
       try {
-        const res = await fetch('/api/knowledge/upload', {
+        const res = await adminApi('/api/knowledge/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -193,7 +194,7 @@ export function KnowledgeBasePanel() {
     }
 
     try {
-      const res = await fetch('/api/knowledge/delete', {
+      const res = await adminApi('/api/knowledge/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docId })
@@ -218,7 +219,7 @@ export function KnowledgeBasePanel() {
     setSearching(true);
     try {
       // We will perform a simulated client RAG test request
-      const res = await fetch('/api/agent-respond', {
+      const res = await adminApi('/api/agent-respond', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -233,11 +234,11 @@ export function KnowledgeBasePanel() {
       });
 
       if (res.ok) {
-        const matchRes = await fetch(`/api/knowledge/status`);
+        const matchRes = await adminApi(`/api/knowledge/status`);
         if (matchRes.ok) {
           const kbData = await matchRes.json();
           // Let's call the server embedding on the search query
-          const embedRes = await fetch('/api/knowledge/upload', {
+          const embedRes = await adminApi('/api/knowledge/upload', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -252,7 +253,7 @@ export function KnowledgeBasePanel() {
             const tempDocId = embedData.document.id;
             
             // Fetch updated KB
-            const latestRes = await fetch('/api/knowledge/status');
+            const latestRes = await adminApi('/api/knowledge/status');
             const latestKB = await latestRes.json();
             
             // Find query vector
@@ -289,7 +290,7 @@ export function KnowledgeBasePanel() {
             }
             
             // Delete temp doc
-            await fetch('/api/knowledge/delete', {
+            await adminApi('/api/knowledge/delete', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ docId: tempDocId })

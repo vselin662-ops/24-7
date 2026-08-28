@@ -77,6 +77,20 @@ export async function createPayment(chatId: string | number, plan: string = 'pla
             INSERT OR REPLACE INTO payments (id, chat_id, plan, amount, status, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
           `).run(yooId, cleanId, planKey, amount, data?.status || 'pending', nowStr);
+
+          // Duplicate to Redis
+          try {
+            const { redisService } = await import("../services/RedisService");
+            if (redisService.isAvailable()) {
+              const payData = { id: yooId, chat_id: cleanId, plan: planKey, amount, status: data?.status || 'pending', created_at: nowStr };
+              await redisService.set(`pay:${yooId}`, JSON.stringify(payData));
+              if (redisService['client']) {
+                await redisService['client'].sadd('selin:payments_set', yooId);
+              }
+            }
+          } catch (rErr) {
+            logger.warn('⚠️ [Fintech] Redis payment duplication failed:', rErr);
+          }
         } catch (dbErr) {
           logger.warn('⚠️ [Fintech] Error saving payment to db:', dbErr);
         }
@@ -102,6 +116,20 @@ export async function createPayment(chatId: string | number, plan: string = 'pla
       INSERT OR REPLACE INTO payments (id, chat_id, plan, amount, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(paymentId, cleanId, planKey, amount, 'pending_manual', nowStr);
+
+    // Duplicate to Redis
+    try {
+      const { redisService } = await import("../services/RedisService");
+      if (redisService.isAvailable()) {
+        const payData = { id: paymentId, chat_id: cleanId, plan: planKey, amount, status: 'pending_manual', created_at: nowStr };
+        await redisService.set(`pay:${paymentId}`, JSON.stringify(payData));
+        if (redisService['client']) {
+          await redisService['client'].sadd('selin:payments_set', paymentId);
+        }
+      }
+    } catch (rErr) {
+      logger.warn('⚠️ [Fintech] Redis payment duplication failed:', rErr);
+    }
   } catch (dbErr) {
     logger.warn('⚠️ [Fintech] Error saving manual payment to db:', dbErr);
   }
