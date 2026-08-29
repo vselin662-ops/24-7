@@ -2,11 +2,10 @@ import { sqliteDb } from "../../db";
 import { logger } from "../logger";
 
 export const PLANS: Record<string, { name: string; price: number; days: number }> = {
-  svet: { name: 'Свет', price: 199, days: 30 },
-  blagodat: { name: 'Благодать', price: 399, days: 30 },
-  year: { name: 'Год', price: 2999, days: 365 },
-  plan: { name: 'Свет', price: 199, days: 30 },
-  premium: { name: 'Благодать', price: 399, days: 30 }
+  month: { name: 'Месяц', price: 199, days: 30 },
+  year: { name: 'Год', price: 1800, days: 365 },
+  svet: { name: 'Месяц', price: 199, days: 30 },
+  plan: { name: 'Месяц', price: 199, days: 30 }
 };
 
 // SQLite таблица subscriptions
@@ -102,3 +101,19 @@ export function isFeatureAllowed(chatId: string | number): boolean {
 
   return paidUntilMs > Date.now();
 }
+
+export function isOwner(chatId: string | number): boolean {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim();
+  const ownerIds = [
+    process.env.OWNER_CHAT_ID,
+    process.env.ADMIN_USER_ID,
+    process.env.ADMIN_CHAT_ID
+  ].filter(Boolean).map(id => String(id).replace(/^[a-z_]+/, '').trim());
+  return ownerIds.length > 0 && ownerIds.includes(cleanId);
+}
+
+export function checkAccess(chatId: string | number): boolean {
+  if (isOwner(chatId)) return true;
+  return isFeatureAllowed(chatId);
+}
+

@@ -106,10 +106,11 @@ export class PureDatabase {
     return {
       run: (...params: any[]) => {
         if (upper.includes("INSERT INTO") || upper.includes("INSERT OR REPLACE INTO")) {
-          const match = cleanSql.match(/INSERT\s+(?:OR\s+REPLACE\s+)?INTO\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)/i);
+          const match = cleanSql.match(/INSERT\s+(?:OR\s+REPLACE\s+)?INTO\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
           if (match) {
             const tableName = match[1];
             const cols = match[2].split(",").map(c => c.trim().toLowerCase());
+            const valTokens = match[3].split(",").map(v => v.trim());
             let table = this.tables.get(tableName);
             if (!table) {
               table = new Map();
@@ -117,8 +118,19 @@ export class PureDatabase {
             }
 
             const row: Record<string, any> = {};
+            let paramIdx = 0;
             cols.forEach((col, idx) => {
-              row[col] = params[idx] !== undefined ? params[idx] : null;
+              const valToken = valTokens[idx] || '?';
+              if (valToken === '?') {
+                row[col] = params[paramIdx] !== undefined ? params[paramIdx] : null;
+                paramIdx++;
+              } else if (/^'.*'$/.test(valToken) || /^".*"$/.test(valToken)) {
+                row[col] = valToken.slice(1, -1);
+              } else if (/^\d+$/.test(valToken)) {
+                row[col] = parseInt(valToken, 10);
+              } else {
+                row[col] = valToken;
+              }
             });
             if (!row.tenant_id && tableName !== "user_sessions") row.tenant_id = "default";
 
@@ -132,6 +144,41 @@ export class PureDatabase {
             }
             this.saveToDisk();
             return { changes: 1 };
+          }
+        } else if (upper.startsWith("UPDATE")) {
+          const match = cleanSql.match(/UPDATE\s+([a-zA-Z0-9_]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+?))?$/i);
+          if (match) {
+            const tableName = match[1];
+            const setClause = match[2];
+            const whereClause = match[3];
+            const table = this.tables.get(tableName);
+            if (table) {
+              let changes = 0;
+              // Parse SET assignments
+              const setPairs = setClause.split(",").map(p => p.trim());
+              for (const [k, row] of Array.from(table.entries())) {
+                if (this.matchesWhere(row, whereClause, params)) {
+                  let paramIdx = 0;
+                  for (const pair of setPairs) {
+                    const [c, valRaw] = pair.split("=").map(x => x.trim());
+                    const colName = c.toLowerCase();
+                    if (valRaw === '?') {
+                      row[colName] = params[paramIdx++];
+                    } else if (/^'.*'$/.test(valRaw) || /^".*"$/.test(valRaw)) {
+                      row[colName] = valRaw.slice(1, -1);
+                    } else if (/^\d+$/.test(valRaw)) {
+                      row[colName] = parseInt(valRaw, 10);
+                    } else {
+                      row[colName] = valRaw;
+                    }
+                  }
+                  table.set(k, { ...row });
+                  changes++;
+                }
+              }
+              this.saveToDisk();
+              return { changes };
+            }
           }
         } else if (upper.startsWith("DELETE FROM")) {
           const match = cleanSql.match(/DELETE\s+FROM\s+([a-zA-Z0-9_]+)(?:\s+WHERE\s+(.+?))?$/i);
@@ -222,6 +269,14 @@ export class PureDatabase {
   private matchesWhere(row: any, whereClause?: string, params: any[] = []): boolean {
     if (!whereClause) return true;
     const cleanWhere = whereClause.toLowerCase();
+
+    // Check status condition if present
+    if (cleanWhere.includes("status = 'pending'")) {
+      if (row.status !== 'pending') return false;
+    }
+    if (cleanWhere.includes("status = 'done'")) {
+      if (row.status !== 'done') return false;
+    }
     
     // key = ? AND expires > ?
     if (cleanWhere.includes("key = ?") && cleanWhere.includes("expires > ?")) {

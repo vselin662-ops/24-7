@@ -45,7 +45,7 @@ export interface PaymentRequest {
 
 export function savePaymentRequest(
   chatId: string | number,
-  tariff: string = 'Свет',
+  tariff: string = 'month',
   screenshotSeen: boolean = false
 ): PaymentRequest {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
@@ -53,16 +53,12 @@ export function savePaymentRequest(
   const seen = screenshotSeen ? 1 : 0;
 
   // Normalize tariff name
-  let normTariff = tariff.trim();
-  const lower = normTariff.toLowerCase();
-  if (lower.includes('год') || lower.includes('year') || lower.includes('2999')) {
-    normTariff = 'Год';
-  } else if (lower.includes('благодат') || lower.includes('blagodat') || lower.includes('prem') || lower.includes('399')) {
-    normTariff = 'Благодать';
-  } else if (lower.includes('свет') || lower.includes('svet') || lower.includes('199') || lower.includes('plan')) {
-    normTariff = 'Свет';
-  } else if (!normTariff) {
-    normTariff = 'Свет';
+  let normTariff = '199₽/мес';
+  const lower = (tariff || '').toLowerCase().trim();
+  if (lower.includes('год') || lower.includes('year') || lower.includes('1800')) {
+    normTariff = '1800₽/год';
+  } else {
+    normTariff = '199₽/мес';
   }
 
   try {
@@ -85,26 +81,22 @@ export function savePaymentRequest(
 
 export function activateManualPayment(
   chatId: string | number,
-  tariff: string = 'Свет'
+  tariff: string = 'month'
 ): { success: boolean; tariffName: string; planKey: string; paidUntil: string; dateStr: string; days: number } {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
   const lower = (tariff || '').toLowerCase().trim();
 
-  let planKey = 'svet';
-  let tariffName = 'Свет';
+  let planKey = 'month';
+  let tariffName = '199₽/мес';
   let days = 30;
 
-  if (lower.includes('год') || lower.includes('year') || lower.includes('2999')) {
+  if (lower.includes('год') || lower.includes('year') || lower.includes('1800') || lower.includes('365')) {
     planKey = 'year';
-    tariffName = 'Год';
+    tariffName = '1800₽/год';
     days = 365;
-  } else if (lower.includes('благодат') || lower.includes('blagodat') || lower.includes('prem') || lower.includes('399')) {
-    planKey = 'blagodat';
-    tariffName = 'Благодать';
-    days = 30;
   } else {
-    planKey = 'svet';
-    tariffName = 'Свет';
+    planKey = 'month';
+    tariffName = '199₽/мес';
     days = 30;
   }
 
@@ -138,8 +130,7 @@ export function activateManualPayment(
 }
 
 export function getSubscribeText(): string {
-  const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
-  return `Тарифы Selin AI:\n\n💡 Свет — 199₽ (безлимитные диалоги)\n🌟 Благодать — 399₽ (+приоритет и зрение без лимитов)\n📅 Год — 2999₽ (максимальная выгода)\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`;
+  return '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
 }
 
 export async function createPayment(chatId: string | number, plan: string = 'plan'): Promise<PaymentResult> {
@@ -227,8 +218,7 @@ export async function createPayment(chatId: string | number, plan: string = 'pla
     }
   }
 
-  // Ручной режим по СБП
-  const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
+  // Ручной режим / ссылка
   try {
     sqliteDb.prepare(`
       INSERT OR REPLACE INTO payments (id, chat_id, plan, amount, status, created_at)
@@ -254,6 +244,7 @@ export async function createPayment(chatId: string | number, plan: string = 'pla
 
   return {
     mode: 'manual',
-    text: `Тариф "${planObj.name}" (${amount}₽).\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`
+    url: 'https://yoomoney.ru/to/4100119243483246',
+    text: `💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.`
   };
 }

@@ -14,6 +14,48 @@ const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
 const MAX_TEXT_LIMIT = 3800;
 
+export const YOOMONEY_PAY_URL = 'https://yoomoney.ru/to/4100119243483246';
+
+export const SUBSCRIPTION_BUTTONS = [
+  [
+    { type: 'link', text: '💳 Поддержать — 199₽/мес', url: YOOMONEY_PAY_URL }
+  ],
+  [
+    { type: 'link', text: '🎯 Год — 1800₽', url: YOOMONEY_PAY_URL }
+  ]
+];
+
+export const SUBSCRIPTION_EXTRA = {
+  attachments: [
+    {
+      type: 'inline_keyboard',
+      payload: {
+        buttons: SUBSCRIPTION_BUTTONS
+      }
+    }
+  ]
+};
+
+export function isBibleQuery(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase().trim();
+  return (
+    lower.includes('библи') ||
+    lower.includes('псалом') ||
+    lower.includes('псалтир') ||
+    lower.includes('евангели') ||
+    lower.includes('стих') ||
+    lower.includes('ветхий завет') ||
+    lower.includes('новый завет') ||
+    lower.includes('отцов церкви') ||
+    lower.includes('бог благ и милость его велика') ||
+    lower === '/bible' ||
+    lower === 'подписаться на библию' ||
+    lower.startsWith('библи') ||
+    lower.startsWith('псалом')
+  );
+}
+
 export function getImageMimeType(buf: Buffer, contentTypeHeader?: string | null): string {
   if (contentTypeHeader && contentTypeHeader.startsWith('image/')) {
     const clean = contentTypeHeader.split(';')[0].trim().toLowerCase();
@@ -768,35 +810,17 @@ export class MaxAdapter {
   }
 
   public async sendWelcomeGreeting(cleanId: string): Promise<void> {
-    const welcomeText = 'Здравствуйте! Я — Selin AI. 🙏 План Победы — ежедневное чтение Библии в MAX (стих дня + голосовой разбор по трудам отцов Церкви) — НАВСЕГДА БЕСПЛАТНО. Скажите «подписаться на Библию». 🤖 AI-помощник — безлимитные диалоги, зрение, напоминания, сбор продуктов — 199₽/мес, первые 3 дня бесплатно. Давайте знакомиться: нажмите микрофон и расскажите о себе — сколько вас в семье, есть ли ограничения в еде, какой магазин рядом. Я запомню и стану полезнее.';
-    const extra = {
-      attachments: [
-        {
-          type: 'inline_keyboard',
-          payload: {
-            buttons: [
-              [
-                { text: '🚀 Настроить', callback_data: 'onboarding_start' },
-                { text: '⏭ Позже', callback_data: 'onboarding_later' }
-              ]
-            ]
-          }
-        }
-      ]
-    };
-    await this.safeSendMessageToChat(cleanId, welcomeText, extra);
-    (async () => {
-      try {
-        const audioBuffer = await synthesizeForChat(cleanId, welcomeText);
-        const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
-        if (!isNaN(numericId) && numericId > 0 && audioBuffer && audioBuffer.length > 0) {
-          await this.sendSingleAudioBuffer(numericId, audioBuffer);
-          console.log('🎙️ [MAX] голосовое приветствие отправлено chat=' + cleanId);
-        }
-      } catch (err: any) {
-        console.log('❌ [MAX] голосовое приветствие упало: ' + (err.message || err));
-      }
-    })();
+    const voicePitch = 'Здравствуйте! Я — Selin AI, профессиональный интеллектуальный ассистент, работающий 24 на 7, без выходных. Для каждого владельца я составляю личные дедлайны: утренний брифинг с планом дня, напоминания о важном и контроль ваших задач. Я подстраиваюсь под вас — запоминаю привычки, желания, ритм жизни, и с каждым днём становлюсь точнее. Я озвучиваю книги и Библию, понимаю фото и скриншоты, рисую картинки по словам, нахожу новости, цены и погоду в интернете в реальном времени. Соберу список продуктов под любое блюдо и посчитаю смету. Всё это — 199 рублей в месяц. Нажмите кнопку оплаты, пришлите скриншот — и я приступаю к работе с этой минуты.';
+    const subscribeText = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
+
+    try {
+      await this.synthesizeAndSendVoice(cleanId, voicePitch);
+      console.log('🎙️ [MAX] голосовое приветствие отправлено chat=' + cleanId);
+    } catch (err: any) {
+      logger.error('❌ [MAX] voice greeting error: ' + (err.message || err));
+    }
+
+    await this.safeSendMessageToChat(cleanId, subscribeText, SUBSCRIPTION_EXTRA);
   }
 
   /**
@@ -829,7 +853,7 @@ export class MaxAdapter {
         processedMessages.set(idStr, now);
       }
 
-      // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА — ЭТО НУЖНО ДЛЯ ОТЛАДКИ
+      // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА
       logger.info(`📦 RAW BODY: ${JSON.stringify(raw)}`);
 
       // 1. Извлекаем chatId
@@ -854,17 +878,6 @@ export class MaxAdapter {
 
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
 
-      let isAlreadyGreeted = false;
-      if (sqliteDb) {
-        try {
-          sqliteDb.exec('CREATE TABLE IF NOT EXISTS greeted_users (chat_id TEXT PRIMARY KEY, greeted_at TEXT);');
-          const row = sqliteDb.prepare('SELECT chat_id FROM greeted_users WHERE chat_id = ?').get(cleanId);
-          if (row) isAlreadyGreeted = true;
-        } catch (dbErr: any) {
-          logger.error('❌ [MaxAdapter] greeted check error: ' + (dbErr.message || dbErr));
-        }
-      }
-
       let text = '';
       let callbackData = raw.callback_data || raw.payload?.callback_data || raw.body?.callback_data || raw.message?.callback_data || raw.payload?.data || raw.body?.data || raw.body?.payload?.callback_data || raw.message?.body?.callback_data;
 
@@ -880,26 +893,18 @@ export class MaxAdapter {
       if (callbackData) { text = String(callbackData).trim(); }
 
       const lowerTextForStartCheck = text.toLowerCase().trim();
-      const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
+      const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck === 'старт' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
 
       if (isStartCommand) {
         console.log('👋 [MAX] bot_started: ПОЛНОЕ приветствие chat=' + chatId);
         await this.sendWelcomeGreeting(cleanId);
-        if (sqliteDb) { try { sqliteDb.prepare('INSERT OR REPLACE INTO greeted_users (chat_id, greeted_at) VALUES (?, ?)').run(cleanId, new Date().toISOString()); } catch (e) {} }
         return res.status(200).send('ok');
-      }
-
-      if (!isAlreadyGreeted && !callbackData) {
-        console.log('👋 [MAX] первое сообщение: короткий привет и ПРОДОЛЖАЮ chat=' + chatId);
-        await this.safeSendMessageToChat(cleanId, 'Здравствуйте! Я — Selin AI.');
-        if (sqliteDb) { try { sqliteDb.prepare('INSERT OR REPLACE INTO greeted_users (chat_id, greeted_at) VALUES (?, ?)').run(cleanId, new Date().toISOString()); console.log('👋 [MAX] greeted сохранён chat=' + cleanId); } catch (e) {} }
       }
 
       // 3. Проверяем аудио-вложения и извлекаем прямой URL/токен
       let isVoiceInput = false;
       let audioUrlOrToken = '';
 
-      // Прямое извлечение URL из вложений (raw.body?.attachments?.[0] || raw.attachments?.[0])
       const primaryAtt = raw.body?.attachments?.[0] || raw.attachments?.[0] || raw.payload?.attachments?.[0] || raw.message?.attachments?.[0];
       const directUrl = primaryAtt?.payload?.url || primaryAtt?.payload?.link || primaryAtt?.url || primaryAtt?.link;
 
@@ -926,7 +931,6 @@ export class MaxAdapter {
         }
       }
 
-      // Если аудио найдено через прямой URL или флаг
       if (!audioUrlOrToken && directUrl) {
         const typeStr = String(primaryAtt?.type || raw.type || raw.body?.type || raw.payload?.type || '').toLowerCase();
         if (typeStr.includes('audio') || typeStr.includes('voice') || !text) {
@@ -994,37 +998,62 @@ export class MaxAdapter {
         }
       }
 
-      // Если прикреплена картинка и текст содержит подтверждение оплаты (или скриншот чека)
-      const isPaymentProof = hasImage && (
-        text.toLowerCase().includes('оплачен') ||
-        text.toLowerCase().includes('оплатил') ||
-        text.toLowerCase().includes('чек') ||
-        text.toLowerCase().includes('сбп')
-      );
+      const lowerText = (text || '').toLowerCase().trim();
+
+      // === ШАГ 3: КОМАНДА ВЛАДЕЛЬЦА 'активировать <chat_id> month|year' ===
+      const activateMatch = text.trim().match(/^активировать\s+(\S+)(?:\s+(.+))?/i) || text.trim().match(/^\/activate\s+(\S+)(?:\s+(.+))?/i);
+      if (activateMatch) {
+        const { isOwner } = await import("../fintech/subscriptions");
+        if (isOwner(cleanId)) {
+          const targetChatId = activateMatch[1].replace(/^[a-z_]+/, '');
+          const requestedPeriod = (activateMatch[2] || 'month').trim();
+          const { activateManualPayment } = await import("../fintech/payments");
+          const actResult = activateManualPayment(targetChatId, requestedPeriod);
+
+          // Отправка подтверждения пользователю
+          const userMsg = `🎉 Оплата получена! Подписка активна до ${actResult.dateStr}. Я ваш — спрашивайте о чём угодно!`;
+          await this.safeSendMessageToChat(targetChatId, userMsg);
+
+          // Подтверждение владельцу
+          const ownerAck = `✅ Подписка активирована для chat_id=${targetChatId} (${actResult.tariffName}) до ${actResult.dateStr}.`;
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, ownerAck);
+          } else {
+            await this.safeSendMessageToChat(cleanId, ownerAck);
+          }
+          return res.status(200).send('ok');
+        }
+      }
+
+      // === ШАГ 2: ПОДТВЕРЖДЕНИЕ ОПЛАТЫ ('оплачено', 'оплатил', скриншот чека) ===
+      const isPaidTrigger = lowerText === 'оплачено' || lowerText.startsWith('оплачено') ||
+                            lowerText === 'оплатил' || lowerText.startsWith('оплатил') ||
+                            lowerText === 'оплатила' || lowerText.startsWith('оплатила') ||
+                            lowerText === '/paid' || lowerText === 'оплата';
+      const isPaymentProof = isPaidTrigger || (hasImage && (
+        lowerText.includes('оплачен') ||
+        lowerText.includes('оплатил') ||
+        lowerText.includes('чек') ||
+        lowerText.includes('сбп') ||
+        lowerText.includes('юмани') ||
+        lowerText.includes('yoomoney') ||
+        lowerText.includes('перевод')
+      ));
 
       if (isPaymentProof) {
-        const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-        const lower = text.toLowerCase().trim();
-        let detectedTariff = 'Свет';
-        if (lower.includes('год') || lower.includes('year') || lower.includes('2999')) {
-          detectedTariff = 'Год';
-        } else if (lower.includes('благодат') || lower.includes('blagodat') || lower.includes('399') || lower.includes('prem')) {
-          detectedTariff = 'Благодать';
-        } else if (lower.includes('свет') || lower.includes('svet') || lower.includes('199')) {
-          detectedTariff = 'Свет';
-        }
-
+        const detectedPeriod = (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('1800')) ? 'year' : 'month';
         const { savePaymentRequest } = await import("../fintech/payments");
-        savePaymentRequest(cleanId, detectedTariff, true);
+        savePaymentRequest(cleanId, detectedPeriod, hasImage);
 
         // Уведомление владельцу
-        const ownerId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
-        if (ownerId) {
-          const ownerMsg = `💳 Заявка: chat=${cleanId}, тариф=${detectedTariff}. Активация: команда активировать ${cleanId} ${detectedTariff}`;
-          await this.safeSendMessageToChat(ownerId, ownerMsg);
+        const senderName = raw.user?.name || raw.sender?.name || raw.message?.sender?.name || raw.payload?.user?.name || cleanId;
+        const ownerChatId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
+        if (ownerChatId) {
+          const ownerMsg = `💳 Заявка: chat=${cleanId} имя=${senderName}. Активация: активировать ${cleanId} ${detectedPeriod}`;
+          await this.safeSendMessageToChat(ownerChatId, ownerMsg);
         }
 
-        const userReply = `✅ Заявка на оплату тарифа "${detectedTariff}" принята со скриншотом чека! Мы проверим перевод по СБП и активируем подписку в ближайшее время.`;
+        const userReply = '✅ Заявка принята! Активирую в течение 10 минут.';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, userReply);
         } else {
@@ -1033,9 +1062,62 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // Если пришла картинка — скачиваем и запускаем callVision
+      // === ТАРИФЫ / ПОДПИСКА (/subscribe, 'подписка', 'тарифы') ===
+      if (lowerText === '/subscribe' || lowerText === 'подписка' || lowerText === 'тарифы' || lowerText === '/plans' || lowerText === '/tariffs') {
+        const reply = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
+        await this.safeSendMessageToChat(cleanId, reply, SUBSCRIPTION_EXTRA);
+        return res.status(200).send('ok');
+      }
+
+      // === БИБЛИЯ (ВСЕГДА БЕСПЛАТНО ДЛЯ ВСЕХ) ===
+      if (isBibleQuery(text)) {
+        const isPlanSubscribe = lowerText === 'подписаться на библию' || lowerText === '/bible' || lowerText.includes('бог благ и милость его велика');
+        const { handleBibleSubscription } = await import("../../server");
+        const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
+        if (bibleReply) {
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, bibleReply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, bibleReply);
+          }
+          return res.status(200).send('ok');
+        }
+
+        const context: MessageContext = {
+          chatId: cleanId,
+          tenantId: `max_${cleanId}`,
+          channel: ChannelType.MAX,
+          isVoice: isVoiceInput,
+          timestamp: Date.now()
+        };
+
+        const response = await this.core.processMessage(text, context);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, response.text);
+        } else {
+          await this.safeSendMessageToChat(cleanId, response.text);
+        }
+        return res.status(200).send('ok');
+      }
+
+      // === ЖЁСТКИЙ PAYWALL (HARD LOCK) ===
+      const { checkAccess } = await import("../fintech/subscriptions");
+      const hasAccess = checkAccess(cleanId);
+      if (!hasAccess) {
+        const lockMsg = '🔒 Я приступаю к работе после активации подписки. Кнопки оплаты ниже, подтверждение — скрин оплаты.';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, lockMsg);
+        }
+        await this.safeSendMessageToChat(cleanId, lockMsg, SUBSCRIPTION_EXTRA);
+        return res.status(200).send('ok');
+      }
+
+      // =========================================================================
+      // РАЗБЛОКИРОВАННЫЙ РЕЖИМ (Владелец или активная оплаченная подписка)
+      // =========================================================================
+
+      // 1. Если пришла картинка — скачиваем и запускаем callVision
       if (hasImage && imageUrl) {
-        const cleanId = String(chatId).replace(/^[a-z_]+/, '');
         try {
           const imgRes = await fetch(imageUrl, {
             method: 'GET',
@@ -1090,23 +1172,20 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      const lowerText = text.toLowerCase().trim();
-
-      // Команда 'статистика' от OWNER
-      const ownerId = process.env.ADMIN_USER_ID || process.env.OWNER_CHAT_ID;
-      if (ownerId && String(cleanId) === String(ownerId).trim()) {
-        if (lowerText === 'статистика') {
-          const { getOwnerStatistics } = await import("../utils/stats");
-          const stats = await getOwnerStatistics();
-          if (isVoiceInput) {
-            await this.synthesizeAndSendVoice(cleanId, stats);
-          } else {
-            await this.safeSendMessageToChat(cleanId, stats);
-          }
-          return res.status(200).send('ok');
+      // 2. Команда 'статистика' от OWNER
+      const { isOwner } = await import("../fintech/subscriptions");
+      if (isOwner(cleanId) && lowerText === 'статистика') {
+        const { getOwnerStatistics } = await import("../utils/stats");
+        const stats = await getOwnerStatistics();
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, stats);
+        } else {
+          await this.safeSendMessageToChat(cleanId, stats);
         }
+        return res.status(200).send('ok');
       }
 
+      // 3. Смена голоса ('селин777', 'селин000')
       const norm = text.toLowerCase().trim().replace(/[\s\-_.,!?:;]+/g, '');
       if (norm === 'селин777' || norm === 'selin777' || norm.includes('селин777') || norm.includes('selin777')) {
         setVoiceGender(cleanId, 'male');
@@ -1129,38 +1208,14 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // Генерация фото / изображений (триггеры: /draw, нарисуй, сгенерируй фото, сгенерируй картинку, покажи картинку)
+      // 4. Генерация фото / изображений (/draw, нарисуй, сгенерируй фото...)
       const imgPrompt = parseImageGenerationPrompt(text);
       if (imgPrompt) {
         await this.generateAndSendImage(cleanId, imgPrompt, isVoiceInput);
         return res.status(200).send('ok');
       }
 
-      // === БЛОК 4 & 5 & 3: КОМАНДЫ, СБОР ПРОДУКТОВ, ОНБОРДИНГ ===
-
-      // 0.1 Команда владельца 'активировать <chat_id> <tariff>'
-      const activateMatch = text.trim().match(/^активировать\s+(\S+)(?:\s+(.+))?/i) || text.trim().match(/^\/activate\s+(\S+)(?:\s+(.+))?/i);
-      if (activateMatch) {
-        const targetChatId = activateMatch[1].replace(/^[a-z_]+/, '');
-        const requestedTariff = (activateMatch[2] || 'Свет').trim();
-        const { activateManualPayment } = await import("../fintech/payments");
-        const actResult = activateManualPayment(targetChatId, requestedTariff);
-
-        // Отправка подтверждения пользователю
-        const userMsg = `✅ Оплата получена! Подписка ${actResult.tariffName} активна до ${actResult.dateStr}. Чек пришлю отдельным сообщением.`;
-        await this.safeSendMessageToChat(targetChatId, userMsg);
-
-        // Подтверждение владельцу
-        const ownerAck = `✅ Подписка "${actResult.tariffName}" для chat_id=${targetChatId} успешно активирована до ${actResult.dateStr}. Статус заявки переведён в 'done'.`;
-        if (isVoiceInput) {
-          await this.synthesizeAndSendVoice(cleanId, ownerAck);
-        } else {
-          await this.safeSendMessageToChat(cleanId, ownerAck);
-        }
-        return res.status(200).send('ok');
-      }
-
-      // 0.2 Команда / callback '📋 Скопировать список'
+      // 5. Команда / callback '📋 Скопировать список'
       if (lowerText === 'copy_cart' || lowerText === 'скопировать список' || lowerText === '/copy_cart' || lowerText.includes('скопировать список')) {
         const { getLastCartList } = await import("../services/CartService");
         const lastList = getLastCartList(cleanId);
@@ -1174,113 +1229,7 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // 0.3 Команда 'оплачено' / 'оплатил' / 'оплатила' (без фото или при отдельном сообщении)
-      const isPaidTrigger = lowerText === 'оплачено' || lowerText.startsWith('оплачено') ||
-                            lowerText === 'оплатил' || lowerText.startsWith('оплатил') ||
-                            lowerText === 'оплатила' || lowerText.startsWith('оплатила') ||
-                            lowerText === '/paid' || lowerText === 'оплата';
-      if (isPaidTrigger) {
-        let detectedTariff = 'Свет';
-        if (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('2999')) {
-          detectedTariff = 'Год';
-        } else if (lowerText.includes('благодат') || lowerText.includes('blagodat') || lowerText.includes('399') || lowerText.includes('prem')) {
-          detectedTariff = 'Благодать';
-        } else if (lowerText.includes('свет') || lowerText.includes('svet') || lowerText.includes('199')) {
-          detectedTariff = 'Свет';
-        }
-
-        const { savePaymentRequest } = await import("../fintech/payments");
-        savePaymentRequest(cleanId, detectedTariff, false);
-
-        // Уведомление владельцу
-        const ownerChatId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
-        if (ownerChatId) {
-          const ownerMsg = `💳 Заявка: chat=${cleanId}, тариф=${detectedTariff}. Активация: команда активировать ${cleanId} ${detectedTariff}`;
-          await this.safeSendMessageToChat(ownerChatId, ownerMsg);
-        }
-
-        const userReply = `✅ Заявка на оплату тарифа "${detectedTariff}" принята! Мы проверим перевод по СБП и активируем подписку в ближайшее время.`;
-        if (isVoiceInput) {
-          await this.synthesizeAndSendVoice(cleanId, userReply);
-        } else {
-          await this.safeSendMessageToChat(cleanId, userReply);
-        }
-        return res.status(200).send('ok');
-      }
-
-      // 0.4 Callbacks кнопок оплаты 'pay:<tariff>'
-      if (lowerText.startsWith('pay:') || lowerText.startsWith('pay_')) {
-        const planKey = lowerText.replace(/^pay[:_]/, '').trim() || 'svet';
-        const { createPayment } = await import("../fintech/payments");
-        const payRes = await createPayment(cleanId, planKey);
-        if (payRes.mode === 'auto' && payRes.url) {
-          const autoExtra = {
-            attachments: [
-              {
-                type: 'inline_keyboard',
-                payload: {
-                  buttons: [
-                    [
-                      { type: 'link', text: '💳 Перейти к оплате', url: payRes.url }
-                    ]
-                  ]
-                }
-              }
-            ]
-          };
-          await this.safeSendMessageToChat(cleanId, `Ссылка для оплаты тарифа:\n${payRes.url}`, autoExtra);
-        } else {
-          const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
-          const { PLANS } = await import("../fintech/subscriptions");
-          const planObj = PLANS[planKey] || PLANS.svet;
-          const manualText = `Выбран тариф "${planObj.name}" (${planObj.price}₽).\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`;
-          await this.safeSendMessageToChat(cleanId, manualText);
-        }
-        return res.status(200).send('ok');
-      }
-
-      // 1. /subscribe или 'подписка' или 'тарифы'
-      if (lowerText === '/subscribe' || lowerText === 'подписка' || lowerText === 'тарифы' || lowerText === '/plans' || lowerText === '/tariffs') {
-        const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
-        const reply = `Тарифы Selin AI:\n\n💡 Свет — 199₽ (безлимитные диалоги)\n🌟 Благодать — 399₽ (+приоритет и зрение без лимитов)\n📅 Год — 2999₽ (максимальная выгода)\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`;
-        const extra = {
-          attachments: [
-            {
-              type: 'inline_keyboard',
-              payload: {
-                buttons: [
-                  [
-                    { text: '💡 Свет - 199₽', callback_data: 'pay:svet' },
-                    { text: '🌟 Благодать - 399₽', callback_data: 'pay:blagodat' }
-                  ],
-                  [
-                    { text: '📅 Год - 2999₽', callback_data: 'pay:year' }
-                  ]
-                ]
-              }
-            }
-          ]
-        };
-        await this.safeSendMessageToChat(cleanId, reply, extra);
-        return res.status(200).send('ok');
-      }
-
-      // 2. 'подписаться на библию' или '/bible'
-      if (lowerText === 'подписаться на библию' || lowerText === '/bible') {
-        const { handleBibleSubscription } = await import("../../server");
-        const bibleReply = await handleBibleSubscription(cleanId, 'бог благ и милость его велика', isVoiceInput);
-        if (bibleReply) {
-          const finalReply = bibleReply + '\n\n🙏 Обратите внимание: План Победы предоставляется абсолютно БЕСПЛАТНО НАВСЕГДА.';
-          if (isVoiceInput) {
-            await this.synthesizeAndSendVoice(cleanId, finalReply);
-          } else {
-            await this.safeSendMessageToChat(cleanId, finalReply);
-          }
-        }
-        return res.status(200).send('ok');
-      }
-
-      // 3. /remind [время] [текст] или 'напомни [время] [текст]'
+      // 6. /remind [время] [текст] или 'напомни [время] [текст]'
       if (lowerText.startsWith('/remind ') || lowerText.startsWith('напомни ')) {
         const trigger = lowerText.startsWith('/remind ') ? '/remind ' : 'напомни ';
         const rawContent = text.substring(trigger.length).trim();
@@ -1327,7 +1276,7 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // 4. /profile или 'мой профиль'
+      // 7. /profile или 'мой профиль'
       if (lowerText === '/profile' || lowerText === 'мой профиль') {
         const { getProfile } = await import("../services/ProfileService");
         const profile = await getProfile(cleanId);
@@ -1356,7 +1305,7 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // 5. /cart, 'собери', 'продукты на', 'корзину'
+      // 8. /cart, 'собери', 'продукты на', 'корзину'
       const isCartTrigger = lowerText.startsWith('/cart') || lowerText.includes('собери') || lowerText.includes('продукты на') || lowerText.includes('корзину') || lowerText.includes('корзина') || lowerText.includes('список продуктов');
       if (isCartTrigger) {
         const { getProfile } = await import("../services/ProfileService");
@@ -1390,7 +1339,7 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // 6. Рассказ о себе (family/еда/магазин/город)
+      // 9. Рассказ о себе (family/еда/магазин/город)
       const isAboutSelf = /(?:нас|семья|чел|едим|огранич|аллерги|свинин|магазин|живу|рядом|пятёрочк|вкусвилл|перекресток)/i.test(lowerText) &&
                           (/(?:семья|человек|едим|огранич|живу|магазин|город|аллерги|ограничен|религи|веру|христиа)/i.test(lowerText) || lowerText.includes("о себе"));
       if (isAboutSelf) {
@@ -1414,18 +1363,7 @@ export class MaxAdapter {
         }
       }
 
-      // Иначе: обычная обработка через AI Core
-      const { handleBibleSubscription } = await import("../../server");
-      const bibleReply = await handleBibleSubscription(cleanId, text, isVoiceInput);
-      if (bibleReply) {
-        if (isVoiceInput) {
-          await this.synthesizeAndSendVoice(cleanId, bibleReply);
-        } else {
-          await this.safeSendMessageToChat(cleanId, bibleReply);
-        }
-        return res.status(200).send('ok');
-      }
-
+      // 10. Обычная обработка через AI Core
       const context: MessageContext = {
         chatId: cleanId,
         tenantId: `max_${cleanId}`,

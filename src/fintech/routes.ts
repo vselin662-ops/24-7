@@ -162,9 +162,9 @@ export async function handleFintechCommand(
   const trimmed = (text || '').trim();
   const lower = trimmed.toLowerCase();
 
-  // 1. Команда 'тарифы'
-  if (lower === 'тарифы' || lower === '/tariffs' || lower === '/plans' || lower === 'тариф') {
-    const replyText = 'Доступные тарифы Selin AI:\n\n1. План победы — 199 руб/мес или 1490 руб/год (2 месяца в подарок)\n2. Премиум — 499 руб/мес или 3990 руб/год.';
+  // 1. Команда 'тарифы' / '/subscribe' / 'подписка'
+  if (lower === 'тарифы' || lower === '/tariffs' || lower === '/plans' || lower === 'тариф' || lower === 'подписка' || lower === '/subscribe') {
+    const replyText = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
 
     const extra = {
       attachments: [
@@ -173,10 +173,10 @@ export async function handleFintechCommand(
           payload: {
             buttons: [
               [
-                { text: 'План победы - 199 руб', callback_data: 'pay:plan' }
+                { type: 'link', text: '💳 Поддержать — 199₽/мес', url: 'https://yoomoney.ru/to/4100119243483246' }
               ],
               [
-                { text: 'Премиум - 499 руб', callback_data: 'pay:premium' }
+                { type: 'link', text: '🎯 Год — 1800₽', url: 'https://yoomoney.ru/to/4100119243483246' }
               ]
             ]
           }
