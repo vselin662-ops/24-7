@@ -1216,13 +1216,29 @@ export class MaxAdapter {
       }
 
       // 5. /cart, 'собери', 'продукты на', 'корзину'
-      const isCartTrigger = lowerText.startsWith('/cart') || lowerText.includes('собери') || lowerText.includes('продукты на') || lowerText.includes('корзину');
+      const isCartTrigger = lowerText.startsWith('/cart') || lowerText.includes('собери') || lowerText.includes('продукты на') || lowerText.includes('корзину') || lowerText.includes('корзина') || lowerText.includes('список продуктов');
       if (isCartTrigger) {
         const { getProfile } = await import("../services/ProfileService");
         const { buildCart } = await import("../services/CartService");
         const profile = await getProfile(cleanId);
         const cartResult = await buildCart(text, profile);
-        await this.safeSendMessageToChat(cleanId, cartResult.text, cartResult.extra);
+        const cartKeyboardExtra = cartResult.extra || {
+          attachments: [
+            {
+              type: 'inline_keyboard',
+              payload: {
+                buttons: [
+                  [
+                    { type: 'link', text: '🏪 Пятёрочка', url: 'https://5ka.ru' },
+                    { type: 'link', text: '🥑 ВкусВилл', url: 'https://vkusvill.ru' },
+                    { type: 'link', text: '🛒 Перекрёсток', url: 'https://www.perekrestok.ru' }
+                  ]
+                ]
+              }
+            }
+          ]
+        };
+        await this.safeSendMessageToChat(cleanId, cartResult.text, cartKeyboardExtra);
         return res.status(200).send('ok');
       }
 
