@@ -24,3 +24,4 @@ export * from './trust-engine';
 export * from './gemini.service';
 export * from './max-bot.service';
 export * from './aiOrchestrator';
+export * from './WebSearchService';

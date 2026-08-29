@@ -3,6 +3,7 @@ import Groq from "groq-sdk";
 import OpenAI from "openai";
 import { ChatMemory } from "./types";
 import { logger } from "../logger";
+import { searchWeb } from "../services/WebSearchService";
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const PRIMARY_PROVIDER = process.env.PRIMARY_PROVIDER || 'openrouter';
@@ -461,24 +462,13 @@ export class LLMService {
       console.log("⚠️ [LLMService] Failed to append profile prompt:", profErr);
     }
 
-    // === ПРАВКА 3: АВТОЗАПРОС ВРЕМЕНИ ===
-    const timeKeywords = /врем[яе]|час|который час|сейчас врем|какое время|дата|сегодня|какой день/i;
-    if (timeKeywords.test(userMessage) && !/погод|температур|тепл|холод|жар|дожд|снег|ветер|прогноз/i.test(userMessage)) {
+    // === АВТОЗАПРОС ВРЕМЕНИ (только чистые вопросы про время/дату) ===
+    const isPureTimeQuery = /^(который\s*час|сколько\s*времени|какое\s*(сейчас\s*)?время|какая\s*дата|какой\s*(сегодня\s*)?день|точное\s*время)(\s*\?)?$/i.test(userMessage.trim()) || (/^(время|дата)(\s*\?)?$/i.test(userMessage.trim()));
+    if (isPureTimeQuery) {
       const timeAnswer = `Сейчас ${moscowTime} по Москве. 2026 год.`;
       console.log('⏰ [Time] ответ: ' + timeAnswer);
       memory.history.push({ role: 'assistant', content: timeAnswer, timestamp: Date.now() });
       return timeAnswer;
-    }
-
-    const needsWeb = /:online|новост|сегодня|сейчас|цен|курс|пробк|актуальн|скидк|2025|2026/i.test(userMessage);
-    if (needsWeb) {
-      console.log('🌐 [Router] Triggering live web search via OpenRouter');
-      const webAnswer = await callWithWebSearch(userMessage, finalSystem);
-      if (webAnswer) {
-        memory.history.push({ role: 'assistant', content: webAnswer, timestamp: Date.now() });
-        console.log('🌐 [Web] ответ через :online');
-        return webAnswer;
-      }
     }
 
     // === ПРАВКА 2: АВТОЗАПРОС ПОГОДЫ ПРИ КЛЮЧЕВЫХ СЛОВАХ ===
@@ -506,6 +496,24 @@ export class LLMService {
         }
       } catch (e) {
         console.log('⚠️ [Weather] fetch error: ' + (e as any).message);
+      }
+    }
+
+    // === ГАРАНТИРОВАННЫЙ ВЫХОД В ИНТЕРНЕТ ЧЕРЕЗ WEBSEARCHSERVICE (DUCKDUCKGO) ===
+    const webTriggerRegex = /новост|сегодня|сейчас|актуальн|курс|цена|цен |последн|свеж|свежие|в этом году|когда родился|кто сейчас/i;
+    if (webTriggerRegex.test(userMessage) && !weatherKeywords.test(userMessage)) {
+      try {
+        const webResults = await searchWeb(userMessage);
+        if (webResults && webResults.length > 0) {
+          const todayDateStr = new Intl.DateTimeFormat('ru-RU', { 
+            timeZone: 'Europe/Moscow', 
+            day: '2-digit', month: '2-digit', year: 'numeric' 
+          }).format(now);
+          const resultsList = webResults.map(r => `${r.title} — ${r.snippet} — ${r.url}`).join('\n');
+          finalSystem += `\n\nСВЕЖИЕ ДАННЫЕ ИЗ ИНТЕРНЕТА (дата: ${todayDateStr}):\n${resultsList}\nОпирайся на них, в конце укажи источники ссылками.`;
+        }
+      } catch (searchErr: any) {
+        console.log(`⚠️ [LLMService] Web search error: ${searchErr?.message || searchErr}`);
       }
     }
 
