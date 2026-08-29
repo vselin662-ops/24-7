@@ -298,7 +298,7 @@ async function startServer() {
       }
     }, 20000);
 
-    // Run Voice Synthesis Self-Test
+    // Run Voice Synthesis Self-Test & Start Hook Pre-generation
     (async () => {
       try {
         const { synthesizeForChat } = await import("./src/services/TTSService");
@@ -313,6 +313,14 @@ async function startServer() {
         }
       } catch (err: any) {
         logger.error(`❌ [Voice Self-Test] Voice self-test failed: ${err.message || err}`);
+      }
+
+      // Pre-generate Start Voice Hook (asynchronously, non-blocking)
+      try {
+        const { pregenerateStartHook } = await import("./src/services/StartHookService");
+        await pregenerateStartHook();
+      } catch (err: any) {
+        logger.warn(`⚠️ [StartHook] Server startup pre-generation error: ${err?.message || err}`);
       }
     })();
   });

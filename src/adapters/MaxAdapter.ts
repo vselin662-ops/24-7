@@ -6,6 +6,7 @@ import { AIResponse, MessageContext, ChannelType, VoiceMode } from "../core/type
 import { logger } from "../logger";
 import { VoiceService } from "../services/VoiceService";
 import { synthesizeForChat } from "../services/TTSService";
+import { HOOK_TEXT, VOICE_HOOK_TEXT, getStartHookAudio } from "../services/StartHookService";
 import { ensureMp3Buffer } from "../lib/audioConvert";
 import { callVision, stripMarkdown } from "../core/LLMService";
 import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
@@ -812,30 +813,44 @@ export class MaxAdapter {
   }
 
   public async sendWelcomeGreeting(cleanId: string): Promise<void> {
-    const voicePitch = VOICE_HOOK_TEXT;
-    const subscribeText = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
-
-    let voiceSent = false;
     const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
+    let audio: Buffer | null = await getStartHookAudio();
+    let voiceSent = false;
 
-    try {
-      const audioBuffer = await synthesizeForChat(cleanId, voicePitch);
-      if (audioBuffer && audioBuffer.length > 0 && !isNaN(numericId) && numericId > 0) {
-        voiceSent = await this.sendSingleAudioBuffer(numericId, audioBuffer);
+    if (audio && audio.length > 0 && !isNaN(numericId) && numericId > 0) {
+      try {
+        voiceSent = await this.sendSingleAudioBuffer(numericId, audio);
+        if (voiceSent) {
+          console.log('⚡ [StartHook] sent from cache');
+          logger.info('⚡ [StartHook] sent from cache');
+        }
+      } catch (sendErr: any) {
+        logger.warn(`⚠️ [StartHook] Failed to send cached audio: ${sendErr?.message || sendErr}`);
       }
-    } catch (err: any) {
-      logger.error('❌ [StartHook] voice error: ' + (err.message || err));
     }
 
-    if (voiceSent) {
-      console.log('🎙️ [StartHook] voice sent');
-      logger.info('🎙️ [StartHook] voice sent');
-    } else {
-      console.log('🎙️ [StartHook] voice failed → text');
-      logger.warn('🎙️ [StartHook] voice failed → text');
-      await this.safeSendMessageToChat(cleanId, voicePitch);
+    if (!voiceSent) {
+      try {
+        const { synthesizeForChat } = await import("../services/TTSService");
+        audio = await synthesizeForChat(cleanId, HOOK_TEXT);
+        if (audio && audio.length > 0 && !isNaN(numericId) && numericId > 0) {
+          voiceSent = await this.sendSingleAudioBuffer(numericId, audio);
+        }
+      } catch (synthErr: any) {
+        logger.warn(`⚠️ [StartHook] Live synthesis error: ${synthErr?.message || synthErr}`);
+      }
+
+      if (voiceSent) {
+        console.log('🎙️ [StartHook] voice sent');
+        logger.info('🎙️ [StartHook] voice sent');
+      } else {
+        console.log('🎙️ [StartHook] fallback to text');
+        logger.warn('🎙️ [StartHook] fallback to text');
+        await this.safeSendMessageToChat(cleanId, HOOK_TEXT);
+      }
     }
 
+    const subscribeText = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
     await this.safeSendMessageToChat(cleanId, subscribeText, SUBSCRIPTION_EXTRA);
   }
 
@@ -881,17 +896,6 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // Check if event is bot_started
-      const isBotStarted = 
-        String(raw.event || '').toLowerCase() === 'bot_started' || 
-        String(raw.body?.event || '').toLowerCase() === 'bot_started' || 
-        String(raw.payload?.event || '').toLowerCase() === 'bot_started' || 
-        String(raw.type || '').toLowerCase() === 'bot_started' || 
-        String(raw.body?.type || '').toLowerCase() === 'bot_started' || 
-        String(raw.payload?.type || '').toLowerCase() === 'bot_started' ||
-        String(raw.action || '').toLowerCase() === 'bot_started' ||
-        String(raw.payload?.action || '').toLowerCase() === 'bot_started';
-
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
 
       let text = '';
@@ -908,21 +912,72 @@ export class MaxAdapter {
       }
       if (callbackData) { text = String(callbackData).trim(); }
 
-      const lowerTextForStartCheck = text.toLowerCase().trim();
-      const isStartCommand = 
-        isBotStarted || 
-        lowerTextForStartCheck === '/start' || 
-        lowerTextForStartCheck === 'start' ||
-        lowerTextForStartCheck === 'начать' || 
-        lowerTextForStartCheck === 'старт' || 
-        lowerTextForStartCheck === 'onboarding_start' ||
-        lowerTextForStartCheck.startsWith('/start ') || 
-        lowerTextForStartCheck.startsWith('начать ') ||
-        lowerTextForStartCheck.startsWith('старт ');
+      const trimmedLowerText = (text || '').trim().toLowerCase();
+      const isStart = 
+        raw.update_type === 'bot_started' || 
+        raw.update_type === 'start' ||
+        String(raw.event || '').toLowerCase() === 'bot_started' || 
+        String(raw.body?.event || '').toLowerCase() === 'bot_started' || 
+        String(raw.payload?.event || '').toLowerCase() === 'bot_started' || 
+        String(raw.type || '').toLowerCase() === 'bot_started' || 
+        String(raw.body?.type || '').toLowerCase() === 'bot_started' || 
+        String(raw.payload?.type || '').toLowerCase() === 'bot_started' ||
+        String(raw.action || '').toLowerCase() === 'bot_started' ||
+        String(raw.payload?.action || '').toLowerCase() === 'bot_started' ||
+        ['/start', 'начать', 'старт', 'start', 'onboarding_start'].includes(trimmedLowerText) ||
+        trimmedLowerText.startsWith('/start ') ||
+        trimmedLowerText.startsWith('начать ') ||
+        trimmedLowerText.startsWith('старт ');
 
-      if (isStartCommand) {
-        console.log('👋 [MAX] bot_started: ПОЛНОЕ приветствие chat=' + chatId);
-        await this.sendWelcomeGreeting(cleanId);
+      if (isStart) {
+        console.log('👋 [MAX] bot_started: мгновенный хук chat=' + cleanId);
+        logger.info(`👋 [MAX] bot_started: мгновенный хук chat=${cleanId}`);
+        const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
+
+        // 1. Получить audio из START_HOOK_AUDIO или Redis 'selin:start_hook_audio'
+        let audio: Buffer | null = await getStartHookAudio();
+        let voiceSent = false;
+
+        // 2. Если audio есть → отправить voice МГНОВЕННО, лог '⚡ [StartHook] sent from cache'
+        if (audio && audio.length > 0 && !isNaN(numericId) && numericId > 0) {
+          try {
+            voiceSent = await this.sendSingleAudioBuffer(numericId, audio);
+            if (voiceSent) {
+              console.log('⚡ [StartHook] sent from cache');
+              logger.info('⚡ [StartHook] sent from cache');
+            }
+          } catch (sendErr: any) {
+            logger.warn(`⚠️ [StartHook] Failed to send cached audio: ${sendErr?.message || sendErr}`);
+          }
+        }
+
+        // 3. Если нет → синтезировать сейчас; если и это null → отправить HOOK_TEXT обычным текстом
+        if (!voiceSent) {
+          try {
+            const { synthesizeForChat } = await import("../services/TTSService");
+            audio = await synthesizeForChat(cleanId, HOOK_TEXT);
+            if (audio && audio.length > 0 && !isNaN(numericId) && numericId > 0) {
+              voiceSent = await this.sendSingleAudioBuffer(numericId, audio);
+            }
+          } catch (synthErr: any) {
+            logger.warn(`⚠️ [StartHook] Live synthesis error: ${synthErr?.message || synthErr}`);
+          }
+
+          if (voiceSent) {
+            console.log('🎙️ [StartHook] voice sent');
+            logger.info('🎙️ [StartHook] voice sent');
+          } else {
+            console.log('🎙️ [StartHook] fallback to text');
+            logger.warn('🎙️ [StartHook] fallback to text');
+            await this.safeSendMessageToChat(cleanId, HOOK_TEXT);
+          }
+        }
+
+        // 4. Затем текст с 2 кнопками оплаты
+        const subscribeText = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
+        await this.safeSendMessageToChat(cleanId, subscribeText, SUBSCRIPTION_EXTRA);
+
+        // 5. return — НЕ доходить до locked
         return res.status(200).send('ok');
       }
 
