@@ -85,6 +85,9 @@ voiceRouter.post("/tts", async (req, res) => {
 
   try {
     const audioBuffer = await synthesizeForChat(chatId, textToSynthesize);
+    if (!audioBuffer) {
+      throw new Error("TTS engine returned null audio buffer");
+    }
     const dataUrl = `data:audio/mpeg;base64,${audioBuffer.toString("base64")}`;
     const voiceConfig = getVoiceConfig(chatId);
     return res.json({
@@ -118,6 +121,9 @@ voiceRouter.post("/synthesize", async (req, res) => {
     }
 
     const audioBuffer = await synthesizeForChat(chatId, textToSynthesize);
+    if (!audioBuffer) {
+      throw new Error("TTS engine returned null audio buffer");
+    }
     const base64Audio = audioBuffer.toString('base64');
     const voiceConfig = getVoiceConfig(chatId);
 

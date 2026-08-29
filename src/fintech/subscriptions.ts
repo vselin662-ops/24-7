@@ -3,7 +3,10 @@ import { logger } from "../logger";
 
 export const PLANS: Record<string, { name: string; price: number }> = {
   plan: { name: 'План победы', price: 299 },
-  premium: { name: 'Премиум', price: 999 }
+  premium: { name: 'Премиум', price: 999 },
+  svet: { name: 'Свет', price: 199 },
+  blagodat: { name: 'Благодать', price: 399 },
+  year: { name: 'Год', price: 2999 }
 };
 
 // SQLite таблица subscriptions

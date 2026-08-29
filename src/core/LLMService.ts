@@ -5,6 +5,8 @@ import { ChatMemory } from "./types";
 import { logger } from "../logger";
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const PRIMARY_PROVIDER = process.env.PRIMARY_PROVIDER || 'openrouter';
+const PRIMARY_MODEL = process.env.PRIMARY_MODEL || 'google/gemini-2.5-flash';
 
 let groqModelsCache: string[] | null = null;
 let groqModelsCacheTime = 0;
@@ -224,6 +226,8 @@ export class LLMService {
     } else {
       logger.warn("⚠️ GROQ_API_KEY is not defined or is placeholder in LLMService environment.");
     }
+
+    logger.info('🧠 [LLM] primary: ' + PRIMARY_PROVIDER + '/' + PRIMARY_MODEL);
   }
 
   private getGroqClient(): Groq | null {
@@ -435,7 +439,16 @@ export class LLMService {
 Твой стиль: дружелюбный, конкретный, как живой эксперт. Короткие ответы по делу.
 `;
 
-    const finalSystem = systemPrompt || defaultSystem;
+    let finalSystem = systemPrompt || defaultSystem;
+    try {
+      const { profilePrompt } = await import("../services/ProfileService");
+      const userProfileText = await profilePrompt(chatId);
+      if (userProfileText) {
+        finalSystem += `\n\n⚠️ ${userProfileText}\nОбязательно учитывай этот профиль пользователя при формировании любых советов, планов продуктов, меню и рекомендаций!`;
+      }
+    } catch (profErr) {
+      console.log("⚠️ [LLMService] Failed to append profile prompt:", profErr);
+    }
 
     // === ПРАВКА 3: АВТОЗАПРОС ВРЕМЕНИ ===
     const timeKeywords = /врем[яе]|час|который час|сейчас врем|какое время|дата|сегодня|какой день/i;
@@ -504,6 +517,32 @@ export class LLMService {
         content: msg.content
       }))
     ] as any;
+
+    // === PRIMARY PROVIDER/MODEL FIRST CALL ===
+    try {
+      let primaryResponse: string | null = null;
+      if (PRIMARY_PROVIDER === 'openrouter') {
+        primaryResponse = await this.callCompat(messages, PRIMARY_MODEL);
+      } else if (PRIMARY_PROVIDER === 'groq') {
+        primaryResponse = await this.callGroq(messages);
+      } else if (PRIMARY_PROVIDER === 'gemini') {
+        primaryResponse = await this.callGemini(messages, finalSystem);
+      } else if (PRIMARY_PROVIDER === 'orca') {
+        primaryResponse = await this.callOrca(messages);
+      } else if (PRIMARY_PROVIDER === 'teamo') {
+        primaryResponse = await this.callTeamo(messages);
+      }
+
+      if (primaryResponse) {
+        memory.history.push({ role: 'assistant', content: primaryResponse, timestamp: Date.now() });
+        if (memory.history.length > 30) {
+          memory.history = memory.history.slice(-30);
+        }
+        return primaryResponse;
+      }
+    } catch (pErr: any) {
+      console.log(`⚠️ [LLM] Primary provider ${PRIMARY_PROVIDER} failed: ${pErr.message}`);
+    }
 
     // 1. OpenRouter (gemini-2.5 → claude → llama)
     try {
@@ -940,6 +979,90 @@ export class LLMService {
       if (t?.trim()) { markOk("teamo"); console.log("🧠 [LLM] teamo/" + model); return t.trim(); }
     } catch {}
     markFail("teamo"); return null;
+  }
+
+  private async callCompat(messages: any[], model: string): Promise<string | null> {
+    const orKey = process.env.OPENROUTER_API_KEY;
+    if (!orKey || orKey.includes('your_') || orKey.includes('placeholder') || orKey.length < 10) {
+      return null;
+    }
+    try {
+      const openrouter = new OpenAI({
+        baseURL: 'https://openrouter.ai/api/v1',
+        apiKey: orKey,
+        defaultHeaders: {
+          'HTTP-Referer': 'https://selin.ai',
+          'X-Title': 'SelinAI'
+        }
+      });
+      const completion = await openrouter.chat.completions.create({
+        model: model,
+        messages,
+        temperature: 0.8,
+        max_tokens: 2000,
+      });
+      const response = completion.choices[0]?.message?.content?.trim();
+      if (response) {
+        console.log("🧠 [LLM] openrouter/" + model);
+        return response;
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ [callCompat] OpenRouter model ${model} failed: ${err.message}`);
+    }
+    return null;
+  }
+
+  private async callGroq(messages: any[]): Promise<string | null> {
+    try {
+      const groq = this.getGroqClient();
+      if (groq) {
+        const model = await pickGroqModel();
+        const completion = await groq.chat.completions.create({
+          messages,
+          model: model,
+          temperature: 0.8,
+          max_tokens: 2000,
+        });
+        const response = completion.choices[0]?.message?.content?.trim();
+        if (response) {
+          console.log("🧠 [LLM] groq/" + model);
+          return response;
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ [callGroq] Groq failed: ${err.message}`);
+    }
+    return null;
+  }
+
+  private async callGemini(messages: any[], systemPrompt: string): Promise<string | null> {
+    if (!this.gemini) return null;
+    try {
+      const contents: any[] = [];
+      for (const m of messages) {
+        if (m.role === 'system') continue;
+        contents.push({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        });
+      }
+      const completion = await this.gemini.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: contents,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.8
+        }
+      });
+      const response = completion.text?.trim();
+      if (response) {
+        console.log("🧠 [LLM] gemini/" + GEMINI_MODEL);
+        return response;
+      }
+    } catch (gErr: any) {
+      logger.warn(`⚠️ [callGemini] Gemini failed: ${gErr?.message || gErr}`);
+    }
+    return null;
   }
 }
 

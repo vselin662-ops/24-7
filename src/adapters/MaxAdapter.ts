@@ -346,13 +346,19 @@ export class MaxAdapter {
     for (const chunk of chunks) {
       try {
         const audioBuffer = await synthesizeForChat(chatId, chunk);
-        const success = await this.sendSingleAudioBuffer(numericId, audioBuffer);
-        if (success) {
-          sentAtLeastOne = true;
+        if (audioBuffer && audioBuffer.length > 0) {
+          const success = await this.sendSingleAudioBuffer(numericId, audioBuffer);
+          if (success) {
+            sentAtLeastOne = true;
+          }
         }
       } catch (err: any) {
         logger.error(`❌ [MaxAdapter] Failed to send chunk voice: ${err.message || err}`);
       }
+    }
+
+    if (!sentAtLeastOne) {
+      logger.warn('🔇 [TTS] all engines failed — text-only reply');
     }
 
     // - если это глава книги -> озвучить главу полностью по чанкам + в конце текстом: "Хотите следующую главу? Напишите: далее".
@@ -499,7 +505,7 @@ export class MaxAdapter {
   }
 
   public async sendWelcomeGreeting(cleanId: string): Promise<void> {
-    const welcomeText = 'Приветствую вас! Рад видеть вас у себя. Я — Selin AI, ваш личный помощник. Я озвучиваю книги и Библию, нахожу свежие новости, цены и погоду в интернете, помогаю с бизнесом и планами, понимаю фото и голос. Спрашивайте о чём угодно!';
+    const welcomeText = 'Здравствуйте! Я — Selin AI. 🙏 План Победы — ежедневное чтение Библии в MAX (стих дня + голосовой разбор по трудам отцов Церкви) — НАВСЕГДА БЕСПЛАТНО. Скажите «подписаться на Библию». 🤖 AI-помощник — безлимитные диалоги, зрение, напоминания, сбор продуктов — 199₽/мес, первые 3 дня бесплатно. Давайте знакомиться: нажмите микрофон и расскажите о себе — сколько вас в семье, есть ли ограничения в еде, какой магазин рядом. Я запомню и стану полезнее.';
     const extra = {
       attachments: [
         {
@@ -520,7 +526,7 @@ export class MaxAdapter {
       try {
         const audioBuffer = await synthesizeForChat(cleanId, welcomeText);
         const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
-        if (!isNaN(numericId) && numericId > 0) {
+        if (!isNaN(numericId) && numericId > 0 && audioBuffer && audioBuffer.length > 0) {
           await this.sendSingleAudioBuffer(numericId, audioBuffer);
           console.log('🎙️ [MAX] голосовое приветствие отправлено chat=' + cleanId);
         }
@@ -821,7 +827,160 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // Bible broadcast subscription & confirmation check
+      // === БЛОК 4 & 5 & 3: КОМАНДЫ, СБОР ПРОДУКТОВ, ОНБОРДИНГ ===
+
+      // 1. /subscribe или 'подписка'
+      if (lowerText === '/subscribe' || lowerText === 'подписка') {
+        const reply = `Тарифы Selin AI:\n\n💡 Свет — 199₽/мес (безлимитные диалоги)\n🌟 Благодать — 399₽/мес (+приоритет и зрение без лимитов)\n📅 Год — 2999₽/год (максимальная выгода)\n\nВыберите подходящий тариф для оплаты:`;
+        const extra = {
+          attachments: [
+            {
+              type: 'inline_keyboard',
+              payload: {
+                buttons: [
+                  [
+                    { text: '💡 Свет - 199₽', callback_data: 'pay:svet' },
+                    { text: '🌟 Благодать - 399₽', callback_data: 'pay:blagodat' }
+                  ],
+                  [
+                    { text: '📅 Год - 2999₽', callback_data: 'pay:year' }
+                  ]
+                ]
+              }
+            }
+          ]
+        };
+        await this.safeSendMessageToChat(cleanId, reply, extra);
+        return res.status(200).send('ok');
+      }
+
+      // 2. 'подписаться на библию' или '/bible'
+      if (lowerText === 'подписаться на библию' || lowerText === '/bible') {
+        const { handleBibleSubscription } = await import("../../server");
+        const bibleReply = await handleBibleSubscription(cleanId, 'бог благ и милость его велика', isVoiceInput);
+        if (bibleReply) {
+          const finalReply = bibleReply + '\n\n🙏 Обратите внимание: План Победы предоставляется абсолютно БЕСПЛАТНО НАВСЕГДА.';
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, finalReply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, finalReply);
+          }
+        }
+        return res.status(200).send('ok');
+      }
+
+      // 3. /remind [время] [текст] или 'напомни [время] [текст]'
+      if (lowerText.startsWith('/remind ') || lowerText.startsWith('напомни ')) {
+        const trigger = lowerText.startsWith('/remind ') ? '/remind ' : 'напомни ';
+        const rawContent = text.substring(trigger.length).trim();
+        const timeRegex = /^(?:через\s+\d+\s*(?:минут|мин|часов|часа|ч)|через\s+час|в\s+\d{1,2}[:.-]\d{2}|в\s+\d{1,2}\s*(?:утра|вечера|вечером|дня|ночи)?)/i;
+        const match = rawContent.match(timeRegex);
+        let timePart = 'через час';
+        let reminderText = rawContent;
+
+        if (match) {
+          timePart = match[0];
+          reminderText = rawContent.substring(timePart.length).trim();
+        } else {
+          const firstWord = rawContent.split(' ')[0];
+          if (/^\d/.test(firstWord)) {
+            timePart = firstWord;
+            reminderText = rawContent.substring(firstWord.length).trim();
+          }
+        }
+
+        if (!reminderText) {
+          reminderText = 'Напоминание!';
+        }
+
+        try {
+          const { addReminder } = await import("../services/ReminderService");
+          const fireDate = await addReminder(cleanId, timePart, reminderText);
+          const localTimeStr = fireDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+          const localDateStr = fireDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+          const reply = `✅ Напоминание создано! Я напомню вам "${reminderText}" ${localDateStr} в ${localTimeStr}.`;
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, reply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, reply);
+          }
+        } catch (rErr) {
+          logger.error("❌ Failed to add reminder:", rErr);
+          const reply = "Извините, не удалось создать напоминание. Попробуйте другой формат времени.";
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, reply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, reply);
+          }
+        }
+        return res.status(200).send('ok');
+      }
+
+      // 4. /profile или 'мой профиль'
+      if (lowerText === '/profile' || lowerText === 'мой профиль') {
+        const { getProfile } = await import("../services/ProfileService");
+        const profile = await getProfile(cleanId);
+        if (profile && (profile.family_size || profile.diet_restrictions?.length || profile.stores?.length || profile.city || profile.interests?.length || profile.faith !== undefined)) {
+          const parts = [];
+          if (profile.family_size) parts.push(`Семья: ${profile.family_size} чел.`);
+          if (profile.diet_restrictions?.length) parts.push(`Ограничения в еде: ${profile.diet_restrictions.join(', ')}`);
+          if (profile.stores?.length) parts.push(`Магазины рядом: ${profile.stores.join(', ')}`);
+          if (profile.city) parts.push(`Город: ${profile.city}`);
+          if (profile.interests?.length) parts.push(`Интересы: ${profile.interests.join(', ')}`);
+          if (profile.faith !== undefined) parts.push(`Вера/религия: ${profile.faith ? 'Православный христианин' : 'Не указано'}`);
+          const reply = `👤 **Ваш профиль в Selin AI**:\n\n${parts.join('\n')}`;
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, reply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, reply);
+          }
+        } else {
+          const reply = 'Ваш профиль пока пуст. Расскажите о себе (например: «Нас четверо, свинину не едим, магазин Пятёрочка рядом»), и я запомню ваши предпочтения!';
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, reply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, reply);
+          }
+        }
+        return res.status(200).send('ok');
+      }
+
+      // 5. /cart, 'собери', 'продукты на', 'корзину'
+      const isCartTrigger = lowerText.startsWith('/cart') || lowerText.includes('собери') || lowerText.includes('продукты на') || lowerText.includes('корзину');
+      if (isCartTrigger) {
+        const { getProfile } = await import("../services/ProfileService");
+        const { buildCart } = await import("../services/CartService");
+        const profile = await getProfile(cleanId);
+        const cartResult = await buildCart(text, profile);
+        await this.safeSendMessageToChat(cleanId, cartResult.text, cartResult.extra);
+        return res.status(200).send('ok');
+      }
+
+      // 6. Рассказ о себе (family/еда/магазин/город)
+      const isAboutSelf = /(?:нас|семья|чел|едим|огранич|аллерги|свинин|магазин|живу|рядом|пятёрочк|вкусвилл|перекресток)/i.test(lowerText) &&
+                          (/(?:семья|человек|едим|огранич|живу|магазин|город|аллерги|ограничен|религи|веру|христиа)/i.test(lowerText) || lowerText.includes("о себе"));
+      if (isAboutSelf) {
+        const { extractProfile } = await import("../services/ProfileService");
+        const profile = await extractProfile(text, cleanId);
+        if (profile && (profile.family_size || profile.diet_restrictions?.length || profile.stores?.length || profile.city || profile.interests?.length || profile.faith !== undefined)) {
+          const parts = [];
+          if (profile.family_size) parts.push(`семья ${profile.family_size} чел.`);
+          if (profile.diet_restrictions?.length) parts.push(`ограничения в еде: ${profile.diet_restrictions.join(', ')}`);
+          if (profile.stores?.length) parts.push(`магазины: ${profile.stores.join(', ')}`);
+          if (profile.city) parts.push(`город: ${profile.city}`);
+          if (profile.interests?.length) parts.push(`интересы: ${profile.interests.join(', ')}`);
+          if (profile.faith !== undefined) parts.push(`вера: ${profile.faith ? 'православный христианин' : 'не указано'}`);
+          const reply = `✅ Запомнил: ${parts.join(', ')}. Учту в советах.`;
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, reply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, reply);
+          }
+          return res.status(200).send('ok');
+        }
+      }
+
+      // Иначе: обычная обработка через AI Core
       const { handleBibleSubscription } = await import("../../server");
       const bibleReply = await handleBibleSubscription(cleanId, text, isVoiceInput);
       if (bibleReply) {
@@ -842,11 +1001,25 @@ export class MaxAdapter {
       };
 
       const response = await this.core.processMessage(text, context);
+      let replyText = response.text;
+
+      // Если у пользователя нет профиля и ему еще не предлагали онбординг — предлагаем один раз после первого ответа
+      try {
+        const { getProfile, hasOfferedProfile, markProfileOffered } = await import("../services/ProfileService");
+        const profile = await getProfile(cleanId);
+        const wasOffered = await hasOfferedProfile(cleanId);
+        if (!profile && !wasOffered) {
+          replyText += `\n\n💡 Кстати, расскажите о себе (голосом или текстом) — я запомню и учту. Например: «Нас четверо, свинину не едим, магазин Пятёрочка рядом».`;
+          await markProfileOffered(cleanId);
+        }
+      } catch (profErr) {
+        logger.error("❌ Failed to offer profile onboarding:", profErr);
+      }
 
       if (isVoiceInput) {
-        await this.synthesizeAndSendVoice(cleanId, response.text);
+        await this.synthesizeAndSendVoice(cleanId, replyText);
       } else {
-        await this.safeSendMessageToChat(cleanId, response.text);
+        await this.safeSendMessageToChat(cleanId, replyText);
       }
 
       return res.status(200).send('ok');

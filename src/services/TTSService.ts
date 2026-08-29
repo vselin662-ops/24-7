@@ -29,57 +29,141 @@ export class TTSService {
   }
 
   /**
-   * Основной метод синтеза речи. Возвращает готовый бинарный Buffer.
+   * Основной метод синтеза речи. Возвращает готовый бинарный Buffer или null при ошибке.
    */
-  public async synthesize(text: string, options: TTSSynthesisOptions = {}): Promise<Buffer> {
+  public async synthesize(text: string, options: TTSSynthesisOptions = {}, isSelfTest: boolean = false): Promise<Buffer | null> {
     const cleanText = text.trim();
-    if (!cleanText) {
-      return this.generateSilentWav();
-    }
-
-    const cacheKey = this.getCacheKey(cleanText, options);
-
-    // 1. Проверка кэша
-    if (this.cache.has(cacheKey)) {
-      logger.info(`[TTSService] Cache hit for key: ${cacheKey.slice(0, 8)}... (text: ${cleanText.slice(0, 30)}...)`);
-      return this.cache.get(cacheKey)!.buffer;
-    }
-
-    logger.info(`[TTSService] Synthesizing speech (${cleanText.length} chars) via Edge TTS`);
-
-    let audioBuffer: Buffer | null = null;
-    let contentType = 'audio/mpeg';
-
     const voice = options.voice || 'ru-RU-DmitryNeural';
     const rate = options.rate || '-10%';
     const pitch = options.pitch || (voice === 'ru-RU-SvetlanaNeural' ? '-2Hz' : '-4Hz');
 
-    // Попытка 1: MsEdgeTTS library (WebSocket)
-    try {
-      audioBuffer = await this.synthesizeWithLibrary(cleanText, voice, rate, pitch);
-    } catch (err: any) {
-      logger.warn(`[TTSService] Library MsEdgeTTS failed: ${err?.message || err}. Trying direct fetch Edge TTS.`);
+    if (!cleanText) {
+      return isSelfTest ? this.generateSilentWav() : null;
     }
 
-    // Попытка 2: Прямой fetch-SSML к Edge TTS (отказоустойчивый REST)
+    const cacheKey = this.getCacheKey(cleanText, voice);
+
+    // 1. Проверка кэша
+    if (this.cache.has(cacheKey)) {
+      logger.info(`[TTSService] Cache hit for key: ${cacheKey.slice(0, 8)}... (text: ${cleanText.slice(0, 30)}...)`);
+      const cached = this.cache.get(cacheKey)!.buffer;
+      if (isSelfTest) {
+        logger.info("🎙️ [TTS] active engine: gemini");
+      }
+      return cached;
+    }
+
+    logger.info(`[TTSService] Synthesizing speech (${cleanText.length} chars) via Cascade (Primary: Gemini TTS)`);
+
+    let audioBuffer: Buffer | null = null;
+    let contentType = 'audio/mpeg';
+
+    // Попытка 1: Gemini TTS
+    try {
+      audioBuffer = await this.callGeminiTTS(cleanText);
+      if (audioBuffer) {
+        contentType = 'audio/wav';
+        if (isSelfTest) {
+          logger.info("🎙️ [TTS] active engine: gemini");
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[TTSService] Gemini TTS failed: ${err?.message || err}`);
+    }
+
+    // Попытка 2: MsEdgeTTS library (WebSocket)
+    if (!audioBuffer) {
+      try {
+        audioBuffer = await this.synthesizeWithLibrary(cleanText, voice, rate, pitch);
+        if (audioBuffer) {
+          contentType = 'audio/mpeg';
+          if (isSelfTest) {
+            logger.info("🎙️ [TTS] active engine: edge");
+          }
+        }
+      } catch (err: any) {
+        logger.warn(`[TTSService] Library MsEdgeTTS failed: ${err?.message || err}. Trying direct fetch Edge TTS.`);
+      }
+    }
+
+    // Попытка 3: Прямой fetch-SSML к Edge TTS (отказоустойчивый REST)
     if (!audioBuffer) {
       try {
         audioBuffer = await this.synthesizeEdgeDirect(cleanText, voice, rate, pitch);
+        if (audioBuffer) {
+          contentType = 'audio/mpeg';
+          if (isSelfTest) {
+            logger.info("🎙️ [TTS] active engine: edge");
+          }
+        }
       } catch (err: any) {
         logger.error(`[TTSService] Direct fetch Edge TTS failed: ${err?.message || err}`);
       }
     }
 
-    // Попытка 3: Абсолютный офлайн-фолбэк (валидный WAV)
+    // Попытка 4: Абсолютный офлайн-фолбэк (валидный WAV) ТОЛЬКО для self-test
     if (!audioBuffer) {
-      logger.warn('[TTSService] All Edge TTS attempts failed. Generating offline fallback tone.');
-      audioBuffer = this.generateFallbackToneWav(cleanText);
-      contentType = 'audio/wav';
+      if (isSelfTest) {
+        logger.warn('[TTSService] All Edge TTS attempts failed. Generating offline fallback tone.');
+        audioBuffer = this.generateFallbackToneWav(cleanText);
+        contentType = 'audio/wav';
+      } else {
+        logger.warn('[TTSService] All TTS engines failed for user. No fallback tone generated.');
+        return null;
+      }
     }
 
     // Сохранение в кэш
     this.cache.set(cacheKey, { contentType, buffer: audioBuffer });
     return audioBuffer;
+  }
+
+  /**
+   * Метод Gemini TTS для синтеза речи
+   */
+  private async callGeminiTTS(text: string): Promise<Buffer | null> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      logger.warn('⚠️ [TTS] callGeminiTTS failed: GEMINI_API_KEY is not defined.');
+      return null;
+    }
+
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey });
+      const models = ['gemini-2.5-flash-preview-tts', 'gemini-2.0-flash-preview-tts'];
+
+      for (const model of models) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: text,
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voice: {
+                  name: 'Kore'
+                }
+              }
+            } as any
+          });
+
+          const base64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (base64) {
+            const pcmBuffer = Buffer.from(base64, 'base64');
+            const wavHeader = this.getWavHeader(pcmBuffer.length, 24000, 1, 16);
+            logger.info('🎙️ [TTS] gemini engine ok');
+            return Buffer.concat([wavHeader, pcmBuffer]);
+          }
+        } catch (modelErr: any) {
+          logger.warn(`⚠️ [TTS] Gemini TTS model ${model} attempt failed: ${modelErr?.message || modelErr}`);
+        }
+      }
+    } catch (err: any) {
+      logger.error(`❌ [TTS] callGeminiTTS error: ${err?.message || err}`);
+    }
+
+    return null;
   }
 
   /**
@@ -148,8 +232,8 @@ export class TTSService {
     return Buffer.concat(audioChunks);
   }
 
-  private getCacheKey(text: string, options: any): string {
-    const payload = `${text}_${JSON.stringify(options || {})}`;
+  private getCacheKey(text: string, voice: string): string {
+    const payload = text + voice + 'gemini';
     return crypto.createHash('md5').update(payload).digest('hex');
   }
 
@@ -369,19 +453,20 @@ async function synthesizeWithOpenAI(text: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-export async function synthesizeForChat(chatId: string | number | null | undefined, text: string): Promise<Buffer> {
+export async function synthesizeForChat(chatId: string | number | null | undefined, text: string): Promise<Buffer | null> {
   const cleanId = chatId ? String(chatId) : 'default';
+  const isSelfTest = (chatId === "test_self_check_chat");
 
   // Шаг 1. cleanForVoice
   const cleaned = cleanForVoice(text);
   if (!cleaned.trim()) {
-    return ttsService.synthesize("");
+    return ttsService.synthesize("", {}, isSelfTest);
   }
 
   // Шаг 2. normalizeForVoice (числа словами)
   const normalized = normalizeForVoice(cleaned);
   if (!normalized.trim()) {
-    return ttsService.synthesize("");
+    return ttsService.synthesize("", {}, isSelfTest);
   }
 
   let engine = 'Edge';
@@ -425,7 +510,7 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
       
       console.log('🎭 [Literary] engine=' + engine + ' пауз=' + pauses + ' чанков=' + n);
       
-      audioBuffer = await ttsService.synthesize(textPausesStr, { voice, rate, pitch });
+      audioBuffer = await ttsService.synthesize(textPausesStr, { voice, rate, pitch }, isSelfTest);
     } catch (fallbackErr: any) {
       logger.error(`❌ [synthesizeForChat] Literary Edge TTS attempt failed: ${fallbackErr.message || fallbackErr}`);
     }
@@ -435,5 +520,5 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
     return audioBuffer;
   }
 
-  return ttsService.synthesize(normalized);
+  return ttsService.synthesize(normalized, {}, isSelfTest);
 }

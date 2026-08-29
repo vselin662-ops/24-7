@@ -286,6 +286,18 @@ async function startServer() {
       }
     );
 
+    // Start Reminder Scheduler
+    setInterval(async () => {
+      try {
+        const { checkAndSendReminders } = await import("./src/services/ReminderService");
+        await checkAndSendReminders(async (chatId, text) => {
+          await modernMaxAdapter.sendMessage(chatId, text);
+        });
+      } catch (err) {
+        logger.error("❌ Error running checkAndSendReminders:", err);
+      }
+    }, 20000);
+
     // Run Voice Synthesis Self-Test
     (async () => {
       try {
@@ -294,7 +306,11 @@ async function startServer() {
         const testChatId = "test_self_check_chat";
         const testText = "Здравствуйте, я Селин, ваш помощник";
         const audioBuffer = await synthesizeForChat(testChatId, testText);
-        logger.info(`🧪 [Voice Self-Test] Successfully synthesized "${testText}" for chat ${testChatId}. Buffer size: ${audioBuffer.length} bytes.`);
+        if (audioBuffer) {
+          logger.info(`🧪 [Voice Self-Test] Successfully synthesized "${testText}" for chat ${testChatId}. Buffer size: ${audioBuffer.length} bytes.`);
+        } else {
+          logger.error(`❌ [Voice Self-Test] Voice self-test returned null Buffer.`);
+        }
       } catch (err: any) {
         logger.error(`❌ [Voice Self-Test] Voice self-test failed: ${err.message || err}`);
       }
