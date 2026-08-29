@@ -112,21 +112,32 @@ export async function callVision(userText: string, dataUrl: string): Promise<str
     },
   ];
 
-  const messages: any = [{
-    role: 'user',
-    content: [
-      {
-        type: 'text',
-        text: userText || 'Подробно опиши, что на скриншоте. Если это код или логи — проанализируй их и предложи решение.'
-      },
-      {
-        type: 'image_url',
-        image_url: {
-          url: dataUrl
+  const systemPrompt = 'Ты — Selin AI. Подробно и дружелюбно опиши НА РУССКОМ, что видишь на изображении. Если это скриншот с кодом или ошибкой — объясни суть и решение. Отвечай НЕ длиннее 2500 символов.';
+  const promptText = userText && userText.trim()
+    ? userText.trim()
+    : 'Что изображено на этой картинке? Подробно опиши.';
+
+  const messages: any = [
+    {
+      role: 'system',
+      content: systemPrompt
+    },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: promptText
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: dataUrl
+          }
         }
-      }
-    ]
-  }];
+      ]
+    }
+  ];
 
   for (const p of visionProviders) {
     const keyVal = process.env[p.key];
@@ -154,7 +165,7 @@ export async function callVision(userText: string, dataUrl: string): Promise<str
 
       const response = completion.choices[0]?.message?.content;
       if (response && typeof response === 'string' && response.trim()) {
-        console.log('👁️ [Vision] Ответ дал: ' + p.name);
+        console.log('👁️ [Vision] engine=' + p.name);
         return response.trim();
       }
     } catch (err: any) {

@@ -12,7 +12,7 @@ import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
-const MAX_TEXT_LIMIT = 8000;
+const MAX_TEXT_LIMIT = 3800;
 
 export function getImageMimeType(buf: Buffer, contentTypeHeader?: string | null): string {
   if (contentTypeHeader && contentTypeHeader.startsWith('image/')) {
@@ -54,6 +54,46 @@ export function cleanForMax(text: string): string {
     .trim();
 }
 
+export function parseImageGenerationPrompt(text: string): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower.startsWith('/draw')) {
+    const prompt = trimmed.substring(5).trim();
+    return prompt || 'красивое изображение';
+  }
+
+  const triggers = [
+    'сгенерируй фото',
+    'сгенерируй картинку',
+    'сгенерируй изображение',
+    'покажи картинку',
+    'покажи фото',
+    'нарисуй мне',
+    'нарисуй'
+  ];
+
+  for (const trig of triggers) {
+    if (lower.startsWith(trig)) {
+      let prompt = trimmed.substring(trig.length).trim();
+      prompt = prompt.replace(/^[,:\s-]+/, '').trim();
+      return prompt || 'красивое изображение';
+    }
+  }
+
+  for (const trig of triggers) {
+    const idx = lower.indexOf(trig);
+    if (idx > 0 && /\s/.test(lower[idx - 1])) {
+      let prompt = trimmed.substring(idx + trig.length).trim();
+      prompt = prompt.replace(/^[,:\s-]+/, '').trim();
+      if (prompt) return prompt;
+    }
+  }
+
+  return null;
+}
+
 export { numberToWords, cardinal, ordinalM, ordinalF, ordinalGenM, ordinalPrepM, yearToSpeech, числительное, normalizeBiblicalReferences, normalizeYears, normalizeTimeOfDay, normalizeHours12 } from "../utils/voiceNormalizer";
 import { normalizeForVoice as normalizeVoiceUtil } from "../utils/voiceNormalizer";
 
@@ -89,20 +129,65 @@ export function normalizeForVoice(text: string): string {
   return normalizeVoiceUtil(pre);
 }
 
-export function splitTextSmart(text: string, maxLen: number): string[] {
-  const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
+export function splitTextSmart(text: string, maxLen: number = 3800): string[] {
+  if (!text || text.length <= maxLen) return text ? [text] : [];
+  
   const chunks: string[] = [];
-  let current = '';
-  for (const s of sentences) {
-    if ((current + s).length > maxLen && current) {
-      chunks.push(current.trim());
-      current = s;
+  let remaining = text.trim();
+  
+  while (remaining.length > maxLen) {
+    const searchWindow = remaining.substring(0, maxLen);
+    let splitIdx = -1;
+
+    // 1. Ищем перенос строки
+    const lastNewline = searchWindow.lastIndexOf('\n');
+    if (lastNewline > maxLen * 0.4) {
+      splitIdx = lastNewline + 1;
     } else {
-      current += s;
+      // 2. Ищем конец предложения (.!? с пробелом или переносом строки)
+      const lastSentence = Math.max(
+        searchWindow.lastIndexOf('. '),
+        searchWindow.lastIndexOf('! '),
+        searchWindow.lastIndexOf('? '),
+        searchWindow.lastIndexOf('.\n'),
+        searchWindow.lastIndexOf('!\n'),
+        searchWindow.lastIndexOf('?\n')
+      );
+      if (lastSentence > maxLen * 0.4) {
+        splitIdx = lastSentence + 2;
+      } else {
+        // 3. Ищем просто знак препинания
+        const lastPunct = Math.max(
+          searchWindow.lastIndexOf('.'),
+          searchWindow.lastIndexOf('!'),
+          searchWindow.lastIndexOf('?'),
+          searchWindow.lastIndexOf(';')
+        );
+        if (lastPunct > maxLen * 0.4) {
+          splitIdx = lastPunct + 1;
+        } else {
+          // 4. Ищем пробел
+          const lastSpace = searchWindow.lastIndexOf(' ');
+          if (lastSpace > maxLen * 0.4) {
+            splitIdx = lastSpace + 1;
+          } else {
+            // 5. Жесткий срез
+            splitIdx = maxLen;
+          }
+        }
+      }
     }
+
+    const chunk = remaining.substring(0, splitIdx).trim();
+    if (chunk) chunks.push(chunk);
+    remaining = remaining.substring(splitIdx).trim();
   }
-  if (current.trim()) chunks.push(current.trim());
-  return chunks.map(c => c.length > maxLen ? c.substring(0, maxLen) : c);
+
+  if (remaining.trim()) {
+    chunks.push(remaining.trim());
+  }
+
+  return chunks;
 }
 
 export class MaxAdapter {
@@ -209,20 +294,26 @@ export class MaxAdapter {
     const trimmedText = text.trim();
 
     if (trimmedText.length > MAX_TEXT_LIMIT) {
-      const chunks = splitTextSmart(trimmedText, MAX_TEXT_LIMIT);
-      console.log('✂️ [MAX] длина ' + trimmedText.length + ', частей ' + chunks.length);
+      const allChunks = splitTextSmart(trimmedText, MAX_TEXT_LIMIT);
+      const chunks = allChunks.slice(0, 4);
+      console.log(`✂️ [MAX] long text chunked: ${chunks.length} parts`);
       let lastMsg: unknown = null;
-      for (const chunk of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const currentExtra = (i === 0) ? extra : undefined;
         try {
-          lastMsg = await this.bot.api.sendMessageToChat(numericId, chunk as any, extra);
+          lastMsg = await this.bot.api.sendMessageToChat(numericId, chunk as any, currentExtra);
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           logger.error("❌ [MaxAdapter] Max send failed in safeSendMessageToChat", {
             chatId: numericId,
-            message: errorMsg
+            message: errorMsg,
+            chunkIndex: i
           });
         }
-        await new Promise(r => setTimeout(r, 600));
+        if (i < chunks.length - 1) {
+          await new Promise(r => setTimeout(r, 600));
+        }
       }
       return lastMsg;
     }
@@ -306,6 +397,178 @@ export class MaxAdapter {
       logger.error(`❌ [MaxAdapter] sendSingleAudioBuffer error: ${err.message || err}`);
     }
     return false;
+  }
+
+  /**
+   * Загрузка буфера изображения в MAX Storage
+   */
+  private async uploadImageBufferToMax(imageBuffer: Buffer, mimeType: string = 'image/png'): Promise<string | null> {
+    if (!imageBuffer || imageBuffer.length === 0 || !this.bot) return null;
+    try {
+      const maxToken = this.token || process.env.MAX_BOT_TOKEN;
+      const initRes = await fetch('https://platform-api.max.ru/uploads?type=image', {
+        method: 'POST',
+        headers: { 'Authorization': maxToken || '' },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      if (initRes.ok) {
+        const initData: any = await initRes.json();
+        const uploadToken = initData?.token;
+        const uploadUrl = initData?.url;
+
+        if (uploadUrl) {
+          const form = new FormData();
+          const ext = mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'png';
+          const fileBlob = new Blob([imageBuffer], { type: mimeType });
+          form.append('data', fileBlob, `image.${ext}`);
+
+          const uploadRes = await fetch(uploadUrl, {
+            method: 'POST',
+            body: form,
+            signal: AbortSignal.timeout(25000)
+          });
+
+          if (uploadRes.ok) {
+            const uploadJson: any = await uploadRes.json().catch(() => null);
+            const tokenToUse = uploadJson?.token || uploadToken;
+            return tokenToUse || null;
+          } else {
+            logger.warn(`⚠️ [MaxAdapter] Upload image to MAX storage failed with status ${uploadRes.status}`);
+          }
+        }
+      } else {
+        logger.warn(`⚠️ [MaxAdapter] Failed to init MAX image storage upload: ${initRes.status}`);
+      }
+    } catch (err: any) {
+      logger.error(`❌ [MaxAdapter] uploadImageBufferToMax error: ${err.message || err}`);
+    }
+    return null;
+  }
+
+  /**
+   * Генерация фото / изображений по запросу пользователя (Gemini Image Generation / Pollinations.ai)
+   */
+  public async generateAndSendImage(cleanId: string, userPrompt: string, isVoiceInput: boolean = false): Promise<boolean> {
+    const enrichedPrompt = `${userPrompt}, high quality, detailed`;
+    const caption = `🎨 Готово! ${userPrompt}`;
+    const cleanIdStr = String(cleanId).replace(/^[a-z_]+/, '');
+    const numericId = parseInt(cleanIdStr, 10);
+
+    // 1. Попытка через Gemini Image Generation (если доступен ключ и медиа-загрузка)
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (geminiKey) {
+      const models = ['gemini-2.5-flash-image', 'gemini-2.0-flash-preview-image-generation'];
+      for (const model of models) {
+        try {
+          const { GoogleGenAI } = await import('@google/genai');
+          const ai = new GoogleGenAI({ apiKey: geminiKey });
+          const response = await ai.models.generateContent({
+            model,
+            contents: enrichedPrompt,
+            config: {
+              responseModalities: ['IMAGE', 'TEXT'],
+            } as any
+          });
+
+          const candidates = response?.candidates || [];
+          let imageBuffer: Buffer | null = null;
+          let mimeType = 'image/png';
+
+          for (const candidate of candidates) {
+            for (const part of candidate?.content?.parts || []) {
+              if (part?.inlineData?.data) {
+                mimeType = part.inlineData.mimeType || 'image/png';
+                imageBuffer = Buffer.from(part.inlineData.data, 'base64');
+                break;
+              }
+            }
+            if (imageBuffer) break;
+          }
+
+          if (imageBuffer && imageBuffer.length > 0) {
+            console.log('🎨 [ImageGen] engine=gemini');
+            if (this.bot && !isNaN(numericId) && numericId > 0) {
+              const uploadToken = await this.uploadImageBufferToMax(imageBuffer, mimeType);
+              if (uploadToken) {
+                await this.bot.api.sendMessageToChat(numericId, caption, {
+                  attachments: [{
+                    type: 'image',
+                    payload: {
+                      token: uploadToken
+                    }
+                  }] as any
+                });
+                if (isVoiceInput) {
+                  await this.synthesizeAndSendVoice(cleanId, caption);
+                }
+                return true;
+              }
+            }
+          }
+        } catch (geminiErr: any) {
+          logger.warn(`⚠️ [ImageGen] Gemini model ${model} failed: ${geminiErr?.message || geminiErr}`);
+        }
+      }
+    }
+
+    // 2. Fallback: Pollinations.ai (даёт готовый URL без ключа)
+    try {
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enrichedPrompt)}?width=1024&height=1024&nologo=true`;
+      console.log('🎨 [ImageGen] engine=pollinations');
+
+      // Попытка скачать буфер и загрузить в MAX
+      let uploaded = false;
+      try {
+        const pRes = await fetch(pollinationsUrl, { signal: AbortSignal.timeout(15000) });
+        if (pRes.ok) {
+          const pBuf = Buffer.from(await pRes.arrayBuffer());
+          const uploadToken = await this.uploadImageBufferToMax(pBuf, 'image/jpeg');
+          if (uploadToken && this.bot && !isNaN(numericId) && numericId > 0) {
+            await this.bot.api.sendMessageToChat(numericId, caption, {
+              attachments: [{
+                type: 'image',
+                payload: {
+                  token: uploadToken
+                }
+              }] as any
+            });
+            uploaded = true;
+          }
+        }
+      } catch (uploadFallbackErr: any) {
+        logger.warn(`⚠️ [ImageGen] Pollinations buffer upload fallback: ${uploadFallbackErr?.message || uploadFallbackErr}`);
+      }
+
+      // Если прямая загрузка буфера не сработала — отправляем через URL attachment
+      if (!uploaded) {
+        const extra = {
+          attachments: [
+            {
+              type: 'image',
+              payload: {
+                url: pollinationsUrl
+              }
+            }
+          ]
+        };
+        await this.safeSendMessageToChat(cleanId, caption, extra);
+      }
+
+      if (isVoiceInput) {
+        await this.synthesizeAndSendVoice(cleanId, caption);
+      }
+      return true;
+    } catch (pollErr: any) {
+      logger.error(`❌ [ImageGen] Pollinations failed: ${pollErr?.message || pollErr}`);
+      const errMsg = 'К сожалению, не удалось сгенерировать изображение. Попробуйте еще раз позже.';
+      if (isVoiceInput) {
+        await this.synthesizeAndSendVoice(cleanId, errMsg);
+      } else {
+        await this.safeSendMessageToChat(cleanId, errMsg);
+      }
+      return false;
+    }
   }
 
   /**
@@ -824,6 +1087,13 @@ export class MaxAdapter {
         } else {
           await this.safeSendMessageToChat(cleanId, reply);
         }
+        return res.status(200).send('ok');
+      }
+
+      // Генерация фото / изображений (триггеры: /draw, нарисуй, сгенерируй фото, сгенерируй картинку, покажи картинку)
+      const imgPrompt = parseImageGenerationPrompt(text);
+      if (imgPrompt) {
+        await this.generateAndSendImage(cleanId, imgPrompt, isVoiceInput);
         return res.status(200).send('ok');
       }
 
