@@ -83,6 +83,8 @@ const BASE_PRICES: Record<string, { price: number; unit: string }> = {
   'кофе': { price: 250, unit: 'шт' }
 };
 
+const lastUserCartLists = new Map<string, string>();
+
 interface CartItem {
   name: string;
   qty: string | number;
@@ -93,7 +95,12 @@ interface LLMCartResponse {
   note?: string;
 }
 
-export async function buildCart(message: string, profile: UserProfile | null): Promise<{ text: string; totalSum: number; extra: any }> {
+export async function buildCart(
+  message: string,
+  profile: UserProfile | null,
+  chatId?: string | number
+): Promise<{ text: string; totalSum: number; extra: any; rawListText?: string }> {
+  const cleanId = chatId ? String(chatId).replace(/^[a-z_]+/, '') : 'default';
   const profileStr = profile ? JSON.stringify(profile) : 'нет данных';
 
   const systemPrompt = `Составь список продуктов для запроса пользователя с учётом его профиля: ${profileStr}.
@@ -177,6 +184,9 @@ export async function buildCart(message: string, profile: UserProfile | null): P
       lines.push(`- ${item.name} (${item.qty}) — ${itemCost}₽`);
     }
 
+    const rawListOnly = lines.map(l => l.replace(/ — \d+₽$/, '')).join('\n');
+    lastUserCartLists.set(cleanId, rawListOnly || lines.join('\n'));
+
     let responseText = `🛒 **Список продуктов по вашему запросу**:\n\n${lines.join('\n')}\n\n`;
     responseText += `📊 **Итоговая смета**: ≈ ${totalSum}₽ (смета приблизительная)\n`;
     if (parsed.note) {
@@ -193,6 +203,13 @@ export async function buildCart(message: string, profile: UserProfile | null): P
                 { type: 'link', text: '🏪 Пятёрочка', url: 'https://5ka.ru' },
                 { type: 'link', text: '🥑 ВкусВилл', url: 'https://vkusvill.ru' },
                 { type: 'link', text: '🛒 Перекрёсток', url: 'https://www.perekrestok.ru' }
+              ],
+              [
+                { type: 'link', text: '🚕 Купер', url: 'https://kuper.ru' },
+                { type: 'link', text: '🥦 Лавка', url: 'https://lavka.yandex.ru' }
+              ],
+              [
+                { type: 'callback', text: '📋 Скопировать список', payload: 'copy_cart', callback_data: 'copy_cart' }
               ]
             ]
           }
@@ -200,7 +217,7 @@ export async function buildCart(message: string, profile: UserProfile | null): P
       ]
     };
 
-    return { text: responseText, totalSum, extra };
+    return { text: responseText, totalSum, extra, rawListText: rawListOnly };
   } catch (err) {
     logger.error("❌ [CartService] Error building cart:", err);
     return {
@@ -216,6 +233,13 @@ export async function buildCart(message: string, profile: UserProfile | null): P
                   { type: 'link', text: '🏪 Пятёрочка', url: 'https://5ka.ru' },
                   { type: 'link', text: '🥑 ВкусВилл', url: 'https://vkusvill.ru' },
                   { type: 'link', text: '🛒 Перекрёсток', url: 'https://www.perekrestok.ru' }
+                ],
+                [
+                  { type: 'link', text: '🚕 Купер', url: 'https://kuper.ru' },
+                  { type: 'link', text: '🥦 Лавка', url: 'https://lavka.yandex.ru' }
+                ],
+                [
+                  { type: 'callback', text: '📋 Скопировать список', payload: 'copy_cart', callback_data: 'copy_cart' }
                 ]
               ]
             }
@@ -224,4 +248,9 @@ export async function buildCart(message: string, profile: UserProfile | null): P
       }
     };
   }
+}
+
+export function getLastCartList(chatId: string | number): string | null {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  return lastUserCartLists.get(cleanId) || null;
 }

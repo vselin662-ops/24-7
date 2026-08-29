@@ -1,12 +1,12 @@
 import { sqliteDb } from "../../db";
 import { logger } from "../logger";
 
-export const PLANS: Record<string, { name: string; price: number }> = {
-  plan: { name: 'План победы', price: 299 },
-  premium: { name: 'Премиум', price: 999 },
-  svet: { name: 'Свет', price: 199 },
-  blagodat: { name: 'Благодать', price: 399 },
-  year: { name: 'Год', price: 2999 }
+export const PLANS: Record<string, { name: string; price: number; days: number }> = {
+  svet: { name: 'Свет', price: 199, days: 30 },
+  blagodat: { name: 'Благодать', price: 399, days: 30 },
+  year: { name: 'Год', price: 2999, days: 365 },
+  plan: { name: 'Свет', price: 199, days: 30 },
+  premium: { name: 'Благодать', price: 399, days: 30 }
 };
 
 // SQLite таблица subscriptions

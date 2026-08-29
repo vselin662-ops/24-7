@@ -994,6 +994,45 @@ export class MaxAdapter {
         }
       }
 
+      // Если прикреплена картинка и текст содержит подтверждение оплаты (или скриншот чека)
+      const isPaymentProof = hasImage && (
+        text.toLowerCase().includes('оплачен') ||
+        text.toLowerCase().includes('оплатил') ||
+        text.toLowerCase().includes('чек') ||
+        text.toLowerCase().includes('сбп')
+      );
+
+      if (isPaymentProof) {
+        const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+        const lower = text.toLowerCase().trim();
+        let detectedTariff = 'Свет';
+        if (lower.includes('год') || lower.includes('year') || lower.includes('2999')) {
+          detectedTariff = 'Год';
+        } else if (lower.includes('благодат') || lower.includes('blagodat') || lower.includes('399') || lower.includes('prem')) {
+          detectedTariff = 'Благодать';
+        } else if (lower.includes('свет') || lower.includes('svet') || lower.includes('199')) {
+          detectedTariff = 'Свет';
+        }
+
+        const { savePaymentRequest } = await import("../fintech/payments");
+        savePaymentRequest(cleanId, detectedTariff, true);
+
+        // Уведомление владельцу
+        const ownerId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
+        if (ownerId) {
+          const ownerMsg = `💳 Заявка: chat=${cleanId}, тариф=${detectedTariff}. Активация: команда активировать ${cleanId} ${detectedTariff}`;
+          await this.safeSendMessageToChat(ownerId, ownerMsg);
+        }
+
+        const userReply = `✅ Заявка на оплату тарифа "${detectedTariff}" принята со скриншотом чека! Мы проверим перевод по СБП и активируем подписку в ближайшее время.`;
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, userReply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, userReply);
+        }
+        return res.status(200).send('ok');
+      }
+
       // Если пришла картинка — скачиваем и запускаем callVision
       if (hasImage && imageUrl) {
         const cleanId = String(chatId).replace(/^[a-z_]+/, '');
@@ -1099,9 +1138,111 @@ export class MaxAdapter {
 
       // === БЛОК 4 & 5 & 3: КОМАНДЫ, СБОР ПРОДУКТОВ, ОНБОРДИНГ ===
 
-      // 1. /subscribe или 'подписка'
-      if (lowerText === '/subscribe' || lowerText === 'подписка') {
-        const reply = `Тарифы Selin AI:\n\n💡 Свет — 199₽/мес (безлимитные диалоги)\n🌟 Благодать — 399₽/мес (+приоритет и зрение без лимитов)\n📅 Год — 2999₽/год (максимальная выгода)\n\nВыберите подходящий тариф для оплаты:`;
+      // 0.1 Команда владельца 'активировать <chat_id> <tariff>'
+      const activateMatch = text.trim().match(/^активировать\s+(\S+)(?:\s+(.+))?/i) || text.trim().match(/^\/activate\s+(\S+)(?:\s+(.+))?/i);
+      if (activateMatch) {
+        const targetChatId = activateMatch[1].replace(/^[a-z_]+/, '');
+        const requestedTariff = (activateMatch[2] || 'Свет').trim();
+        const { activateManualPayment } = await import("../fintech/payments");
+        const actResult = activateManualPayment(targetChatId, requestedTariff);
+
+        // Отправка подтверждения пользователю
+        const userMsg = `✅ Оплата получена! Подписка ${actResult.tariffName} активна до ${actResult.dateStr}. Чек пришлю отдельным сообщением.`;
+        await this.safeSendMessageToChat(targetChatId, userMsg);
+
+        // Подтверждение владельцу
+        const ownerAck = `✅ Подписка "${actResult.tariffName}" для chat_id=${targetChatId} успешно активирована до ${actResult.dateStr}. Статус заявки переведён в 'done'.`;
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, ownerAck);
+        } else {
+          await this.safeSendMessageToChat(cleanId, ownerAck);
+        }
+        return res.status(200).send('ok');
+      }
+
+      // 0.2 Команда / callback '📋 Скопировать список'
+      if (lowerText === 'copy_cart' || lowerText === 'скопировать список' || lowerText === '/copy_cart' || lowerText.includes('скопировать список')) {
+        const { getLastCartList } = await import("../services/CartService");
+        const lastList = getLastCartList(cleanId);
+        let copyReply = '';
+        if (lastList) {
+          copyReply = `📋 **Список продуктов для удобного копирования**:\n\n${lastList}`;
+        } else {
+          copyReply = 'Список продуктов пока не составлен. Напишите «Собери продукты на борщ», чтобы сформировать список!';
+        }
+        await this.safeSendMessageToChat(cleanId, copyReply);
+        return res.status(200).send('ok');
+      }
+
+      // 0.3 Команда 'оплачено' / 'оплатил' / 'оплатила' (без фото или при отдельном сообщении)
+      const isPaidTrigger = lowerText === 'оплачено' || lowerText.startsWith('оплачено') ||
+                            lowerText === 'оплатил' || lowerText.startsWith('оплатил') ||
+                            lowerText === 'оплатила' || lowerText.startsWith('оплатила') ||
+                            lowerText === '/paid' || lowerText === 'оплата';
+      if (isPaidTrigger) {
+        let detectedTariff = 'Свет';
+        if (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('2999')) {
+          detectedTariff = 'Год';
+        } else if (lowerText.includes('благодат') || lowerText.includes('blagodat') || lowerText.includes('399') || lowerText.includes('prem')) {
+          detectedTariff = 'Благодать';
+        } else if (lowerText.includes('свет') || lowerText.includes('svet') || lowerText.includes('199')) {
+          detectedTariff = 'Свет';
+        }
+
+        const { savePaymentRequest } = await import("../fintech/payments");
+        savePaymentRequest(cleanId, detectedTariff, false);
+
+        // Уведомление владельцу
+        const ownerChatId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
+        if (ownerChatId) {
+          const ownerMsg = `💳 Заявка: chat=${cleanId}, тариф=${detectedTariff}. Активация: команда активировать ${cleanId} ${detectedTariff}`;
+          await this.safeSendMessageToChat(ownerChatId, ownerMsg);
+        }
+
+        const userReply = `✅ Заявка на оплату тарифа "${detectedTariff}" принята! Мы проверим перевод по СБП и активируем подписку в ближайшее время.`;
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, userReply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, userReply);
+        }
+        return res.status(200).send('ok');
+      }
+
+      // 0.4 Callbacks кнопок оплаты 'pay:<tariff>'
+      if (lowerText.startsWith('pay:') || lowerText.startsWith('pay_')) {
+        const planKey = lowerText.replace(/^pay[:_]/, '').trim() || 'svet';
+        const { createPayment } = await import("../fintech/payments");
+        const payRes = await createPayment(cleanId, planKey);
+        if (payRes.mode === 'auto' && payRes.url) {
+          const autoExtra = {
+            attachments: [
+              {
+                type: 'inline_keyboard',
+                payload: {
+                  buttons: [
+                    [
+                      { type: 'link', text: '💳 Перейти к оплате', url: payRes.url }
+                    ]
+                  ]
+                }
+              }
+            ]
+          };
+          await this.safeSendMessageToChat(cleanId, `Ссылка для оплаты тарифа:\n${payRes.url}`, autoExtra);
+        } else {
+          const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
+          const { PLANS } = await import("../fintech/subscriptions");
+          const planObj = PLANS[planKey] || PLANS.svet;
+          const manualText = `Выбран тариф "${planObj.name}" (${planObj.price}₽).\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`;
+          await this.safeSendMessageToChat(cleanId, manualText);
+        }
+        return res.status(200).send('ok');
+      }
+
+      // 1. /subscribe или 'подписка' или 'тарифы'
+      if (lowerText === '/subscribe' || lowerText === 'подписка' || lowerText === 'тарифы' || lowerText === '/plans' || lowerText === '/tariffs') {
+        const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
+        const reply = `Тарифы Selin AI:\n\n💡 Свет — 199₽ (безлимитные диалоги)\n🌟 Благодать — 399₽ (+приоритет и зрение без лимитов)\n📅 Год — 2999₽ (максимальная выгода)\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`;
         const extra = {
           attachments: [
             {
@@ -1221,7 +1362,7 @@ export class MaxAdapter {
         const { getProfile } = await import("../services/ProfileService");
         const { buildCart } = await import("../services/CartService");
         const profile = await getProfile(cleanId);
-        const cartResult = await buildCart(text, profile);
+        const cartResult = await buildCart(text, profile, cleanId);
         const cartKeyboardExtra = cartResult.extra || {
           attachments: [
             {
@@ -1232,6 +1373,13 @@ export class MaxAdapter {
                     { type: 'link', text: '🏪 Пятёрочка', url: 'https://5ka.ru' },
                     { type: 'link', text: '🥑 ВкусВилл', url: 'https://vkusvill.ru' },
                     { type: 'link', text: '🛒 Перекрёсток', url: 'https://www.perekrestok.ru' }
+                  ],
+                  [
+                    { type: 'link', text: '🚕 Купер', url: 'https://kuper.ru' },
+                    { type: 'link', text: '🥦 Лавка', url: 'https://lavka.yandex.ru' }
+                  ],
+                  [
+                    { type: 'callback', text: '📋 Скопировать список', payload: 'copy_cart', callback_data: 'copy_cart' }
                   ]
                 ]
               }

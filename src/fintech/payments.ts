@@ -1,8 +1,8 @@
 import { sqliteDb } from "../../db";
 import { logger } from "../logger";
-import { PLANS } from "./subscriptions";
+import { PLANS, activateSubscription } from "./subscriptions";
 
-// SQLite таблица payments
+// SQLite таблица payments и payment_requests
 try {
   sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS payments (
@@ -13,9 +13,19 @@ try {
       status TEXT,
       created_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS payment_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      tariff TEXT NOT NULL,
+      screenshot_seen INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      status TEXT DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS idx_pay_req_chat ON payment_requests(chat_id, status);
   `);
 } catch (e) {
-  logger.warn('⚠️ [Fintech] Payments table initialization note:', e);
+  logger.warn('⚠️ [Fintech] Payments tables initialization note:', e);
 }
 
 export interface PaymentResult {
@@ -24,17 +34,125 @@ export interface PaymentResult {
   text?: string;
 }
 
+export interface PaymentRequest {
+  id?: number;
+  chat_id: string;
+  tariff: string;
+  screenshot_seen: number;
+  created_at: string;
+  status: string;
+}
+
+export function savePaymentRequest(
+  chatId: string | number,
+  tariff: string = 'Свет',
+  screenshotSeen: boolean = false
+): PaymentRequest {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const nowStr = new Date().toISOString();
+  const seen = screenshotSeen ? 1 : 0;
+
+  // Normalize tariff name
+  let normTariff = tariff.trim();
+  const lower = normTariff.toLowerCase();
+  if (lower.includes('год') || lower.includes('year') || lower.includes('2999')) {
+    normTariff = 'Год';
+  } else if (lower.includes('благодат') || lower.includes('blagodat') || lower.includes('prem') || lower.includes('399')) {
+    normTariff = 'Благодать';
+  } else if (lower.includes('свет') || lower.includes('svet') || lower.includes('199') || lower.includes('plan')) {
+    normTariff = 'Свет';
+  } else if (!normTariff) {
+    normTariff = 'Свет';
+  }
+
+  try {
+    sqliteDb.prepare(`
+      INSERT INTO payment_requests (chat_id, tariff, screenshot_seen, created_at, status)
+      VALUES (?, ?, ?, ?, 'pending')
+    `).run(cleanId, normTariff, seen, nowStr);
+  } catch (err) {
+    logger.error('❌ Error saving payment request:', err);
+  }
+
+  return {
+    chat_id: cleanId,
+    tariff: normTariff,
+    screenshot_seen: seen,
+    created_at: nowStr,
+    status: 'pending'
+  };
+}
+
+export function activateManualPayment(
+  chatId: string | number,
+  tariff: string = 'Свет'
+): { success: boolean; tariffName: string; planKey: string; paidUntil: string; dateStr: string; days: number } {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const lower = (tariff || '').toLowerCase().trim();
+
+  let planKey = 'svet';
+  let tariffName = 'Свет';
+  let days = 30;
+
+  if (lower.includes('год') || lower.includes('year') || lower.includes('2999')) {
+    planKey = 'year';
+    tariffName = 'Год';
+    days = 365;
+  } else if (lower.includes('благодат') || lower.includes('blagodat') || lower.includes('prem') || lower.includes('399')) {
+    planKey = 'blagodat';
+    tariffName = 'Благодать';
+    days = 30;
+  } else {
+    planKey = 'svet';
+    tariffName = 'Свет';
+    days = 30;
+  }
+
+  const sub = activateSubscription(cleanId, planKey, days);
+
+  try {
+    sqliteDb.prepare(`
+      UPDATE payment_requests
+      SET status = 'done'
+      WHERE chat_id = ? AND status = 'pending'
+    `).run(cleanId);
+  } catch (err) {
+    logger.error('❌ Error updating payment_requests to done:', err);
+  }
+
+  const paidUntilDate = new Date(sub.paid_until);
+  const dateStr = paidUntilDate.toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+
+  return {
+    success: true,
+    tariffName,
+    planKey,
+    paidUntil: sub.paid_until,
+    dateStr,
+    days
+  };
+}
+
+export function getSubscribeText(): string {
+  const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
+  return `Тарифы Selin AI:\n\n💡 Свет — 199₽ (безлимитные диалоги)\n🌟 Благодать — 399₽ (+приоритет и зрение без лимитов)\n📅 Год — 2999₽ (максимальная выгода)\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`;
+}
+
 export async function createPayment(chatId: string | number, plan: string = 'plan'): Promise<PaymentResult> {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
   const normalizedPlan = (plan || 'plan').toLowerCase().trim();
-  const planKey = PLANS[normalizedPlan] ? normalizedPlan : (normalizedPlan.includes('prem') ? 'premium' : 'plan');
-  const planObj = PLANS[planKey] || PLANS.plan;
+  const planKey = PLANS[normalizedPlan] ? normalizedPlan : (normalizedPlan.includes('prem') || normalizedPlan.includes('благодат') ? 'blagodat' : (normalizedPlan.includes('год') || normalizedPlan.includes('year') ? 'year' : 'svet'));
+  const planObj = PLANS[planKey] || PLANS.svet;
   const amount = planObj.price;
   const paymentId = `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const nowStr = new Date().toISOString();
 
   const shopId = process.env.YOOKASSA_SHOP_ID;
-  const secretKey = process.env.YOOKASSA_SECRET_KEY;
+  const secretKey = process.env.YOOKASSA_SECRET_KEY || process.env.YOOKASSA_SECRET;
 
   if (shopId && secretKey) {
     try {
@@ -110,7 +228,7 @@ export async function createPayment(chatId: string | number, plan: string = 'pla
   }
 
   // Ручной режим по СБП
-  const sbpPhone = process.env.SBP_PHONE || 'укажи в настройках';
+  const sbpPhone = process.env.SBP_PHONE || '+7 (999) 000-00-00';
   try {
     sqliteDb.prepare(`
       INSERT OR REPLACE INTO payments (id, chat_id, plan, amount, status, created_at)
@@ -136,6 +254,6 @@ export async function createPayment(chatId: string | number, plan: string = 'pla
 
   return {
     mode: 'manual',
-    text: `Переведи ${amount} руб по СБП на номер ${sbpPhone} и отправь команду "оплачено ${planKey}".`
+    text: `Тариф "${planObj.name}" (${amount}₽).\n\nОплата по СБП на номер ${sbpPhone}. После перевода отправьте сюда слово ОПЛАЧЕНО и скриншот чека.`
   };
 }

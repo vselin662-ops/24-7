@@ -184,6 +184,16 @@ try {
       created_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS payment_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      tariff TEXT NOT NULL,
+      screenshot_seen INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      status TEXT DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS idx_pay_req_chat ON payment_requests(chat_id, status);
+
     -- Business Mentor Tables
     CREATE TABLE IF NOT EXISTS business_profile (
       tenant_id TEXT PRIMARY KEY,
