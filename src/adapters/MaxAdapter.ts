@@ -16,6 +16,8 @@ const MAX_TEXT_LIMIT = 3800;
 
 export const YOOMONEY_PAY_URL = 'https://yoomoney.ru/to/4100119243483246';
 
+export const VOICE_HOOK_TEXT = 'Здравствуйте! Я — Selin AI, профессиональный интеллектуальный ассистент, работающий 24 на 7, без выходных. Для каждого владельца я составляю личные дедлайны: утренний брифинг с планом дня, напоминания о важном и контроль ваших задач. Я подстраиваюсь под вас — запоминаю привычки, желания, ритм жизни, и с каждым днём становлюсь точнее. Я озвучиваю книги и Библию, понимаю фото и скриншоты, рисую картинки по словам, нахожу новости, цены и погоду в интернете в реальном времени. Соберу список продуктов под любое блюдо и посчитаю смету. Всё это — 199 рублей в месяц. Нажмите кнопку оплаты, пришлите скриншот — и я приступаю к работе с этой минуты.';
+
 export const SUBSCRIPTION_BUTTONS = [
   [
     { type: 'link', text: '💳 Поддержать — 199₽/мес', url: YOOMONEY_PAY_URL }
@@ -810,14 +812,28 @@ export class MaxAdapter {
   }
 
   public async sendWelcomeGreeting(cleanId: string): Promise<void> {
-    const voicePitch = 'Здравствуйте! Я — Selin AI, профессиональный интеллектуальный ассистент, работающий 24 на 7, без выходных. Для каждого владельца я составляю личные дедлайны: утренний брифинг с планом дня, напоминания о важном и контроль ваших задач. Я подстраиваюсь под вас — запоминаю привычки, желания, ритм жизни, и с каждым днём становлюсь точнее. Я озвучиваю книги и Библию, понимаю фото и скриншоты, рисую картинки по словам, нахожу новости, цены и погоду в интернете в реальном времени. Соберу список продуктов под любое блюдо и посчитаю смету. Всё это — 199 рублей в месяц. Нажмите кнопку оплаты, пришлите скриншот — и я приступаю к работе с этой минуты.';
+    const voicePitch = VOICE_HOOK_TEXT;
     const subscribeText = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
 
+    let voiceSent = false;
+    const numericId = parseInt(cleanId.replace(/\D/g, ''), 10);
+
     try {
-      await this.synthesizeAndSendVoice(cleanId, voicePitch);
-      console.log('🎙️ [MAX] голосовое приветствие отправлено chat=' + cleanId);
+      const audioBuffer = await synthesizeForChat(cleanId, voicePitch);
+      if (audioBuffer && audioBuffer.length > 0 && !isNaN(numericId) && numericId > 0) {
+        voiceSent = await this.sendSingleAudioBuffer(numericId, audioBuffer);
+      }
     } catch (err: any) {
-      logger.error('❌ [MAX] voice greeting error: ' + (err.message || err));
+      logger.error('❌ [StartHook] voice error: ' + (err.message || err));
+    }
+
+    if (voiceSent) {
+      console.log('🎙️ [StartHook] voice sent');
+      logger.info('🎙️ [StartHook] voice sent');
+    } else {
+      console.log('🎙️ [StartHook] voice failed → text');
+      logger.warn('🎙️ [StartHook] voice failed → text');
+      await this.safeSendMessageToChat(cleanId, voicePitch);
     }
 
     await this.safeSendMessageToChat(cleanId, subscribeText, SUBSCRIPTION_EXTRA);
@@ -893,7 +909,16 @@ export class MaxAdapter {
       if (callbackData) { text = String(callbackData).trim(); }
 
       const lowerTextForStartCheck = text.toLowerCase().trim();
-      const isStartCommand = isBotStarted || lowerTextForStartCheck === '/start' || lowerTextForStartCheck === 'начать' || lowerTextForStartCheck === 'старт' || lowerTextForStartCheck.startsWith('/start ') || lowerTextForStartCheck.startsWith('начать ');
+      const isStartCommand = 
+        isBotStarted || 
+        lowerTextForStartCheck === '/start' || 
+        lowerTextForStartCheck === 'start' ||
+        lowerTextForStartCheck === 'начать' || 
+        lowerTextForStartCheck === 'старт' || 
+        lowerTextForStartCheck === 'onboarding_start' ||
+        lowerTextForStartCheck.startsWith('/start ') || 
+        lowerTextForStartCheck.startsWith('начать ') ||
+        lowerTextForStartCheck.startsWith('старт ');
 
       if (isStartCommand) {
         console.log('👋 [MAX] bot_started: ПОЛНОЕ приветствие chat=' + chatId);
