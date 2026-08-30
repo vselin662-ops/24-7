@@ -885,16 +885,72 @@ export class MaxAdapter {
       // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА
       logger.info(`📦 RAW BODY: ${JSON.stringify(raw)}`);
 
-      // 1. Извлекаем chatId
-      let chatId = raw.chat_id || raw.payload?.chat_id || raw.body?.chat_id;
-      if (!chatId && raw.message) chatId = raw.message.chat_id || raw.message.recipient?.chat_id;
-      if (!chatId && raw.payload?.message) chatId = raw.payload.message.chat_id || raw.payload.message.recipient?.chat_id;
+      // 1. Извлекаем chatId / senderId
+      let chatId = 
+        raw.chat_id || 
+        raw.user_id || 
+        raw.sender_id ||
+        raw.payload?.chat_id || 
+        raw.payload?.user_id || 
+        raw.payload?.user?.user_id || 
+        raw.payload?.user?.id || 
+        raw.payload?.sender?.user_id ||
+        raw.payload?.sender?.id ||
+        raw.body?.chat_id || 
+        raw.body?.user_id || 
+        raw.body?.user?.user_id || 
+        raw.body?.user?.id ||
+        raw.body?.sender?.user_id ||
+        raw.body?.sender?.id ||
+        raw.user?.user_id ||
+        raw.user?.id ||
+        raw.sender?.user_id ||
+        raw.sender?.id;
+
+      if (!chatId && raw.message) {
+        chatId = 
+          raw.message.chat_id || 
+          raw.message.user_id || 
+          raw.message.sender_id || 
+          raw.message.sender?.user_id || 
+          raw.message.sender?.id || 
+          raw.message.recipient?.chat_id || 
+          raw.message.recipient?.user_id;
+      }
+      if (!chatId && raw.payload?.message) {
+        chatId = 
+          raw.payload.message.chat_id || 
+          raw.payload.message.user_id || 
+          raw.payload.message.sender_id || 
+          raw.payload.message.sender?.user_id || 
+          raw.payload.message.sender?.id || 
+          raw.payload.message.recipient?.chat_id || 
+          raw.payload.message.recipient?.user_id;
+      }
+      if (!chatId && raw.body?.message) {
+        chatId = 
+          raw.body.message.chat_id || 
+          raw.body.message.user_id || 
+          raw.body.message.sender_id || 
+          raw.body.message.sender?.user_id || 
+          raw.body.message.sender?.id || 
+          raw.body.message.recipient?.chat_id || 
+          raw.body.message.recipient?.user_id;
+      }
+
       if (!chatId) {
         logger.error("❌ No ChatID found");
         return res.status(200).send('ok');
       }
 
       const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+
+      // 🔐 [Auth] Типоустойчивая проверка владельца
+      const OWNER = String(process.env.OWNER_CHAT_ID || '').trim();
+      const sender = String(cleanId).trim();
+      const isOwnerSender = OWNER !== '' && sender === OWNER;
+      console.log(`🔐 [Auth] sender=${sender} owner=${OWNER} match=${isOwnerSender}`);
+      logger.info(`🔐 [Auth] sender=${sender} owner=${OWNER} match=${isOwnerSender}`);
 
       let text = '';
       let callbackData = raw.callback_data || raw.payload?.callback_data || raw.body?.callback_data || raw.message?.callback_data || raw.payload?.data || raw.body?.data || raw.body?.payload?.callback_data || raw.message?.body?.callback_data;
@@ -1143,7 +1199,7 @@ export class MaxAdapter {
         savePaymentRequest(cleanId, detectedPeriod, hasImage, senderName);
 
         // Уведомление владельцу
-        const ownerChatId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
+        const ownerChatId = OWNER;
         if (ownerChatId) {
           const ownerMsg = `💳 Заявка: ${senderName}\nТариф: ${detectedPeriod}\nПроверь поступление в ЮMoney.\nАктивация (скопируй): активировать ${cleanId} ${detectedPeriod}`;
           await this.safeSendMessageToChat(ownerChatId, ownerMsg);

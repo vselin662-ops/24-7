@@ -248,6 +248,20 @@ async function startServer() {
     } catch (restErr) {
       logger.error("❌ Error running restoreFromRedis:", restErr);
     }
+
+    // === ЧАСТЬ А: АВАРИЙНАЯ АКТИВАЦИЯ КЛИЕНТА (одноразовая миграция) ===
+    try {
+      const { getSubscription, activateSubscription } = await import("./src/fintech/subscriptions");
+      const clientChatId = '27490572';
+      const existingSub = getSubscription(clientChatId);
+      if (!existingSub || !existingSub.paid_until || new Date(existingSub.paid_until).getTime() <= Date.now()) {
+        activateSubscription(clientChatId, 'month', 30);
+        console.log(`🚑 [Fix] emergency activation: ${clientChatId} month`);
+        logger.info(`🚑 [Fix] emergency activation: ${clientChatId} month`);
+      }
+    } catch (emErr) {
+      logger.error("❌ Error running emergency activation:", emErr);
+    }
   } catch (err) {
     logger.error("❌ Error initializing sessions database:", { error: err });
   }

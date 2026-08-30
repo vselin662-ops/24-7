@@ -103,13 +103,9 @@ export function isFeatureAllowed(chatId: string | number): boolean {
 }
 
 export function isOwner(chatId: string | number): boolean {
-  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim();
-  const ownerIds = [
-    process.env.OWNER_CHAT_ID,
-    process.env.ADMIN_USER_ID,
-    process.env.ADMIN_CHAT_ID
-  ].filter(Boolean).map(id => String(id).replace(/^[a-z_]+/, '').trim());
-  return ownerIds.length > 0 && ownerIds.includes(cleanId);
+  const OWNER = String(process.env.OWNER_CHAT_ID || '').trim();
+  const sender = String(chatId).replace(/^[a-z_]+/, '').trim();
+  return OWNER !== '' && sender === OWNER;
 }
 
 export function checkAccess(chatId: string | number): boolean {
