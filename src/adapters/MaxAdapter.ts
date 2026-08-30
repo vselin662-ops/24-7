@@ -1200,6 +1200,29 @@ export class MaxAdapter {
       if (hasLocation && userLat != null && userLon != null) {
         const { setUserLocation } = await import("../services/ProfileService");
         setUserLocation(cleanId, userLat, userLon);
+
+        // Если вместе с гео прислан запрос маршрута (например: гео + «как доехать до Шереметьево»)
+        const { extractNavigationQuery, buildRoute } = await import("../services/navigationService");
+        const navQuery = extractNavigationQuery(text);
+        if (navQuery) {
+          const navRes = await buildRoute(cleanId, navQuery);
+          if (!navRes.success) {
+            if (isVoiceInput) {
+              await this.synthesizeAndSendVoice(cleanId, navRes.textMsg || 'Не удалось рассчитать маршрут.');
+            }
+            await this.safeSendMessageToChat(cleanId, navRes.textMsg || 'Не удалось рассчитать маршрут.');
+            return res.status(200).send('ok');
+          }
+
+          if (navRes.voiceText) {
+            await this.synthesizeAndSendVoice(cleanId, navRes.voiceText);
+          }
+          if (navRes.textMsg) {
+            await this.safeSendMessageToChat(cleanId, navRes.textMsg, navRes.extra);
+          }
+          return res.status(200).send('ok');
+        }
+
         const locReply = '📍 Геолокация сохранена! Куда хотите поехать? Например: «как доехать до Красной площади» или «маршрут в аэропорт Шереметьево».';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, locReply);
@@ -1612,8 +1635,20 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === РУЧНАЯ УСТАНОВКА ТОЧКИ А (ДОМАШНИЙ АДРЕС / МЕСТОПОЛОЖЕНИЕ) ===
+      const { extractManualLocationQuery, setManualLocation, extractNavigationQuery, buildRoute } = await import("../services/navigationService");
+      const manualLocQuery = extractManualLocationQuery(text);
+      if (manualLocQuery) {
+        const locRes = await setManualLocation(cleanId, manualLocQuery);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, locRes.textMsg);
+        } else {
+          await this.safeSendMessageToChat(cleanId, locRes.textMsg);
+        }
+        return res.status(200).send('ok');
+      }
+
       // === АВТО-ДИСПЕТЧЕР И НАВИГАЦИЯ (OSRM + Nominatim + TTS) ===
-      const { extractNavigationQuery, buildRoute } = await import("../services/navigationService");
       const navQuery = extractNavigationQuery(text);
       if (navQuery) {
         const navRes = await buildRoute(cleanId, navQuery);

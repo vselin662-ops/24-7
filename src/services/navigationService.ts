@@ -304,6 +304,72 @@ export function getLastRoute(chatId: string | number): LastRouteData | null {
 }
 
 /**
+ * Проверка текста на команду установки домашнего адреса / ручной точки А
+ */
+export function extractManualLocationQuery(text: string): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+
+  // Регулярные выражения для команд задания местоположения
+  const patterns = [
+    /^(?:я\s+нахожусь|мой\s+адрес|я\s+живу|точка\s+а|моё\s+местоположение|мое\s+местоположение|установить\s+адрес|сохранить\s+адрес)\s*[:—–-]?\s*(.+)$/i,
+    /^\/(?:set_home|home|location|address)\s+(.+)$/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = trimmed.match(pattern);
+    if (match && match[1]) {
+      const address = match[1].replace(/^[:—–-]\s*/, '').replace(/^[,\s.?!]+|[,\s.?!]+$/g, '').trim();
+      if (address.length > 1) {
+        return address;
+      }
+    }
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('я нахожусь ') || lower.startsWith('мой адрес ') || lower.startsWith('я живу ')) {
+    const address = trimmed.replace(/^(?:я\s+нахожусь|мой\s+адрес|я\s+живу)\s*[:—–-]?\s*/i, '').trim();
+    if (address.length > 1) {
+      return address;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Ручная установка точки А через адрес с геокодингом
+ */
+export async function setManualLocation(
+  chatId: string | number,
+  addressQuery: string
+): Promise<{ success: boolean; textMsg: string; lat?: number; lon?: number; address?: string }> {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const geocoded = await geocodeAddress(addressQuery);
+
+  if (!geocoded) {
+    return {
+      success: false,
+      textMsg: `❌ Не удалось найти адрес «${addressQuery}». Пожалуйста, уточните город, улицу или номер дома.`
+    };
+  }
+
+  const { setUserLocation } = await import("./ProfileService");
+  setUserLocation(cleanId, geocoded.lat, geocoded.lon);
+
+  const displayAddress = geocoded.name || addressQuery;
+  const reply = `✅ Запомнил! Буду строить маршруты отсюда: ${displayAddress}. Обновить: «я нахожусь <новый адрес>» или прислать геолокацию.`;
+
+  return {
+    success: true,
+    textMsg: reply,
+    lat: geocoded.lat,
+    lon: geocoded.lon,
+    address: displayAddress
+  };
+}
+
+/**
  * Проверка текста на команду навигации и извлечение адреса
  */
 export function extractNavigationQuery(text: string): string | null {
