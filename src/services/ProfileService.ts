@@ -11,16 +11,36 @@ export interface UserProfile {
   faith?: boolean;
 }
 
-// Инициализация таблиц для онбординга
+export type PlanStatus = 'on_buttons' | 'on_quiet' | 'off';
+
+export interface UserSettings {
+  chat_id: string;
+  plan_status: PlanStatus;
+  briefing_enabled: number; // 1 | 0
+  updated_at?: string;
+}
+
+// Инициализация таблиц для онбординга и настроек пользователя
 if (sqliteDb) {
   try {
     sqliteDb.exec(`
       CREATE TABLE IF NOT EXISTS user_profiles (
         chat_id TEXT PRIMARY KEY,
         profile_json TEXT,
+        plan_status TEXT DEFAULT 'off',
+        briefing_enabled INTEGER DEFAULT 1,
         updated_at TEXT
       );
     `);
+
+    // Гарантируем наличие колонок plan_status и briefing_enabled при миграции
+    try {
+      sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN plan_status TEXT DEFAULT 'off';`);
+    } catch {}
+    try {
+      sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN briefing_enabled INTEGER DEFAULT 1;`);
+    } catch {}
+
     sqliteDb.exec(`
       CREATE TABLE IF NOT EXISTS profile_offered (
         chat_id TEXT PRIMARY KEY,
@@ -30,6 +50,66 @@ if (sqliteDb) {
     logger.info("📁 [Profile] user_profiles and profile_offered tables verified.");
   } catch (err: any) {
     logger.error("❌ [Profile] Database initialization failed:", err);
+  }
+}
+
+export function getUserSettings(chatId: string | number): UserSettings {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) {
+    return { chat_id: cleanId, plan_status: 'off', briefing_enabled: 1 };
+  }
+  try {
+    const row = sqliteDb.prepare("SELECT chat_id, plan_status, briefing_enabled, updated_at FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    if (row) {
+      const planStatus: PlanStatus = (row.plan_status === 'on_buttons' || row.plan_status === 'on_quiet' || row.plan_status === 'off') ? row.plan_status : 'off';
+      const briefingEnabled = (row.briefing_enabled === 0 || row.briefing_enabled === '0') ? 0 : 1;
+      return {
+        chat_id: cleanId,
+        plan_status: planStatus,
+        briefing_enabled: briefingEnabled,
+        updated_at: row.updated_at
+      };
+    }
+  } catch (err) {
+    logger.warn(`⚠️ [Profile] Failed to get user settings for ${cleanId}:`, err);
+  }
+  return { chat_id: cleanId, plan_status: 'off', briefing_enabled: 1 };
+}
+
+export function setPlanStatus(chatId: string | number, status: PlanStatus): void {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return;
+  const nowStr = new Date().toISOString();
+  try {
+    const exists = sqliteDb.prepare("SELECT chat_id FROM user_profiles WHERE chat_id = ?").get(cleanId);
+    if (exists) {
+      sqliteDb.prepare("UPDATE user_profiles SET plan_status = ?, updated_at = ? WHERE chat_id = ?").run(status, nowStr, cleanId);
+    } else {
+      sqliteDb.prepare("INSERT INTO user_profiles (chat_id, profile_json, plan_status, briefing_enabled, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(cleanId, null, status, 1, nowStr);
+    }
+    logger.info(`📋 [Profile] plan_status set to "${status}" for ${cleanId}`);
+  } catch (err) {
+    logger.error(`❌ [Profile] Failed to set plan_status for ${cleanId}:`, err);
+  }
+}
+
+export function setBriefingEnabled(chatId: string | number, enabled: number): void {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return;
+  const nowStr = new Date().toISOString();
+  const val = enabled === 0 ? 0 : 1;
+  try {
+    const exists = sqliteDb.prepare("SELECT chat_id FROM user_profiles WHERE chat_id = ?").get(cleanId);
+    if (exists) {
+      sqliteDb.prepare("UPDATE user_profiles SET briefing_enabled = ?, updated_at = ? WHERE chat_id = ?").run(val, nowStr, cleanId);
+    } else {
+      sqliteDb.prepare("INSERT INTO user_profiles (chat_id, profile_json, plan_status, briefing_enabled, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(cleanId, null, 'off', val, nowStr);
+    }
+    logger.info(`☀️ [Profile] briefing_enabled set to ${val} for ${cleanId}`);
+  } catch (err) {
+    logger.error(`❌ [Profile] Failed to set briefing_enabled for ${cleanId}:`, err);
   }
 }
 

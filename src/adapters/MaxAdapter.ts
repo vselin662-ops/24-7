@@ -50,6 +50,10 @@ export function isBibleQuery(text: string): boolean {
     lower.includes('новый завет') ||
     lower.includes('отцов церкви') ||
     lower.includes('бог благ и милость его велика') ||
+    lower.includes('план победы') ||
+    lower.includes('включить план') ||
+    lower.includes('тест рассылки') ||
+    lower.includes('тест_рассылки') ||
     lower === '/bible' ||
     lower === 'подписаться на библию' ||
     lower.startsWith('библи') ||
@@ -1145,6 +1149,102 @@ export class MaxAdapter {
       }
 
       const lowerText = (text || '').toLowerCase().trim();
+
+      // === УПРАВЛЕНИЕ УТРЕННИМ БРИФИНГОМ ===
+      if (
+        lowerText === 'briefing_off' ||
+        lowerText === 'отключить брифинг' ||
+        lowerText === '/briefing_off' ||
+        lowerText === 'выключить брифинг' ||
+        lowerText === 'стоп брифинг'
+      ) {
+        const { setBriefingEnabled } = await import("../services/ProfileService");
+        setBriefingEnabled(cleanId, 0);
+        const reply = '✅ Брифинг отключён. Включить: команда «включить брифинг».';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
+
+      if (
+        lowerText === 'briefing_on' ||
+        lowerText === 'включить брифинг' ||
+        lowerText === '/briefing_on' ||
+        lowerText === 'старт брифинг'
+      ) {
+        const { setBriefingEnabled } = await import("../services/ProfileService");
+        setBriefingEnabled(cleanId, 1);
+        const reply = '☀️ Утренний брифинг включён! Я буду присылать погоду и стих дня каждое утро в 7:00.';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
+
+      // === КНОПКИ И УПРАВЛЕНИЕ ПЛАНОМ ПОБЕДЫ ===
+      if (lowerText === 'plan_keep' || lowerText === 'оставить как есть') {
+        const { setPlanStatus } = await import("../services/ProfileService");
+        setPlanStatus(cleanId, 'on_quiet');
+        const reply = '✅ План Победы сохранён в тихом режиме (без дополнительных кнопок). Приятного прослушивания!';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText === 'plan_off' || lowerText === 'отключить план победы' || lowerText === 'выключить план победы' || lowerText === 'стоп план победы') {
+        const { setPlanStatus } = await import("../services/ProfileService");
+        const { sqliteDb } = await import("../../db");
+        setPlanStatus(cleanId, 'off');
+        try {
+          if (sqliteDb) {
+            sqliteDb.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
+          }
+        } catch {}
+        const reply = '❌ План Победы отключён. Вы можете включить его снова в любой момент командой «включить план победы».';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
+
+      if (
+        lowerText === 'включить план победы' ||
+        lowerText === 'включить план' ||
+        lowerText === 'план победы' ||
+        lowerText === '/plan_on'
+      ) {
+        const { setPlanStatus } = await import("../services/ProfileService");
+        const { sqliteDb } = await import("../../db");
+        const { sendImmediatePlanPobedyVerse } = await import("../services/bibleService");
+        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+
+        try {
+          if (sqliteDb) {
+            sqliteDb.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active, period_days) VALUES (?, ?, ?, ?)").run(cleanId, todayStr, 1, 365);
+          }
+        } catch {}
+
+        setPlanStatus(cleanId, 'on_buttons');
+        await sendImmediatePlanPobedyVerse(cleanId);
+
+        const reply = '✅ План Победы включён! Отправил стих дня голосом. Благословений!';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, reply);
+        }
+        return res.status(200).send('ok');
+      }
 
       // === ШАГ 3.1: КОМАНДА ВЛАДЕЛЬЦА 'заявки' ===
       if (lowerText === 'заявки' || lowerText === '/requests' || lowerText === '/claims' || lowerText === 'заявка') {
