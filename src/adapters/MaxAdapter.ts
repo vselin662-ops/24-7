@@ -1114,13 +1114,18 @@ export class MaxAdapter {
         }
       }
 
-      // 4.5. Проверяем наличие картинок/скриншотов во вложениях
+      // 4.5. Проверяем наличие картинок/скриншотов и геолокации во вложениях
       let hasImage = false;
       let imageUrl = '';
+      let hasLocation = false;
+      let userLat: number | null = null;
+      let userLon: number | null = null;
 
       for (const att of allAttachments) {
         const typeStr = String(att?.type || '').toLowerCase();
         const mediaTypeStr = String(att?.media_type || '').toLowerCase();
+
+        // Проверка картинок
         if (
           typeStr === 'image' || typeStr === 'photo' ||
           mediaTypeStr === 'image' || mediaTypeStr === 'photo' ||
@@ -1130,7 +1135,50 @@ export class MaxAdapter {
           if (candidate) {
             hasImage = true;
             imageUrl = String(candidate);
-            break;
+          }
+        }
+
+        // Проверка геолокации
+        const lat = att?.latitude ?? att?.lat ?? att?.payload?.latitude ?? att?.payload?.lat ?? att?.payload?.location?.latitude;
+        const lon = att?.longitude ?? att?.lon ?? att?.payload?.longitude ?? att?.payload?.lon ?? att?.payload?.location?.longitude;
+        if ((typeStr.includes('location') || typeStr.includes('geo') || lat != null) && lat != null && lon != null) {
+          const pLat = Number(lat);
+          const pLon = Number(lon);
+          if (!isNaN(pLat) && !isNaN(pLon)) {
+            userLat = pLat;
+            userLon = pLon;
+            hasLocation = true;
+          }
+        }
+      }
+
+      if (!hasLocation) {
+        const rawLoc = raw.location || raw.body?.location || raw.payload?.location || raw.message?.location;
+        if (rawLoc) {
+          const lat = rawLoc.latitude ?? rawLoc.lat;
+          const lon = rawLoc.longitude ?? rawLoc.lon;
+          if (lat != null && lon != null) {
+            const pLat = Number(lat);
+            const pLon = Number(lon);
+            if (!isNaN(pLat) && !isNaN(pLon)) {
+              userLat = pLat;
+              userLon = pLon;
+              hasLocation = true;
+            }
+          }
+        }
+      }
+
+      if (!hasLocation) {
+        const directLat = raw.latitude ?? raw.body?.latitude ?? raw.payload?.latitude ?? raw.lat ?? raw.body?.lat ?? raw.payload?.lat;
+        const directLon = raw.longitude ?? raw.body?.longitude ?? raw.payload?.longitude ?? raw.lon ?? raw.body?.lon ?? raw.payload?.lon;
+        if (directLat != null && directLon != null) {
+          const pLat = Number(directLat);
+          const pLon = Number(directLon);
+          if (!isNaN(pLat) && !isNaN(pLon)) {
+            userLat = pLat;
+            userLon = pLon;
+            hasLocation = true;
           }
         }
       }
@@ -1146,6 +1194,19 @@ export class MaxAdapter {
           hasImage = true;
           imageUrl = String(directUrl);
         }
+      }
+
+      // Сохраняем полученную геолокацию
+      if (hasLocation && userLat != null && userLon != null) {
+        const { setUserLocation } = await import("../services/ProfileService");
+        setUserLocation(cleanId, userLat, userLon);
+        const locReply = '📍 Геолокация сохранена! Куда хотите поехать? Например: «как доехать до Красной площади» или «маршрут в аэропорт Шереметьево».';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, locReply);
+        } else {
+          await this.safeSendMessageToChat(cleanId, locReply);
+        }
+        return res.status(200).send('ok');
       }
 
       const lowerText = (text || '').toLowerCase().trim();
@@ -1246,6 +1307,29 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === НАВИГАЦИЯ: ПОВТОР ГОЛОСА МАРШРУТА ===
+      if (
+        lowerText === 'nav_repeat' ||
+        lowerText === 'озвучить ещё раз' ||
+        lowerText === 'озвучь ещё раз' ||
+        lowerText === '/nav_repeat'
+      ) {
+        const { getLastRoute } = await import("../services/navigationService");
+        const lastRoute = getLastRoute(cleanId);
+        if (lastRoute) {
+          await this.synthesizeAndSendVoice(cleanId, lastRoute.voiceText);
+          await this.safeSendMessageToChat(cleanId, lastRoute.textMsg, lastRoute.extra);
+        } else {
+          const noRouteMsg = '📍 Предыдущий маршрут не найден. Напишите, куда хотите поехать (например, «как доехать до Шереметьево»).';
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, noRouteMsg);
+          } else {
+            await this.safeSendMessageToChat(cleanId, noRouteMsg);
+          }
+        }
+        return res.status(200).send('ok');
+      }
+
       // === ШАГ 3.1: КОМАНДА ВЛАДЕЛЬЦА 'заявки' ===
       if (lowerText === 'заявки' || lowerText === '/requests' || lowerText === '/claims' || lowerText === 'заявка') {
         const { isOwner } = await import("../fintech/subscriptions");
@@ -1293,84 +1377,91 @@ export class MaxAdapter {
         }
       }
 
-      // === ШАГ 2: ПОДТВЕРЖДЕНИЕ ОПЛАТЫ (нечёткий триггер + скриншот) ===
-      const fuzzyPaidRegex = /оплачен|оплатил|оплата|чек|я перев|перевела|перевёл|перевел|\/paid/i;
-      const isPaidTrigger = fuzzyPaidRegex.test(lowerText) || (hasImage && (
-        fuzzyPaidRegex.test(lowerText) ||
-        lowerText.includes('сбп') ||
-        lowerText.includes('юмани') ||
-        lowerText.includes('yoomoney') ||
-        lowerText.includes('перевод') ||
-        lowerText.length === 0
-      ));
+      // === ШАГ 3: ПРОВЕРКА ДОСТУПА (Владелец / Активная подписка / Locked) ===
+      const { checkAccess, isOwner } = await import("../fintech/subscriptions");
+      const hasAccess = checkAccess(cleanId);
 
-      if (isPaidTrigger) {
-        const detectedPeriod = (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('1800') || lowerText.includes('365')) ? 'year' : 'month';
-        const senderName = raw.user?.name || raw.sender?.name || raw.message?.sender?.name || raw.payload?.user?.name || cleanId;
-        const { savePaymentRequest } = await import("../fintech/payments");
-        savePaymentRequest(cleanId, detectedPeriod, hasImage, senderName);
+      const fuzzyPaidRegex = /оплачен|оплатил|оплата|чек|перев|\/paid/i;
 
-        // Уведомление владельцу
-        const ownerChatId = OWNER;
-        if (ownerChatId) {
-          const ownerMsg = `💳 Заявка: ${senderName}\nТариф: ${detectedPeriod}\nПроверь поступление в ЮMoney.\nАктивация (скопируй): активировать ${cleanId} ${detectedPeriod}`;
-          await this.safeSendMessageToChat(ownerChatId, ownerMsg);
-        } else {
-          console.log('⚠️ [Pay] owner not set, request stored');
-          logger.warn('⚠️ [Pay] owner not set, request stored');
-        }
+      // -------------------------------------------------------------------------
+      // 1. ЕСЛИ ПОЛЬЗОВАТЕЛЬ В LOCKED (НЕТ ДОСТУПА):
+      // -------------------------------------------------------------------------
+      if (!hasAccess) {
+        // а. Если фото/сообщение содержит явный текст подтверждения оплаты -> создаем заявку
+        if (fuzzyPaidRegex.test(lowerText)) {
+          const detectedPeriod = (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('1800') || lowerText.includes('365')) ? 'year' : 'month';
+          const senderName = raw.user?.name || raw.sender?.name || raw.message?.sender?.name || raw.payload?.user?.name || cleanId;
+          const { savePaymentRequest } = await import("../fintech/payments");
+          savePaymentRequest(cleanId, detectedPeriod, hasImage, senderName);
 
-        const userReply = '✅ Заявка принята! Владелец подтвердит оплату в течение 10 минут — и я приступлю к работе.';
-        if (isVoiceInput) {
-          await this.synthesizeAndSendVoice(cleanId, userReply);
-        } else {
-          await this.safeSendMessageToChat(cleanId, userReply);
-        }
-        return res.status(200).send('ok');
-      }
-
-      // === ТАРИФЫ / ПОДПИСКА (/subscribe, 'подписка', 'тарифы') ===
-      if (lowerText === '/subscribe' || lowerText === 'подписка' || lowerText === 'тарифы' || lowerText === '/plans' || lowerText === '/tariffs') {
-        const reply = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
-        await this.safeSendMessageToChat(cleanId, reply, SUBSCRIPTION_EXTRA);
-        return res.status(200).send('ok');
-      }
-
-      // === БИБЛИЯ (ВСЕГДА БЕСПЛАТНО ДЛЯ ВСЕХ) ===
-      if (isBibleQuery(text)) {
-        const isPlanSubscribe = lowerText === 'подписаться на библию' || lowerText === '/bible' || lowerText.includes('бог благ и милость его велика');
-        const { handleBibleSubscription } = await import("../../server");
-        const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
-        if (bibleReply) {
-          if (isVoiceInput) {
-            await this.synthesizeAndSendVoice(cleanId, bibleReply);
+          // Уведомление владельцу
+          const ownerChatId = OWNER;
+          if (ownerChatId) {
+            const ownerMsg = `💳 Заявка: ${senderName}\nТариф: ${detectedPeriod}\nПроверь поступление в ЮMoney.\nАктивация (скопируй): активировать ${cleanId} ${detectedPeriod}`;
+            await this.safeSendMessageToChat(ownerChatId, ownerMsg);
           } else {
-            await this.safeSendMessageToChat(cleanId, bibleReply);
+            console.log('⚠️ [Pay] owner not set, request stored');
+            logger.warn('⚠️ [Pay] owner not set, request stored');
+          }
+
+          const userReply = '✅ Заявка принята! Владелец подтвердит оплату в течение 10 минут — и я приступлю к работе.';
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, userReply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, userReply);
           }
           return res.status(200).send('ok');
         }
 
-        const context: MessageContext = {
-          chatId: cleanId,
-          tenantId: `max_${cleanId}`,
-          channel: ChannelType.MAX,
-          isVoice: isVoiceInput,
-          timestamp: Date.now()
-        };
-
-        const response = await this.core.processMessage(text, context);
-        if (isVoiceInput) {
-          await this.synthesizeAndSendVoice(cleanId, response.text);
-        } else {
-          await this.safeSendMessageToChat(cleanId, response.text);
+        // б. Если пришло фото БЕЗ такого текста -> НЕ создавать заявку, отвечать с инструкцией
+        if (hasImage) {
+          const replyMsg = '📎 Получил изображение. Если это чек об оплате — напишите слово «оплачено». Анализ фото откроется после активации подписки.';
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, replyMsg);
+          }
+          await this.safeSendMessageToChat(cleanId, replyMsg, SUBSCRIPTION_EXTRA);
+          return res.status(200).send('ok');
         }
-        return res.status(200).send('ok');
-      }
 
-      // === ЖЁСТКИЙ PAYWALL (HARD LOCK) ===
-      const { checkAccess } = await import("../fintech/subscriptions");
-      const hasAccess = checkAccess(cleanId);
-      if (!hasAccess) {
+        // в. Тарифы / Подписка
+        if (lowerText === '/subscribe' || lowerText === 'подписка' || lowerText === 'тарифы' || lowerText === '/plans' || lowerText === '/tariffs') {
+          const reply = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). Для подтверждения достаточно скинуть скрин оплаты сюда.';
+          await this.safeSendMessageToChat(cleanId, reply, SUBSCRIPTION_EXTRA);
+          return res.status(200).send('ok');
+        }
+
+        // г. Библия (всегда бесплатно для всех)
+        if (isBibleQuery(text)) {
+          const isPlanSubscribe = lowerText === 'подписаться на библию' || lowerText === '/bible' || lowerText.includes('бог благ и милость его велика');
+          const { handleBibleSubscription } = await import("../../server");
+          const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
+          if (bibleReply) {
+            if (isVoiceInput) {
+              await this.synthesizeAndSendVoice(cleanId, bibleReply);
+            } else {
+              await this.safeSendMessageToChat(cleanId, bibleReply);
+            }
+            return res.status(200).send('ok');
+          }
+
+          const context: MessageContext = {
+            chatId: cleanId,
+            tenantId: `max_${cleanId}`,
+            channel: ChannelType.MAX,
+            isVoice: isVoiceInput,
+            timestamp: Date.now()
+          };
+
+          const response = await this.core.processMessage(text, context);
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, response.text);
+          } else {
+            await this.safeSendMessageToChat(cleanId, response.text);
+          }
+          return res.status(200).send('ok');
+        }
+
+        // д. Жёсткий Paywall (Hard Lock)
         const lockMsg = '🔒 Я приступаю к работе после активации подписки. Кнопки оплаты ниже, подтверждение — скрин оплаты.';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, lockMsg);
@@ -1379,9 +1470,10 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
-      // =========================================================================
-      // РАЗБЛОКИРОВАННЫЙ РЕЖИМ (Владелец или активная оплаченная подписка)
-      // =========================================================================
+      // -------------------------------------------------------------------------
+      // 2. РАЗБЛОКИРОВАННЫЙ РЕЖИМ (Владелец или активная оплаченная подписка):
+      // Любое фото идёт в Vision ('что на фото'), НИКОГДА в оплату.
+      // -------------------------------------------------------------------------
 
       // 1. Если пришла картинка — скачиваем и запускаем callVision
       if (hasImage && imageUrl) {
@@ -1412,7 +1504,8 @@ export class MaxAdapter {
           const mime = getImageMimeType(buf, imgRes.headers.get('content-type'));
           const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
 
-          const visionResponse = await callVision(text, dataUrl);
+          const visionPrompt = text && text.trim() ? text.trim() : 'Что изображено на этом фото? Опиши подробно.';
+          const visionResponse = await callVision(visionPrompt, dataUrl);
           const finalReply = stripMarkdown(visionResponse);
 
           if (isVoiceInput) {
@@ -1434,13 +1527,50 @@ export class MaxAdapter {
         }
       }
 
+      // Тарифы / Подписка для разблокированных
+      if (lowerText === '/subscribe' || lowerText === 'подписка' || lowerText === 'тарифы' || lowerText === '/plans' || lowerText === '/tariffs') {
+        const reply = '💳 Подписка Selin AI: • 199₽/мес • 1800₽/год (выгода 25%). У вас уже есть активный доступ!';
+        await this.safeSendMessageToChat(cleanId, reply, SUBSCRIPTION_EXTRA);
+        return res.status(200).send('ok');
+      }
+
+      // Библия для разблокированных
+      if (isBibleQuery(text)) {
+        const isPlanSubscribe = lowerText === 'подписаться на библию' || lowerText === '/bible' || lowerText.includes('бог благ и милость его велика');
+        const { handleBibleSubscription } = await import("../../server");
+        const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
+        if (bibleReply) {
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, bibleReply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, bibleReply);
+          }
+          return res.status(200).send('ok');
+        }
+
+        const context: MessageContext = {
+          chatId: cleanId,
+          tenantId: `max_${cleanId}`,
+          channel: ChannelType.MAX,
+          isVoice: isVoiceInput,
+          timestamp: Date.now()
+        };
+
+        const response = await this.core.processMessage(text, context);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, response.text);
+        } else {
+          await this.safeSendMessageToChat(cleanId, response.text);
+        }
+        return res.status(200).send('ok');
+      }
+
       if (!text || !text.trim()) {
         logger.warn('⚠️ Empty text after processing');
         return res.status(200).send('ok');
       }
 
       // 2. Команда 'статистика' от OWNER
-      const { isOwner } = await import("../fintech/subscriptions");
       if (isOwner(cleanId) && lowerText === 'статистика') {
         const { getOwnerStatistics } = await import("../utils/stats");
         const stats = await getOwnerStatistics();
@@ -1479,6 +1609,29 @@ export class MaxAdapter {
       const imgPrompt = parseImageGenerationPrompt(text);
       if (imgPrompt) {
         await this.generateAndSendImage(cleanId, imgPrompt, isVoiceInput);
+        return res.status(200).send('ok');
+      }
+
+      // === АВТО-ДИСПЕТЧЕР И НАВИГАЦИЯ (OSRM + Nominatim + TTS) ===
+      const { extractNavigationQuery, buildRoute } = await import("../services/navigationService");
+      const navQuery = extractNavigationQuery(text);
+      if (navQuery) {
+        const navRes = await buildRoute(cleanId, navQuery);
+        if (!navRes.success) {
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, navRes.textMsg || 'Не удалось рассчитать маршрут.');
+          }
+          await this.safeSendMessageToChat(cleanId, navRes.textMsg || 'Не удалось рассчитать маршрут.');
+          return res.status(200).send('ok');
+        }
+
+        // Успешный расчет маршрута: отправляем голос и текст с кнопками
+        if (navRes.voiceText) {
+          await this.synthesizeAndSendVoice(cleanId, navRes.voiceText);
+        }
+        if (navRes.textMsg) {
+          await this.safeSendMessageToChat(cleanId, navRes.textMsg, navRes.extra);
+        }
         return res.status(200).send('ok');
       }
 

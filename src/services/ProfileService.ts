@@ -17,6 +17,8 @@ export interface UserSettings {
   chat_id: string;
   plan_status: PlanStatus;
   briefing_enabled: number; // 1 | 0
+  last_lat?: number;
+  last_lon?: number;
   updated_at?: string;
 }
 
@@ -29,16 +31,24 @@ if (sqliteDb) {
         profile_json TEXT,
         plan_status TEXT DEFAULT 'off',
         briefing_enabled INTEGER DEFAULT 1,
+        last_lat REAL,
+        last_lon REAL,
         updated_at TEXT
       );
     `);
 
-    // Гарантируем наличие колонок plan_status и briefing_enabled при миграции
+    // Гарантируем наличие колонок plan_status, briefing_enabled, last_lat, last_lon при миграции
     try {
       sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN plan_status TEXT DEFAULT 'off';`);
     } catch {}
     try {
       sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN briefing_enabled INTEGER DEFAULT 1;`);
+    } catch {}
+    try {
+      sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN last_lat REAL;`);
+    } catch {}
+    try {
+      sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN last_lon REAL;`);
     } catch {}
 
     sqliteDb.exec(`
@@ -59,7 +69,7 @@ export function getUserSettings(chatId: string | number): UserSettings {
     return { chat_id: cleanId, plan_status: 'off', briefing_enabled: 1 };
   }
   try {
-    const row = sqliteDb.prepare("SELECT chat_id, plan_status, briefing_enabled, updated_at FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    const row = sqliteDb.prepare("SELECT chat_id, plan_status, briefing_enabled, last_lat, last_lon, updated_at FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
     if (row) {
       const planStatus: PlanStatus = (row.plan_status === 'on_buttons' || row.plan_status === 'on_quiet' || row.plan_status === 'off') ? row.plan_status : 'off';
       const briefingEnabled = (row.briefing_enabled === 0 || row.briefing_enabled === '0') ? 0 : 1;
@@ -67,6 +77,8 @@ export function getUserSettings(chatId: string | number): UserSettings {
         chat_id: cleanId,
         plan_status: planStatus,
         briefing_enabled: briefingEnabled,
+        last_lat: row.last_lat ? Number(row.last_lat) : undefined,
+        last_lon: row.last_lon ? Number(row.last_lon) : undefined,
         updated_at: row.updated_at
       };
     }
@@ -74,6 +86,39 @@ export function getUserSettings(chatId: string | number): UserSettings {
     logger.warn(`⚠️ [Profile] Failed to get user settings for ${cleanId}:`, err);
   }
   return { chat_id: cleanId, plan_status: 'off', briefing_enabled: 1 };
+}
+
+export function setUserLocation(chatId: string | number, lat: number, lon: number): void {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return;
+  const nowStr = new Date().toISOString();
+  try {
+    const exists = sqliteDb.prepare("SELECT chat_id FROM user_profiles WHERE chat_id = ?").get(cleanId);
+    if (exists) {
+      sqliteDb.prepare("UPDATE user_profiles SET last_lat = ?, last_lon = ?, updated_at = ? WHERE chat_id = ?")
+        .run(lat, lon, nowStr, cleanId);
+    } else {
+      sqliteDb.prepare("INSERT INTO user_profiles (chat_id, profile_json, plan_status, briefing_enabled, last_lat, last_lon, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(cleanId, null, 'off', 1, lat, lon, nowStr);
+    }
+    logger.info(`📍 [Profile] User location saved: ${lat}, ${lon} for ${cleanId}`);
+  } catch (err) {
+    logger.error(`❌ [Profile] Failed to save user location for ${cleanId}:`, err);
+  }
+}
+
+export function getUserLocation(chatId: string | number): { lat: number; lon: number } | null {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return null;
+  try {
+    const row = sqliteDb.prepare("SELECT last_lat, last_lon FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    if (row && row.last_lat != null && row.last_lon != null && !isNaN(Number(row.last_lat)) && !isNaN(Number(row.last_lon))) {
+      return { lat: Number(row.last_lat), lon: Number(row.last_lon) };
+    }
+  } catch (err) {
+    logger.warn(`⚠️ [Profile] Failed to get location for ${cleanId}:`, err);
+  }
+  return null;
 }
 
 export function setPlanStatus(chatId: string | number, status: PlanStatus): void {
