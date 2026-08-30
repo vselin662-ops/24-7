@@ -97,6 +97,33 @@ export function stripMarkdown(text: string): string {
     .trim();
 }
 
+/**
+ * Очистка текста от внутренних рассуждений (<think>, <thought>, <reasoning>) и служебных блоков
+ */
+export function sanitize(text: string | null | undefined): string {
+  if (!text) {
+    logger.warn('⚠️ [LLM] empty after sanitize');
+    console.log('⚠️ [LLM] empty after sanitize');
+    return 'Уточните, пожалуйста, вопрос.';
+  }
+  let cleaned = String(text)
+    .replace(/<think>[\s\S]*?(<\/think>|$)/gi, '')
+    .replace(/<think>[\s\S]*?(<\/think>|$)/gi, '')
+    .replace(/<thought>[\s\S]*?(<\/thought>|$)/gi, '')
+    .replace(/<reasoning>[\s\S]*?(<\/reasoning>|$)/gi, '')
+    .replace(/<\/?think>/gi, '')
+    .replace(/<\/?thought>/gi, '')
+    .replace(/<\/?reasoning>/gi, '')
+    .trim();
+
+  if (!cleaned) {
+    logger.warn('⚠️ [LLM] empty after sanitize');
+    console.log('⚠️ [LLM] empty after sanitize');
+    return 'Уточните, пожалуйста, вопрос.';
+  }
+  return cleaned;
+}
+
 export async function callVision(userText: string, dataUrl: string): Promise<string> {
   const visionProviders = [
     {
@@ -161,13 +188,15 @@ export async function callVision(userText: string, dataUrl: string): Promise<str
         model: p.model,
         temperature: 0.4,
         max_tokens: 2000,
+        reasoning: { exclude: true },
+        include_reasoning: false,
         extra_headers: p.base.includes('openrouter') ? { 'HTTP-Referer': 'https://selin.ai', 'X-Title': 'SelinAI' } : undefined
       } as any, { timeout: 45000 });
 
       const response = completion.choices[0]?.message?.content;
       if (response && typeof response === 'string' && response.trim()) {
         console.log('👁️ [Vision] engine=' + p.name);
-        return response.trim();
+        return sanitize(response.trim());
       }
     } catch (err: any) {
       console.log('⚠️ [Vision ' + p.name + '] ошибка, следующий: ' + err?.message);
@@ -185,13 +214,19 @@ export async function callWithWebSearch(userMessage: string, systemPrompt: strin
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://selin.ai', 'X-Title': 'SelinAI' },
-      body: JSON.stringify({ model: 'google/gemini-2.0-flash-exp:free:online', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }], temperature: 0.7 }),
+      body: JSON.stringify({
+        model: 'google/gemini-2.0-flash-exp:free:online',
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
+        temperature: 0.7,
+        reasoning: { exclude: true },
+        include_reasoning: false
+      }),
       signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) return null;
     const data: any = await res.json();
     const text = data?.choices?.[0]?.message?.content;
-    return text && text.trim() ? text.trim() : null;
+    return text && text.trim() ? sanitize(text.trim()) : null;
   } catch { return null; }
 }
 
@@ -265,7 +300,7 @@ export class LLMService {
           max_tokens: 800,
         });
         const res = completion.choices[0]?.message?.content?.trim();
-        if (res) return res;
+        if (res) return sanitize(res);
       }
     } catch (e) {
       console.log('⚠️ [callWithSystem] Groq failed, trying Gemini...');
@@ -282,7 +317,7 @@ export class LLMService {
           }
         });
         const res = completion.text?.trim();
-        if (res) return res;
+        if (res) return sanitize(res);
       }
     } catch (e) {
       console.log('⚠️ [callWithSystem] Gemini failed...');
@@ -303,7 +338,7 @@ export class LLMService {
           max_tokens: 2000,
         });
         const res = completion.choices[0]?.message?.content?.trim();
-        if (res) return res;
+        if (res) return sanitize(res);
       }
     } catch (e) {
       console.log('⚠️ [callWithSystemDirect] Groq failed, trying Gemini...');
@@ -320,7 +355,7 @@ export class LLMService {
           }
         });
         const res = completion.text?.trim();
-        if (res) return res;
+        if (res) return sanitize(res);
       }
     } catch (e) {
       console.log('⚠️ [callWithSystemDirect] Gemini failed...');
@@ -369,12 +404,14 @@ export class LLMService {
         model: 'google/gemini-2.0-flash-exp:free:online',
         messages: messages,
         temperature: 0.7,
-      });
+        reasoning: { exclude: true },
+        include_reasoning: false
+      } as any);
 
       const response = completion.choices[0]?.message?.content?.trim();
       if (response) {
         logger.info("🌐 [WebSearch] Web search response retrieved successfully via OpenRouter");
-        return response;
+        return sanitize(response);
       }
       throw new Error("Empty response from OpenRouter");
     } catch (err: any) {
@@ -412,6 +449,8 @@ export class LLMService {
     }).format(now);
 
     const defaultSystem = `
+Отвечай ВСЕГДА на русском. По-деловому, без воды: простые вопросы — 1-3 предложения. ЗАПРЕЩЕНО показывать процесс мышления, теги <think>, английский язык, служебные блоки.
+
 🚫 АБСОЛЮТНЫЙ ЗАПРЕТ НА УТОЧНЕНИЯ:
 - НИКОГДА не переспрашивай «вам точно это нужно?», «правильно ли я понял?», «уточните запрос» — если пользователь уже дал конкрестный запрос.
 - Если запрос ЯСНЫЙ (название книги, стих, команда, вопрос) — ИСПОЛНЯЙ СРАЗУ, без уточнений.
@@ -553,11 +592,12 @@ export class LLMService {
       }
 
       if (primaryResponse) {
-        memory.history.push({ role: 'assistant', content: primaryResponse, timestamp: Date.now() });
+        const cleanResponse = sanitize(primaryResponse);
+        memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
         if (memory.history.length > 30) {
           memory.history = memory.history.slice(-30);
         }
-        return primaryResponse;
+        return cleanResponse;
       }
     } catch (pErr: any) {
       console.log(`⚠️ [LLM] Primary provider ${PRIMARY_PROVIDER} failed: ${pErr.message}`);
@@ -592,14 +632,17 @@ export class LLMService {
               messages,
               temperature: 0.8,
               max_tokens: 2000,
-            });
+              reasoning: { exclude: true },
+              include_reasoning: false
+            } as any);
             const response = completion.choices[0]?.message?.content?.trim();
             if (response) {
-              memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+              const cleanResponse = sanitize(response);
+              memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
               if (memory.history.length > 30) {
                 memory.history = memory.history.slice(-30);
               }
-              return response;
+              return cleanResponse;
             }
           } catch (err: any) {
             console.log(`⚠️ [Router] OpenRouter model ${model} failed: ${err.message}`);
@@ -613,21 +656,23 @@ export class LLMService {
     // 3. Orca Router (ПРАВКА 2)
     const orcaResponse = await this.callOrca(messages);
     if (orcaResponse) {
-      memory.history.push({ role: 'assistant', content: orcaResponse, timestamp: Date.now() });
+      const cleanResponse = sanitize(orcaResponse);
+      memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
       if (memory.history.length > 30) {
         memory.history = memory.history.slice(-30);
       }
-      return orcaResponse;
+      return cleanResponse;
     }
 
     // 4. Teamo Router (ПРАВКА 2)
     const teamoResponse = await this.callTeamo(messages);
     if (teamoResponse) {
-      memory.history.push({ role: 'assistant', content: teamoResponse, timestamp: Date.now() });
+      const cleanResponse = sanitize(teamoResponse);
+      memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
       if (memory.history.length > 30) {
         memory.history = memory.history.slice(-30);
       }
-      return teamoResponse;
+      return cleanResponse;
     }
 
     // 5. Groq
@@ -646,11 +691,12 @@ export class LLMService {
 
           const response = completion.choices[0]?.message?.content?.trim();
           if (response) {
-            memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+            const cleanResponse = sanitize(response);
+            memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
             if (memory.history.length > 30) {
               memory.history = memory.history.slice(-30);
             }
-            return response;
+            return cleanResponse;
           }
         } catch (mErr: any) {
           logger.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
@@ -680,11 +726,12 @@ export class LLMService {
 
         const response = completion.text?.trim();
         if (response) {
-          memory.history.push({ role: 'assistant', content: response, timestamp: Date.now() });
+          const cleanResponse = sanitize(response);
+          memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
           if (memory.history.length > 30) {
             memory.history = memory.history.slice(-30);
           }
-          return response;
+          return cleanResponse;
         }
       } catch (gErr: any) {
         logger.warn(`⚠️ [smartCallLLM] Gemini attempt failed: ${gErr?.message || gErr}`);
@@ -738,7 +785,7 @@ export class LLMService {
 
         const text = completion.text?.trim();
         if (text) {
-          return text;
+          return sanitize(text);
         }
       } catch (err: any) {
         logger.warn(`⚠️ callLLM failed via Gemini, falling back to Groq: ${err?.message || err}`);
@@ -760,7 +807,7 @@ export class LLMService {
           });
           const text = completion.choices[0]?.message?.content;
           if (text && typeof text === 'string') {
-            return text.trim();
+            return sanitize(text.trim());
           }
         } catch (err: any) {
           logger.warn(`⚠️ Model ${model} failed in callLLM: ${err?.message || err}`);
@@ -889,7 +936,7 @@ export class LLMService {
             config: geminiConfig
           });
 
-          const responseText = response.text || "";
+          const responseText = isJsonExpected ? (response.text || "") : sanitize(response.text || "");
 
           let candidates: any[] = [];
           if (response.candidates && response.candidates.length > 0) {
@@ -979,9 +1026,20 @@ export class LLMService {
     const model = process.env.ORCA_MODEL || "google/gemini-2.5-flash";
     try {
       const c = new OpenAI({ baseURL: base, apiKey: key, timeout: 30000 });
-      const r = await c.chat.completions.create({ messages, model, temperature: 0.7, max_tokens: 2000 });
+      const r = await c.chat.completions.create({
+        messages,
+        model,
+        temperature: 0.7,
+        max_tokens: 2000,
+        reasoning: { exclude: true },
+        include_reasoning: false
+      } as any);
       const t = r.choices?.[0]?.message?.content;
-      if (t?.trim()) { markOk("orca"); console.log("🧠 [LLM] orca/" + model); return t.trim(); }
+      if (t?.trim()) {
+        markOk("orca");
+        console.log("🧠 [LLM] orca/" + model);
+        return sanitize(t.trim());
+      }
     } catch {}
     markFail("orca"); return null;
   }
@@ -993,9 +1051,20 @@ export class LLMService {
     const model = process.env.TEAMO_MODEL || "teamo-balanced";
     try {
       const c = new OpenAI({ baseURL: base, apiKey: key, timeout: 30000 });
-      const r = await c.chat.completions.create({ messages, model, temperature: 0.7, max_tokens: 2000 });
+      const r = await c.chat.completions.create({
+        messages,
+        model,
+        temperature: 0.7,
+        max_tokens: 2000,
+        reasoning: { exclude: true },
+        include_reasoning: false
+      } as any);
       const t = r.choices?.[0]?.message?.content;
-      if (t?.trim()) { markOk("teamo"); console.log("🧠 [LLM] teamo/" + model); return t.trim(); }
+      if (t?.trim()) {
+        markOk("teamo");
+        console.log("🧠 [LLM] teamo/" + model);
+        return sanitize(t.trim());
+      }
     } catch {}
     markFail("teamo"); return null;
   }
@@ -1019,11 +1088,13 @@ export class LLMService {
         messages,
         temperature: 0.8,
         max_tokens: 2000,
-      });
+        reasoning: { exclude: true },
+        include_reasoning: false
+      } as any);
       const response = completion.choices[0]?.message?.content?.trim();
       if (response) {
         console.log("🧠 [LLM] openrouter/" + model);
-        return response;
+        return sanitize(response);
       }
     } catch (err: any) {
       logger.warn(`⚠️ [callCompat] OpenRouter model ${model} failed: ${err.message}`);
@@ -1045,7 +1116,7 @@ export class LLMService {
         const response = completion.choices[0]?.message?.content?.trim();
         if (response) {
           console.log("🧠 [LLM] groq/" + model);
-          return response;
+          return sanitize(response);
         }
       }
     } catch (err: any) {
@@ -1076,7 +1147,7 @@ export class LLMService {
       const response = completion.text?.trim();
       if (response) {
         console.log("🧠 [LLM] gemini/" + GEMINI_MODEL);
-        return response;
+        return sanitize(response);
       }
     } catch (gErr: any) {
       logger.warn(`⚠️ [callGemini] Gemini failed: ${gErr?.message || gErr}`);

@@ -1,4 +1,4 @@
-import { LLMService } from "./LLMService";
+import { LLMService, sanitize } from "./LLMService";
 import { cacheService } from "./CacheService";
 import { tryExecuteSwarm } from "./SpecialistSwarm";
 import {
@@ -171,7 +171,7 @@ export class SelinCore {
           context.voiceMode === VoiceMode.VOICE_TO_VOICE;
 
         return {
-          text: swarmResponse,
+          text: sanitize(swarmResponse),
           confidence: 1.0,
           voice: isVoiceResponse ? { format: 'ogg' } : undefined
         };
@@ -212,10 +212,12 @@ export class SelinCore {
       ? 'Твой голос женский, ты женщина, представляйся как женщина.'
       : 'Твой голос мужской, ты мужчина, представляйся как мужчина.';
 
+    const baseDirectives = 'Отвечай ВСЕГДА на русском. По-деловому, без воды: простые вопросы — 1-3 предложения. ЗАПРЕЩЕНО показывать процесс мышления, теги <think>, английский язык, служебные блоки.';
+
     let systemPrompt: string;
     switch (taskType) {
       case TaskType.VOICE_INTERACTION:
-        systemPrompt = `Ты — Selin AI, живой голосовой ассистент.
+        systemPrompt = `${baseDirectives}\nТы — Selin AI, живой голосовой ассистент.
 ${genderPrompt}
 Ты — голосовой ассистент. На просьбы «озвучь», «расскажи», «прочитай» любую книгу, главу, длинный текст — выполняй без отказов. Длинные тексты читай частями. Никогда не говори «я ограничен» или «у меня нет такой возможности». Если текст длинный — разбей на части и озвучь по порядку. Никогда не отказывай и не говори "не могу прочитать вслух".
 
@@ -224,19 +226,19 @@ ${genderPrompt}
 Избегай сложных таблиц, markdown-разметки и громоздких списков.`;
         break;
       case TaskType.BUSINESS_AUTOMATION:
-        systemPrompt = `Ты — Selin AI, ведущий бизнес-консультант и ментор.
+        systemPrompt = `${baseDirectives}\nТы — Selin AI, ведущий бизнес-консультант и ментор.
 ${genderPrompt}
 Помогай предпринимателям масштабироваться, автоматизировать операционку и анализировать метрики.
 Давай четкие, выполнимые и практичные рекомендации.`;
         break;
       case TaskType.ORDER_PROCESSING:
       case TaskType.LEAD_GENERATION:
-        systemPrompt = `Ты — Selin AI, квалифицированный менеджер по продажам и клиентскому сервису.
+        systemPrompt = `${baseDirectives}\nТы — Selin AI, квалифицированный менеджер по продажам и клиентскому сервису.
 ${genderPrompt}
 Твоя цель — вежливо помочь клиенту, ответить на вопросы по услугам, ценам и условиям, и подвести к успешной сделке.`;
         break;
       default:
-        systemPrompt = `Ты — Selin AI, универсальный интеллектуальный помощник.
+        systemPrompt = `${baseDirectives}\nТы — Selin AI, универсальный интеллектуальный помощник.
 ${genderPrompt}
 Ты — голосовой ассистент. На просьбы «озвучь», «расскажи», «прочитай» любую книгу, главу, длинный текст — выполняй без отказов. Длинные тексты читай частями. Никогда не говори «я ограничен» или «у меня нет такой возможности». Если текст длинный — разбей на части и озвучь по порядку. Никогда не отказывай и не говори "не могу прочитать вслух".
 
