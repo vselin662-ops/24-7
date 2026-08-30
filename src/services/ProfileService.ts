@@ -33,11 +33,12 @@ if (sqliteDb) {
         briefing_enabled INTEGER DEFAULT 1,
         last_lat REAL,
         last_lon REAL,
+        last_route TEXT,
         updated_at TEXT
       );
     `);
 
-    // Гарантируем наличие колонок plan_status, briefing_enabled, last_lat, last_lon при миграции
+    // Гарантируем наличие колонок plan_status, briefing_enabled, last_lat, last_lon, last_route при миграции
     try {
       sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN plan_status TEXT DEFAULT 'off';`);
     } catch {}
@@ -49,6 +50,9 @@ if (sqliteDb) {
     } catch {}
     try {
       sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN last_lon REAL;`);
+    } catch {}
+    try {
+      sqliteDb.exec(`ALTER TABLE user_profiles ADD COLUMN last_route TEXT;`);
     } catch {}
 
     sqliteDb.exec(`
@@ -156,6 +160,54 @@ export function setBriefingEnabled(chatId: string | number, enabled: number): vo
   } catch (err) {
     logger.error(`❌ [Profile] Failed to set briefing_enabled for ${cleanId}:`, err);
   }
+}
+
+export interface SavedRoute {
+  latA: number;
+  lonA: number;
+  latB: number;
+  lonB: number;
+  destName?: string;
+  km: number;
+  min: number;
+  voiceText: string;
+  textMsg: string;
+  maneuversText?: string;
+  timestamp: number;
+}
+
+export function saveUserLastRoute(chatId: string | number, route: SavedRoute): void {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return;
+  const nowStr = new Date().toISOString();
+  try {
+    const exists = sqliteDb.prepare("SELECT chat_id FROM user_profiles WHERE chat_id = ?").get(cleanId);
+    const routeJson = JSON.stringify(route);
+    if (exists) {
+      sqliteDb.prepare("UPDATE user_profiles SET last_route = ?, updated_at = ? WHERE chat_id = ?")
+        .run(routeJson, nowStr, cleanId);
+    } else {
+      sqliteDb.prepare("INSERT INTO user_profiles (chat_id, profile_json, plan_status, briefing_enabled, last_route, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(cleanId, null, 'off', 1, routeJson, nowStr);
+    }
+    logger.info(`💾 [Profile] Saved last route for ${cleanId} (${route.km}km / ${route.min}min)`);
+  } catch (err) {
+    logger.error(`❌ [Profile] Failed to save last route for ${cleanId}:`, err);
+  }
+}
+
+export function getUserLastRoute(chatId: string | number): SavedRoute | null {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return null;
+  try {
+    const row = sqliteDb.prepare("SELECT last_route FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    if (row && row.last_route) {
+      return JSON.parse(row.last_route) as SavedRoute;
+    }
+  } catch (err) {
+    logger.warn(`⚠️ [Profile] Failed to get last route for ${cleanId}:`, err);
+  }
+  return null;
 }
 
 export async function getProfile(chatId: string | number): Promise<UserProfile | null> {

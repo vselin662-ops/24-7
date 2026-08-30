@@ -1,7 +1,5 @@
 import { logger } from "../logger";
-import { getUserLocation } from "./ProfileService";
-
-const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
+import { getUserLocation, saveUserLastRoute, getUserLastRoute, SavedRoute } from "./ProfileService";
 
 // Rate limit: 1 запрос в минуту на пользователя
 const userNavCooldowns = new Map<string, number>();
@@ -25,12 +23,13 @@ export interface RouteResult {
 }
 
 /**
- * Геокодинг адреса через Nominatim OpenStreetMap
+ * Геокодинг адреса через Nominatim OpenStreetMap с fallback на photon.komoot.io
  */
 export async function geocodeAddress(query: string): Promise<{ lat: number; lon: number; name: string } | null> {
   const cleanQuery = query.trim();
   if (!cleanQuery) return null;
 
+  // 1. Попытка через Nominatim
   try {
     const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery)}&format=json&limit=1`;
     const res = await fetch(url, {
@@ -38,29 +37,61 @@ export async function geocodeAddress(query: string): Promise<{ lat: number; lon:
         'User-Agent': 'SelinAI/1.0',
         'Accept-Language': 'ru,en'
       },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(5000)
     });
 
-    if (!res.ok) {
-      logger.warn(`⚠️ [Nav] Nominatim HTTP error: ${res.status}`);
-      return null;
+    if (res.ok) {
+      const data: any = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0];
+        const lat = parseFloat(item.lat);
+        const lon = parseFloat(item.lon);
+        if (!isNaN(lat) && !isNaN(lon)) {
+          return {
+            lat,
+            lon,
+            name: item.display_name || cleanQuery
+          };
+        }
+      }
+    } else {
+      logger.warn(`⚠️ [Nav] Nominatim HTTP error: ${res.status}. Falling back to Photon...`);
     }
+  } catch (err: any) {
+    logger.warn(`⚠️ [Nav] Nominatim error for "${cleanQuery}": ${err?.message || err}. Falling back to Photon...`);
+  }
 
-    const data: any = await res.json();
-    if (Array.isArray(data) && data.length > 0) {
-      const item = data[0];
-      const lat = parseFloat(item.lat);
-      const lon = parseFloat(item.lon);
-      if (!isNaN(lat) && !isNaN(lon)) {
-        return {
-          lat,
-          lon,
-          name: item.display_name || cleanQuery
-        };
+  // 2. Fallback через photon.komoot.io
+  try {
+    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(cleanQuery)}&limit=1`;
+    const res = await fetch(photonUrl, {
+      headers: {
+        'User-Agent': 'SelinAI/1.0',
+        'Accept-Language': 'ru,en'
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && Array.isArray(data.features) && data.features.length > 0) {
+        const feat = data.features[0];
+        const coords = feat.geometry?.coordinates; // GeoJSON format: [lon, lat]
+        if (Array.isArray(coords) && coords.length >= 2) {
+          const lon = parseFloat(coords[0]);
+          const lat = parseFloat(coords[1]);
+          if (!isNaN(lat) && !isNaN(lon)) {
+            const props = feat.properties || {};
+            const nameParts = [props.name, props.street, props.city, props.country].filter(Boolean);
+            const name = nameParts.length > 0 ? nameParts.join(', ') : cleanQuery;
+            logger.info(`🗺 [Nav] Geocoded via Photon fallback: "${cleanQuery}" -> ${lat}, ${lon}`);
+            return { lat, lon, name };
+          }
+        }
       }
     }
   } catch (err: any) {
-    logger.error(`❌ [Nav] Geocoding error for "${cleanQuery}":`, err?.message || err);
+    logger.error(`❌ [Nav] Photon geocoding error for "${cleanQuery}":`, err?.message || err);
   }
 
   return null;
@@ -165,7 +196,7 @@ export function createNavButtons(latA: number, lonA: number, latB: number, lonB:
 }
 
 /**
- * Построение маршрута Точка А -> Точка Б через OSRM
+ * Построение маршрута Точка А -> Точка Б через OSRM с fallback и кэшированием
  */
 export async function buildRoute(chatId: string | number, destinationQuery: string): Promise<RouteResult> {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
@@ -200,7 +231,7 @@ export async function buildRoute(chatId: string | number, destinationQuery: stri
     };
   }
 
-  // 3. Геокодинг точки Б
+  // 3. Геокодинг точки Б (Nominatim с fallback на Photon)
   const destLoc = await geocodeAddress(destinationQuery);
   if (!destLoc) {
     return {
@@ -212,38 +243,75 @@ export async function buildRoute(chatId: string | number, destinationQuery: stri
   const { lat: latA, lon: lonA } = userLoc;
   const { lat: latB, lon: lonB, name: destName } = destLoc;
 
-  // 4. Запрос к OSRM с альтернативами и шагами
-  const osrmEndpoint = `${OSRM_URL}/route/v1/driving/${lonA},${latA};${lonB},${latB}?alternatives=true&steps=true&overview=false`;
-  logger.info(`🚗 [Nav Request] Fetching OSRM route: ${osrmEndpoint}`);
+  // 4. Запрос к OSRM (список серверов с fallback, таймаут 5 сек)
+  const OSRM_SERVERS = [
+    process.env.OSRM_URL || 'https://router.project-osrm.org',
+    'https://router2.project-osrm.org'
+  ];
 
   let osrmData: any = null;
-  try {
-    const response = await fetch(osrmEndpoint, {
-      signal: AbortSignal.timeout(12000)
-    });
+  for (let i = 0; i < OSRM_SERVERS.length; i++) {
+    const baseServer = OSRM_SERVERS[i].replace(/\/$/, '');
+    const osrmEndpoint = `${baseServer}/route/v1/driving/${lonA},${latA};${lonB},${latB}?alternatives=true&steps=true&overview=false`;
+    logger.info(`🚗 [Nav Request] Trying OSRM server [${baseServer}]: ${osrmEndpoint}`);
 
-    if (!response.ok) {
-      throw new Error(`OSRM HTTP error ${response.status}`);
+    try {
+      const response = await fetch(osrmEndpoint, {
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (!response.ok) {
+        throw new Error(`OSRM HTTP error ${response.status}`);
+      }
+
+      const data: any = await response.json();
+      if (data && Array.isArray(data.routes) && data.routes.length > 0) {
+        osrmData = data;
+        break;
+      } else {
+        throw new Error('Empty routes in response');
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ [Nav] OSRM server [${baseServer}] failed: ${err?.message || err}`);
+      if (i === 0 && OSRM_SERVERS.length > 1) {
+        logger.info('🚗 [Nav] fallback to backup OSRM');
+      }
+    }
+  }
+
+  // 5. Если оба OSRM упали -> читаем из постоянного кэша (user_profiles.last_route)
+  if (!osrmData || !Array.isArray(osrmData.routes) || osrmData.routes.length === 0) {
+    logger.warn(`⚠️ [Nav] Both OSRM servers failed for ${latA},${lonA} -> ${latB},${lonB}. Checking persistent cache...`);
+    const savedRoute = getUserLastRoute(cleanId);
+    if (savedRoute) {
+      const { km, min } = savedRoute;
+      const textMsg = `⚠️ Серверы маршрутов недоступны. Вот последний сохранённый маршрут: ${km} км, ${min} мин.`;
+      const voiceText = `Серверы маршрутов недоступны. Вот последний сохранённый маршрут: ${km} километров, ${min} минут.`;
+      const extra = createNavButtons(savedRoute.latA, savedRoute.lonA, savedRoute.latB, savedRoute.lonB);
+
+      userNavCooldowns.set(cleanId, now);
+      lastRouteCache.set(cleanId, {
+        voiceText,
+        textMsg,
+        extra,
+        timestamp: now
+      });
+
+      return {
+        success: true,
+        voiceText,
+        textMsg,
+        extra
+      };
     }
 
-    osrmData = await response.json();
-  } catch (err: any) {
-    logger.error(`❌ [Nav] OSRM routing failed: ${err?.message || err}`);
     return {
       success: false,
-      textMsg: '⚠️ Не удалось рассчитать маршрут. Проверьте соединение или повторите попытку позже.'
+      textMsg: '⚠️ Серверы маршрутов недоступны. Попробуйте повторить запрос позже.'
     };
   }
 
-  if (!osrmData || !Array.isArray(osrmData.routes) || osrmData.routes.length === 0) {
-    logger.warn(`⚠️ [Nav] OSRM returned no routes for ${latA},${lonA} -> ${latB},${lonB}`);
-    return {
-      success: false,
-      textMsg: '❌ Маршрут между этими точками не найден.'
-    };
-  }
-
-  // 5. Обработка вариантов маршрута
+  // 6. Обработка вариантов маршрута
   const routes = osrmData.routes;
   const r1 = routes[0];
   const km1 = Math.round((r1.distance || 0) / 1000);
@@ -275,7 +343,7 @@ export async function buildRoute(chatId: string | number, destinationQuery: stri
   const textMsg = textLines.join('\n');
   const extra = createNavButtons(latA, lonA, latB, lonB);
 
-  // Фиксируем cooldown и кэш
+  // Фиксируем cooldown, оперативный кэш и базу данных (user_profiles.last_route)
   userNavCooldowns.set(cleanId, now);
   lastRouteCache.set(cleanId, {
     voiceText,
@@ -284,7 +352,21 @@ export async function buildRoute(chatId: string | number, destinationQuery: stri
     timestamp: now
   });
 
-  // 6. Логирование по регламенту
+  saveUserLastRoute(cleanId, {
+    latA,
+    lonA,
+    latB,
+    lonB,
+    destName,
+    km: km1,
+    min: min1,
+    voiceText,
+    textMsg,
+    maneuversText,
+    timestamp: now
+  });
+
+  // 7. Логирование по регламенту
   logger.info(`🚗 [Nav] ${latA.toFixed(4)},${lonA.toFixed(4)}→${destName.substring(0, 30)}: ${routes.length} routes, best ${km1}km/${min1}min`);
 
   return {
