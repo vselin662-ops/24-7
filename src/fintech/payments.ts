@@ -17,6 +17,7 @@ try {
     CREATE TABLE IF NOT EXISTS payment_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_id TEXT NOT NULL,
+      user_name TEXT,
       tariff TEXT NOT NULL,
       screenshot_seen INTEGER DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -24,6 +25,10 @@ try {
     );
     CREATE INDEX IF NOT EXISTS idx_pay_req_chat ON payment_requests(chat_id, status);
   `);
+  // Миграция добавления колонки user_name если таблица уже существовала
+  try {
+    sqliteDb.exec(`ALTER TABLE payment_requests ADD COLUMN user_name TEXT;`);
+  } catch (_) {}
 } catch (e) {
   logger.warn('⚠️ [Fintech] Payments tables initialization note:', e);
 }
@@ -37,6 +42,7 @@ export interface PaymentResult {
 export interface PaymentRequest {
   id?: number;
   chat_id: string;
+  user_name?: string;
   tariff: string;
   screenshot_seen: number;
   created_at: string;
@@ -46,11 +52,13 @@ export interface PaymentRequest {
 export function savePaymentRequest(
   chatId: string | number,
   tariff: string = 'month',
-  screenshotSeen: boolean = false
+  screenshotSeen: boolean = false,
+  userName?: string
 ): PaymentRequest {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
   const nowStr = new Date().toISOString();
   const seen = screenshotSeen ? 1 : 0;
+  const name = userName ? String(userName).trim() : '';
 
   // Normalize tariff name
   let normTariff = '199₽/мес';
@@ -63,20 +71,37 @@ export function savePaymentRequest(
 
   try {
     sqliteDb.prepare(`
-      INSERT INTO payment_requests (chat_id, tariff, screenshot_seen, created_at, status)
-      VALUES (?, ?, ?, ?, 'pending')
-    `).run(cleanId, normTariff, seen, nowStr);
+      INSERT INTO payment_requests (chat_id, user_name, tariff, screenshot_seen, created_at, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(cleanId, name, normTariff, seen, nowStr);
   } catch (err) {
     logger.error('❌ Error saving payment request:', err);
   }
 
   return {
     chat_id: cleanId,
+    user_name: name,
     tariff: normTariff,
     screenshot_seen: seen,
     created_at: nowStr,
     status: 'pending'
   };
+}
+
+export function getPendingPaymentRequests(): PaymentRequest[] {
+  try {
+    const rows = sqliteDb.prepare(`
+      SELECT id, chat_id, user_name, tariff, screenshot_seen, created_at, status
+      FROM payment_requests
+      WHERE status = 'pending'
+      ORDER BY id DESC
+      LIMIT 50
+    `).all() as PaymentRequest[];
+    return rows;
+  } catch (err) {
+    logger.error('❌ Error getting pending payment requests:', err);
+    return [];
+  }
 }
 
 export function activateManualPayment(

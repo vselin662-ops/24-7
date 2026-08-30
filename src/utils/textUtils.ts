@@ -1,4 +1,4 @@
-import { normalizeForVoice as normalizeVoiceUtil } from "./voiceNormalizer";
+import { normalizeForVoice as normalizeVoiceUtil, normalizeForSpeech as normalizeSpeechUtil } from "./voiceNormalizer";
 
 export function cleanForMax(text: string): string {
   if (!text) return '';
@@ -51,44 +51,89 @@ export function normalizeForVoice(text: string): string {
 }
 
 /**
- * Разбивает текст на логические чанки для TTS
+ * Глобальный нормализатор для всех TTS ответов (ШАГ 5)
  */
-export function splitTextSmart(text: string, maxLen: number = 300): string[] {
+export function normalizeForSpeech(text: string): string {
+  if (!text) return '';
+  return normalizeSpeechUtil(text);
+}
+
+/**
+ * Правильная нарезка текста на чанки по границам предложений (ШАГ 2):
+ * 1. Режет ТОЛЬКО по границам предложений: после . ! ? …
+ * 2. Если предложение длиннее 300 символов — режет по запятым.
+ * 3. НИКОГДА не режет внутри фразы или слова.
+ */
+export function chunkText(text: string, maxLen: number = 300): string[] {
   if (!text || !text.trim()) return [];
   const raw = text.trim();
   if (raw.length <= maxLen) return [raw];
 
   const result: string[] = [];
+  // Режем строго по границам предложений (. ! ? …)
   const sentences = raw.split(/(?<=[.!?…])\s+/);
   let current = '';
 
   for (const sentence of sentences) {
-    if (!sentence) continue;
-    if ((current + ' ' + sentence).trim().length <= maxLen) {
-      current = (current ? current + ' ' : '') + sentence;
+    if (!sentence || !sentence.trim()) continue;
+
+    if ((current ? current + ' ' + sentence : sentence).length <= maxLen) {
+      current = current ? current + ' ' + sentence : sentence;
     } else {
-      if (current) result.push(current.trim());
+      if (current) {
+        result.push(current.trim());
+        current = '';
+      }
+
+      // Если отдельное предложение длиннее maxLen — режем по запятым
       if (sentence.length > maxLen) {
-        // Если отдельное предложение больше maxLen, режем по запятым или пробелам
-        const words = sentence.split(' ');
+        const clauses = sentence.split(/(?<=,)\s+/);
         let temp = '';
-        for (const w of words) {
-          if ((temp + ' ' + w).trim().length <= maxLen) {
-            temp = (temp ? temp + ' ' : '') + w;
+        for (const clause of clauses) {
+          if (!clause || !clause.trim()) continue;
+          if ((temp ? temp + ' ' + clause : clause).length <= maxLen) {
+            temp = temp ? temp + ' ' + clause : clause;
           } else {
-            if (temp) result.push(temp.trim());
-            temp = w;
+            if (temp) {
+              result.push(temp.trim());
+              temp = '';
+            }
+            if (clause.length > maxLen) {
+              // Если кусок всё ещё длиннее maxLen — режем строго по словам, не ломая слова
+              const words = clause.split(/\s+/);
+              let wTemp = '';
+              for (const w of words) {
+                if ((wTemp ? wTemp + ' ' + w : w).length <= maxLen) {
+                  wTemp = wTemp ? wTemp + ' ' + w : w;
+                } else {
+                  if (wTemp) result.push(wTemp.trim());
+                  wTemp = w;
+                }
+              }
+              if (wTemp) temp = wTemp;
+            } else {
+              temp = clause;
+            }
           }
         }
-        if (temp) current = temp;
-        else current = '';
+        if (temp && temp.trim()) {
+          current = temp;
+        }
       } else {
         current = sentence;
       }
     }
   }
+
   if (current && current.trim()) {
     result.push(current.trim());
   }
-  return result;
+
+  return result.length > 0 ? result : [raw];
 }
+
+/**
+ * Алиас для обратной совместимости
+ */
+export const splitTextSmart = chunkText;
+

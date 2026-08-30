@@ -17,8 +17,6 @@ const MAX_TEXT_LIMIT = 3800;
 
 export const YOOMONEY_PAY_URL = 'https://yoomoney.ru/to/4100119243483246';
 
-export const VOICE_HOOK_TEXT = 'Здравствуйте! Я — Selin AI, профессиональный интеллектуальный ассистент, работающий 24 на 7, без выходных. Для каждого владельца я составляю личные дедлайны: утренний брифинг с планом дня, напоминания о важном и контроль ваших задач. Я подстраиваюсь под вас — запоминаю привычки, желания, ритм жизни, и с каждым днём становлюсь точнее. Я озвучиваю книги и Библию, понимаю фото и скриншоты, рисую картинки по словам, нахожу новости, цены и погоду в интернете в реальном времени. Соберу список продуктов под любое блюдо и посчитаю смету. Всё это — 199 рублей в месяц. Нажмите кнопку оплаты, пришлите скриншот — и я приступаю к работе с этой минуты.';
-
 export const SUBSCRIPTION_BUTTONS = [
   [
     { type: 'link', text: '💳 Поддержать — 199₽/мес', url: YOOMONEY_PAY_URL }
@@ -1080,7 +1078,29 @@ export class MaxAdapter {
 
       const lowerText = (text || '').toLowerCase().trim();
 
-      // === ШАГ 3: КОМАНДА ВЛАДЕЛЬЦА 'активировать <chat_id> month|year' ===
+      // === ШАГ 3.1: КОМАНДА ВЛАДЕЛЬЦА 'заявки' ===
+      if (lowerText === 'заявки' || lowerText === '/requests' || lowerText === '/claims' || lowerText === 'заявка') {
+        const { isOwner } = await import("../fintech/subscriptions");
+        if (isOwner(cleanId)) {
+          const { getPendingPaymentRequests } = await import("../fintech/payments");
+          const pending = getPendingPaymentRequests();
+          if (pending.length === 0) {
+            const emptyMsg = '📭 Нет активных заявок на оплату.';
+            await this.safeSendMessageToChat(cleanId, emptyMsg);
+          } else {
+            const items = pending.map((req, idx) => {
+              const period = (req.tariff && (req.tariff.includes('1800') || req.tariff.includes('year') || req.tariff.includes('год'))) ? 'year' : 'month';
+              const nameStr = req.user_name || req.chat_id;
+              return `💳 Заявка #${req.id || idx + 1}: ${nameStr}\nТариф: ${period}\nПроверь поступление в ЮMoney.\nАктивация (скопируй): активировать ${req.chat_id} ${period}`;
+            }).join('\n\n');
+            const listMsg = `📋 Список активных заявок (${pending.length}):\n\n${items}`;
+            await this.safeSendMessageToChat(cleanId, listMsg);
+          }
+          return res.status(200).send('ok');
+        }
+      }
+
+      // === ШАГ 3.2: КОМАНДА ВЛАДЕЛЬЦА 'активировать <chat_id> month|year' ===
       const activateMatch = text.trim().match(/^активировать\s+(\S+)(?:\s+(.+))?/i) || text.trim().match(/^\/activate\s+(\S+)(?:\s+(.+))?/i);
       if (activateMatch) {
         const { isOwner } = await import("../fintech/subscriptions");
@@ -1105,35 +1125,34 @@ export class MaxAdapter {
         }
       }
 
-      // === ШАГ 2: ПОДТВЕРЖДЕНИЕ ОПЛАТЫ ('оплачено', 'оплатил', скриншот чека) ===
-      const isPaidTrigger = lowerText === 'оплачено' || lowerText.startsWith('оплачено') ||
-                            lowerText === 'оплатил' || lowerText.startsWith('оплатил') ||
-                            lowerText === 'оплатила' || lowerText.startsWith('оплатила') ||
-                            lowerText === '/paid' || lowerText === 'оплата';
-      const isPaymentProof = isPaidTrigger || (hasImage && (
-        lowerText.includes('оплачен') ||
-        lowerText.includes('оплатил') ||
-        lowerText.includes('чек') ||
+      // === ШАГ 2: ПОДТВЕРЖДЕНИЕ ОПЛАТЫ (нечёткий триггер + скриншот) ===
+      const fuzzyPaidRegex = /оплачен|оплатил|оплата|чек|я перев|перевела|перевёл|перевел|\/paid/i;
+      const isPaidTrigger = fuzzyPaidRegex.test(lowerText) || (hasImage && (
+        fuzzyPaidRegex.test(lowerText) ||
         lowerText.includes('сбп') ||
         lowerText.includes('юмани') ||
         lowerText.includes('yoomoney') ||
-        lowerText.includes('перевод')
+        lowerText.includes('перевод') ||
+        lowerText.length === 0
       ));
 
-      if (isPaymentProof) {
-        const detectedPeriod = (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('1800')) ? 'year' : 'month';
+      if (isPaidTrigger) {
+        const detectedPeriod = (lowerText.includes('год') || lowerText.includes('year') || lowerText.includes('1800') || lowerText.includes('365')) ? 'year' : 'month';
+        const senderName = raw.user?.name || raw.sender?.name || raw.message?.sender?.name || raw.payload?.user?.name || cleanId;
         const { savePaymentRequest } = await import("../fintech/payments");
-        savePaymentRequest(cleanId, detectedPeriod, hasImage);
+        savePaymentRequest(cleanId, detectedPeriod, hasImage, senderName);
 
         // Уведомление владельцу
-        const senderName = raw.user?.name || raw.sender?.name || raw.message?.sender?.name || raw.payload?.user?.name || cleanId;
         const ownerChatId = process.env.OWNER_CHAT_ID || process.env.ADMIN_USER_ID || process.env.ADMIN_CHAT_ID;
         if (ownerChatId) {
-          const ownerMsg = `💳 Заявка: chat=${cleanId} имя=${senderName}. Активация: активировать ${cleanId} ${detectedPeriod}`;
+          const ownerMsg = `💳 Заявка: ${senderName}\nТариф: ${detectedPeriod}\nПроверь поступление в ЮMoney.\nАктивация (скопируй): активировать ${cleanId} ${detectedPeriod}`;
           await this.safeSendMessageToChat(ownerChatId, ownerMsg);
+        } else {
+          console.log('⚠️ [Pay] owner not set, request stored');
+          logger.warn('⚠️ [Pay] owner not set, request stored');
         }
 
-        const userReply = '✅ Заявка принята! Активирую в течение 10 минут.';
+        const userReply = '✅ Заявка принята! Владелец подтвердит оплату в течение 10 минут — и я приступлю к работе.';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, userReply);
         } else {

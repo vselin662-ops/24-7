@@ -691,3 +691,40 @@ export const normalizeBiblicalReferences = (text: string) => replaceBiblicalRefe
 export const normalizeYears = (text: string) => replaceYears(text);
 export const normalizeTimeOfDay = (text: string) => replaceTime(text);
 export const normalizeHours12 = (text: string) => replaceNumbersBeforeNouns(text);
+
+/**
+ * Глобальный нормализатор для всех TTS ответов (ШАГ 5)
+ */
+export function normalizeForSpeech(text: string): string {
+  if (!text) return '';
+  let res = String(text);
+
+  // 1. URL и @никнеймы -> вырезать
+  res = res.replace(/https?:\/\/\S+/gi, '');
+  res = res.replace(/@[a-zA-Z0-9_]+/g, '');
+
+  // 2. Эмодзи -> вырезать
+  res = res.replace(/[\u{1F000}-\u{1FAFF}\u{2190}-\u{27BF}\u{FE0F}]/gu, '');
+  res = res.replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, '');
+
+  // 3. 24/7 -> круглосуточно
+  res = res.replace(/\b24\/7\b/gi, 'круглосуточно');
+  res = res.replace(/\b24\s*на\s*7\b/gi, 'круглосуточно');
+
+  // 4. Selin AI / Selin -> Селин
+  res = res.replace(/\bSelin\s*AI\b/gi, 'Селин');
+  res = res.replace(/\bSelin\b/gi, 'Селин');
+
+  // 5. 199₽ / 199 руб / 199 рублей -> сто девяносто девять рублей
+  res = res.replace(/\b199\s*(?:₽|руб(?:л[ейяь])?|р(?:\.|\b))/gi, 'сто девяносто девять рублей');
+
+  // 6. 1800₽ / 1800 руб / 1800 рублей -> тысяча восемьсот рублей
+  res = res.replace(/\b1800\s*(?:₽|руб(?:л[ейяь])?|р(?:\.|\b))/gi, 'тысяча восемьсот рублей');
+
+  // 7. Базовая нормализация чисел, дат, библейских ссылок
+  res = normalizeForVoice(res);
+
+  // Очистка лишних пробелов
+  res = res.replace(/\s+/g, ' ').trim();
+  return res;
+}
