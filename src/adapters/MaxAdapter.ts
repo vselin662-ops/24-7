@@ -301,10 +301,10 @@ export class MaxAdapter {
   }
 
   /**
-   * Безопасная отправка текстового сообщения в чат MAX
+   * Единый метод отправки сообщения пользователю в MAX Messenger
    */
-  public async safeSendMessageToChat(
-    chatId: number | string,
+  public async sendToUser(
+    userId: number | string,
     text?: string | null,
     extra?: Record<string, unknown>
   ): Promise<unknown> {
@@ -314,20 +314,20 @@ export class MaxAdapter {
       return null;
     }
 
-    const cleanIdStr = String(chatId).replace(/^[a-z_]+/, '');
+    const cleanIdStr = String(userId).replace(/^[a-z_]+/, '');
     const numericId = parseInt(cleanIdStr, 10);
     if (isNaN(numericId) || numericId <= 0) {
-      logger.error("❌ [MaxAdapter] Invalid numericId for safeSendMessageToChat", { raw: chatId, parsed: numericId });
+      logger.error("❌ [MaxAdapter] Invalid numericId for sendToUser", { raw: userId, parsed: numericId });
       return null;
     }
 
     if (!text || text.trim() === '') {
       if (extra) {
         try {
-          return await this.bot.api.sendMessageToChat(numericId, undefined as any, extra);
+          return await this.bot.api.sendMessageToUser(numericId, undefined as any, extra);
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          logger.error("❌ [MaxAdapter] Max send failed in safeSendMessageToChat", { chatId: numericId, message: errorMsg });
+          logger.error("❌ [MaxAdapter] Max send failed in sendToUser", { userId: numericId, message: errorMsg });
           return null;
         }
       }
@@ -345,11 +345,11 @@ export class MaxAdapter {
         const chunk = chunks[i];
         const currentExtra = (i === 0) ? extra : undefined;
         try {
-          lastMsg = await this.bot.api.sendMessageToChat(numericId, chunk as any, currentExtra);
+          lastMsg = await this.bot.api.sendMessageToUser(numericId, chunk as any, currentExtra);
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          logger.error("❌ [MaxAdapter] Max send failed in safeSendMessageToChat", {
-            chatId: numericId,
+          logger.error("❌ [MaxAdapter] Max send failed in sendToUser", {
+            userId: numericId,
             message: errorMsg,
             chunkIndex: i
           });
@@ -362,20 +362,20 @@ export class MaxAdapter {
     }
 
     try {
-      const message = await this.bot.api.sendMessageToChat(numericId, trimmedText as any, extra);
-      logger.info(`✅ [MaxAdapter] Message successfully sent to Max chat ${numericId}`);
+      const message = await this.bot.api.sendMessageToUser(numericId, trimmedText as any, extra);
+      logger.info(`✅ [MaxAdapter] Message successfully sent to Max user ${numericId}`);
       return message;
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.error("❌ [MaxAdapter] Max send failed in safeSendMessageToChat", {
-        chatId: numericId,
+      logger.error("❌ [MaxAdapter] Max send failed in sendToUser", {
+        userId: numericId,
         message: errorMsg
       });
 
       // Fallback: попытаться отправить обычный текст если была отправка с вложениями
       if (extra && trimmedText) {
         try {
-          return await this.bot.api.sendMessageToChat(numericId, trimmedText);
+          return await this.bot.api.sendMessageToUser(numericId, trimmedText);
         } catch (fallbackErr: unknown) {
           const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
           logger.error(`❌ [MaxAdapter] Fallback plain-text send failed: ${fbMsg}`);
@@ -384,6 +384,17 @@ export class MaxAdapter {
 
       return null;
     }
+  }
+
+  /**
+   * Алиас для обратной совместимости: безопасная отправка текстового сообщения пользователю MAX
+   */
+  public async safeSendMessageToChat(
+    chatId: number | string,
+    text?: string | null,
+    extra?: Record<string, unknown>
+  ): Promise<unknown> {
+    return this.sendToUser(chatId, text, extra);
   }
 
   /**
@@ -418,7 +429,7 @@ export class MaxAdapter {
 
           if (uploadRes.ok) {
             await new Promise(resolve => setTimeout(resolve, 1500));
-            await this.bot.api.sendMessageToChat(numericId, '', {
+            await this.bot.api.sendMessageToUser(numericId, '', {
               attachments: [{
                 type: 'audio',
                 payload: {
@@ -427,7 +438,7 @@ export class MaxAdapter {
                 }
               }] as any
             });
-            logger.info(`🎤 [MaxAdapter] Voice message chunk successfully sent to chat ${numericId}`);
+            logger.info(`🎤 [MaxAdapter] Voice message chunk successfully sent to user ${numericId}`);
             return true;
           } else {
             logger.warn(`⚠️ [MaxAdapter] Upload to MAX storage failed with status ${uploadRes.status}`);
@@ -534,7 +545,7 @@ export class MaxAdapter {
             if (this.bot && !isNaN(numericId) && numericId > 0) {
               const uploadToken = await this.uploadImageBufferToMax(imageBuffer, mimeType);
               if (uploadToken) {
-                await this.bot.api.sendMessageToChat(numericId, caption, {
+                await this.bot.api.sendMessageToUser(numericId, caption, {
                   attachments: [{
                     type: 'image',
                     payload: {
@@ -568,7 +579,7 @@ export class MaxAdapter {
           const pBuf = Buffer.from(await pRes.arrayBuffer());
           const uploadToken = await this.uploadImageBufferToMax(pBuf, 'image/jpeg');
           if (uploadToken && this.bot && !isNaN(numericId) && numericId > 0) {
-            await this.bot.api.sendMessageToChat(numericId, caption, {
+            await this.bot.api.sendMessageToUser(numericId, caption, {
               attachments: [{
                 type: 'image',
                 payload: {
@@ -595,7 +606,7 @@ export class MaxAdapter {
             }
           ]
         };
-        await this.safeSendMessageToChat(cleanId, caption, extra);
+        await this.sendToUser(cleanId, caption, extra);
       }
 
       if (isVoiceInput) {
@@ -885,57 +896,58 @@ export class MaxAdapter {
       // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА
       logger.info(`📦 RAW BODY: ${JSON.stringify(raw)}`);
 
-      // 1. Извлекаем chatId / senderId
+      // 1. Извлекаем senderId / chatId с приоритетом payload?.user?.user_id || body.user_id
       let chatId = 
-        raw.chat_id || 
-        raw.user_id || 
-        raw.sender_id ||
-        raw.payload?.chat_id || 
-        raw.payload?.user_id || 
         raw.payload?.user?.user_id || 
         raw.payload?.user?.id || 
         raw.payload?.sender?.user_id ||
         raw.payload?.sender?.id ||
-        raw.body?.chat_id || 
-        raw.body?.user_id || 
+        raw.payload?.user_id || 
+        raw.payload?.chat_id || 
         raw.body?.user?.user_id || 
         raw.body?.user?.id ||
         raw.body?.sender?.user_id ||
         raw.body?.sender?.id ||
+        raw.body?.user_id || 
+        raw.body?.chat_id || 
         raw.user?.user_id ||
         raw.user?.id ||
         raw.sender?.user_id ||
-        raw.sender?.id;
+        raw.sender?.id ||
+        raw.sender_id;
 
-      if (!chatId && raw.message) {
-        chatId = 
-          raw.message.chat_id || 
-          raw.message.user_id || 
-          raw.message.sender_id || 
-          raw.message.sender?.user_id || 
-          raw.message.sender?.id || 
-          raw.message.recipient?.chat_id || 
-          raw.message.recipient?.user_id;
-      }
       if (!chatId && raw.payload?.message) {
         chatId = 
-          raw.payload.message.chat_id || 
-          raw.payload.message.user_id || 
-          raw.payload.message.sender_id || 
           raw.payload.message.sender?.user_id || 
           raw.payload.message.sender?.id || 
+          raw.payload.message.user_id || 
+          raw.payload.message.sender_id || 
+          raw.payload.message.chat_id || 
           raw.payload.message.recipient?.chat_id || 
           raw.payload.message.recipient?.user_id;
       }
       if (!chatId && raw.body?.message) {
         chatId = 
-          raw.body.message.chat_id || 
-          raw.body.message.user_id || 
-          raw.body.message.sender_id || 
           raw.body.message.sender?.user_id || 
           raw.body.message.sender?.id || 
+          raw.body.message.user_id || 
+          raw.body.message.sender_id || 
+          raw.body.message.chat_id || 
           raw.body.message.recipient?.chat_id || 
           raw.body.message.recipient?.user_id;
+      }
+      if (!chatId && raw.message) {
+        chatId = 
+          raw.message.sender?.user_id || 
+          raw.message.sender?.id || 
+          raw.message.user_id || 
+          raw.message.sender_id || 
+          raw.message.chat_id || 
+          raw.message.recipient?.chat_id || 
+          raw.message.recipient?.user_id;
+      }
+      if (!chatId) {
+        chatId = raw.chat_id || raw.user_id;
       }
 
       if (!chatId) {
