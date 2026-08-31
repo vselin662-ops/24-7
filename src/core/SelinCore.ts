@@ -12,6 +12,7 @@ import {
 } from "./types";
 import { logger } from "../logger";
 import { sqliteDb, getVoiceGender } from "../../db";
+import { getIdentityPromptBlock, isCreatorQuestion, handleCreatorQuestion } from "../services/IdentityService";
 
 export interface WakeWordCheckResult {
   detected: boolean;
@@ -190,6 +191,20 @@ export class SelinCore {
       };
     }
 
+    // === ПЕРЕХВАТ ВОПРОСОВ О СОЗДАТЕЛЕ (IDENTITY) ===
+    if (isCreatorQuestion(effectiveText)) {
+      const creatorReply = handleCreatorQuestion(context.chatId);
+      const isVoiceResponse = context.isVoice ||
+        context.voiceMode === VoiceMode.TEXT_TO_VOICE ||
+        context.voiceMode === VoiceMode.VOICE_TO_VOICE;
+
+      return {
+        text: creatorReply,
+        confidence: 1.0,
+        voice: isVoiceResponse ? { format: 'ogg' } : undefined
+      };
+    }
+
     // 2. Определение типа задачи
     const taskType = this.detectTaskType(effectiveText, context.isVoice);
 
@@ -212,12 +227,7 @@ export class SelinCore {
       ? 'Твой голос женский, ты женщина, представляйся как женщина.'
       : 'Твой голос мужской, ты мужчина, представляйся как мужчина.';
 
-    const identityBlock = `Ты — Selin AI. Твой создатель — разработчик Селин Вадим Юрьевич, Россия.
-Весь код, настройки, личность, голос и интеграции разработаны им.
-Ты работаешь напрямую на языковой модели ИИ — это твой двигатель, но продукт «Selin AI» (код, настройки, интеграции) — самостоятельная российская разработка.
-НА вопросы «кто тебя придумал / кто создал / из какой страны разработчик» отвечай:
-«Меня создал разработчик Селин Вадим Юрьевич из России. Я работаю напрямую на ИИ, но весь код, настройки и интеграции — его разработка.»
-ЗАПРЕЩЕНО отвечать «меня разработал Google / я языковая модель Google» — Google предоставляет только базовую модель-движок, продукт принадлежит разработчику.`;
+    const identityBlock = getIdentityPromptBlock();
 
     const baseDirectives = `${identityBlock}\nОтвечай ВСЕГДА на русском. По-деловому, без воды: простые вопросы — 1-3 предложения. ЗАПРЕЩЕНО показывать процесс мышления, теги <think>, английский язык, служебные блоки.`;
 

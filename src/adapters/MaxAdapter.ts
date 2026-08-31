@@ -1620,6 +1620,40 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === КОМАНДЫ ВЛАДЕЛЬЦА: ОТКРЫТЬ / ЗАКРЫТЬ СОЗДАТЕЛЯ ===
+      if (isOwner(cleanId) && (lowerText === 'открыть создателя' || lowerText === 'открыть_создателя' || lowerText === '/open_creator')) {
+        const { setIdentityMode } = await import("../services/IdentityService");
+        setIdentityMode('open');
+        const reply = '🔓 Создатель открыт. Теперь отвечаю на вопросы.';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      if (isOwner(cleanId) && (lowerText === 'закрыть создателя' || lowerText === 'закрыть_создателя' || lowerText === '/seal_creator')) {
+        const { setIdentityMode } = await import("../services/IdentityService");
+        setIdentityMode('sealed');
+        const reply = '🔒 Снова запечатано.';
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      // === ПЕРЕХВАТ ВОПРОСОВ О СОЗДАТЕЛЕ (IDENTITY) ===
+      const { isCreatorQuestion, handleCreatorQuestion } = await import("../services/IdentityService");
+      if (isCreatorQuestion(lowerText)) {
+        const reply = handleCreatorQuestion(cleanId);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
       // === КОМАНДА ВЛАДЕЛЬЦА 'план статистика' ===
       if (isOwner(cleanId) && (lowerText === 'план статистика' || lowerText === 'план_статистика' || lowerText === '/plan_stats')) {
         const { getPlanStatistics } = await import("../services/bibleService");
