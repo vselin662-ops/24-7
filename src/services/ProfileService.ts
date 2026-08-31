@@ -51,20 +51,86 @@ export interface UserSettings {
   updated_at?: string;
 }
 
-// Default Russian timezones list
-export const RUSSIAN_TIMEZONES = [
-  { id: 'Europe/Kaliningrad', label: 'Калининград (UTC+2)', offset: 2 },
-  { id: 'Europe/Moscow', label: 'Москва (UTC+3)', offset: 3 },
-  { id: 'Europe/Samara', label: 'Самара (UTC+4)', offset: 4 },
-  { id: 'Asia/Yekaterinburg', label: 'Екатеринбург (UTC+5)', offset: 5 },
-  { id: 'Asia/Omsk', label: 'Омск (UTC+6)', offset: 6 },
-  { id: 'Asia/Krasnoyarsk', label: 'Красноярск (UTC+7)', offset: 7 },
-  { id: 'Asia/Irkutsk', label: 'Иркутск (UTC+8)', offset: 8 },
-  { id: 'Asia/Yakutsk', label: 'Якутск (UTC+9)', offset: 9 },
-  { id: 'Asia/Vladivostok', label: 'Владивосток (UTC+10)', offset: 10 },
-  { id: 'Asia/Magadan', label: 'Магадан (UTC+11)', offset: 11 },
-  { id: 'Asia/Kamchatka', label: 'Камчатка (UTC+12)', offset: 12 }
+export interface RfTimezone {
+  id: string;
+  code: string;
+  label: string;
+  city: string;
+  offset: number;
+}
+
+// 11 Russian timezones with MSK offsets and short codes
+export const RUSSIAN_TIMEZONES: RfTimezone[] = [
+  { id: 'Europe/Kaliningrad', code: 'MSK-1', label: 'Калининград (MSK-1)', city: 'Калининград', offset: 2 },
+  { id: 'Europe/Moscow', code: 'MSK', label: 'Москва (MSK)', city: 'Москва', offset: 3 },
+  { id: 'Europe/Samara', code: 'MSK+1', label: 'Самара (MSK+1)', city: 'Самара', offset: 4 },
+  { id: 'Asia/Yekaterinburg', code: 'MSK+2', label: 'Екатеринбург (MSK+2)', city: 'Екатеринбург', offset: 5 },
+  { id: 'Asia/Omsk', code: 'MSK+3', label: 'Омск (MSK+3)', city: 'Омск', offset: 6 },
+  { id: 'Asia/Krasnoyarsk', code: 'MSK+4', label: 'Красноярск (MSK+4)', city: 'Красноярск', offset: 7 },
+  { id: 'Asia/Irkutsk', code: 'MSK+5', label: 'Иркутск (MSK+5)', city: 'Иркутск', offset: 8 },
+  { id: 'Asia/Yakutsk', code: 'MSK+6', label: 'Якутск (MSK+6)', city: 'Якутск', offset: 9 },
+  { id: 'Asia/Vladivostok', code: 'MSK+7', label: 'Владивосток (MSK+7)', city: 'Владивосток', offset: 10 },
+  { id: 'Asia/Magadan', code: 'MSK+8', label: 'Магадан (MSK+8)', city: 'Магадан', offset: 11 },
+  { id: 'Asia/Kamchatka', code: 'MSK+9', label: 'Камчатка (MSK+9)', city: 'Камчатка', offset: 12 }
 ];
+
+export const RF_TIMEZONES = RUSSIAN_TIMEZONES;
+
+export function getTzCode(tzId: string): string {
+  const found = RUSSIAN_TIMEZONES.find(t => t.id === tzId || t.code === tzId);
+  return found ? found.code : 'MSK';
+}
+
+export function getNextRfTimezone(currentTzId: string): RfTimezone {
+  const idx = RUSSIAN_TIMEZONES.findIndex(t => t.id === currentTzId || t.code === currentTzId);
+  if (idx === -1) {
+    return RUSSIAN_TIMEZONES[1]; // Moscow default
+  }
+  const nextIdx = (idx + 1) % RUSSIAN_TIMEZONES.length;
+  return RUSSIAN_TIMEZONES[nextIdx];
+}
+
+export const MORNING_SLOT_OPTIONS = ['06:30', '07:00', '07:30', '08:00'];
+export const NOON_SLOT_OPTIONS = ['12:00', '13:00', '14:00'];
+export const EVENING_SLOT_OPTIONS = ['20:00', '21:00', '22:00'];
+
+export function getNextSlotTime(current: string, options: string[]): string {
+  const curTrim = (current || '').trim();
+  // Match with or without leading 0
+  const normalizedCur = curTrim.length === 4 ? `0${curTrim}` : curTrim;
+  let idx = options.indexOf(normalizedCur);
+  if (idx === -1) {
+    idx = options.findIndex(opt => opt.replace(/^0/, '') === curTrim.replace(/^0/, ''));
+  }
+  if (idx === -1) {
+    return options[0];
+  }
+  return options[(idx + 1) % options.length];
+}
+
+// In-memory waiting state for city updates via callback
+const waitingCityMap = new Map<string, number>();
+
+export function setWaitingForCity(chatId: string | number, waiting: boolean): void {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (waiting) {
+    waitingCityMap.set(cleanId, Date.now());
+  } else {
+    waitingCityMap.delete(cleanId);
+  }
+}
+
+export function isWaitingForCity(chatId: string | number): boolean {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const ts = waitingCityMap.get(cleanId);
+  if (!ts) return false;
+  // Expire waiting state after 15 minutes
+  if (Date.now() - ts > 15 * 60 * 1000) {
+    waitingCityMap.delete(cleanId);
+    return false;
+  }
+  return true;
+}
 
 // Инициализация таблиц для онбординга и настроек пользователя
 if (sqliteDb) {

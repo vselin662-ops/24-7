@@ -13,7 +13,6 @@ import { scriptureService } from "./ScriptureService";
 import { 
   oneYearPlan, 
   DayPlan, 
-  getDayOfYear, 
   getUserPlanDay, 
   getPlanDaySummary, 
   getPlanContentsSummary, 
@@ -95,7 +94,7 @@ export const PLAN_QUESTION_EXTRA = {
             { type: 'callback', text: '❌ Отключить', payload: 'plan_off' }
           ],
           [
-            { type: 'callback', text: '⚙️ План Победы', payload: 'plan_settings' }
+            { type: 'callback', text: '⚙️ План Победы', payload: 'plan_open' }
           ]
         ]
       }
@@ -110,7 +109,7 @@ export const BRIEFING_QUESTION_EXTRA = {
       payload: {
         buttons: [
           [
-            { type: 'callback', text: '⚙️ Брифинг', payload: 'briefing_settings' }
+            { type: 'callback', text: '⚙️ Брифинг', payload: 'brief_open' }
           ]
         ]
       }
