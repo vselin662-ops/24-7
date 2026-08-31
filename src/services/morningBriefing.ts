@@ -1,9 +1,16 @@
 import { sqliteDb } from '../../db';
 import { logger } from '../logger';
 import { getSubscription, isOwner } from '../fintech/subscriptions';
-import { getUserSettings } from './ProfileService';
-import { BIBLE_PLAN } from '../data/biblePlan';
-import { getDayIndex } from './bibleService';
+import { 
+  getUserBriefingConfig, 
+  updateUserBriefingConfig, 
+  getUserPlanConfig, 
+  getUserSettings,
+  BriefingConfig 
+} from './ProfileService';
+import { scriptureService } from './ScriptureService';
+import { oneYearPlan } from './OneYearPlan';
+import { getDayOfYear, getLocalTimeAndDate } from './bibleService';
 import { cleanForMax } from '../utils/textUtils';
 
 export const DISABLE_BRIEFING_BUTTONS = [
@@ -23,126 +30,226 @@ export const DISABLE_BRIEFING_EXTRA = {
   ]
 };
 
-export async function fetchWeatherSummary(): Promise<string> {
+export interface WeatherData {
+  temp_C: string;
+  feelsLike_C: string;
+  windspeedKmph: string;
+  description: string;
+}
+
+/**
+ * Получение погоды через wttr.in format=j2 (только метрические единицы, русский язык)
+ */
+export async function fetchWeatherForUser(cityOrLocation: string): Promise<string> {
+  const query = encodeURIComponent(cityOrLocation.trim() || 'Moscow');
   try {
-    const res = await fetch('https://wttr.in/Moscow?format=%t,+%C,+ветер+%w', {
+    const res = await fetch(`https://wttr.in/${query}?format=j2&lang=ru`, {
       signal: AbortSignal.timeout(8000),
       headers: {
-        'Accept-Language': 'ru,ru-RU;q=0.9,en;q=0.8'
+        'Accept-Language': 'ru,ru-RU;q=0.9,en;q=0.8',
+        'User-Agent': 'curl/7.88.1'
       }
     });
+
     if (res.ok) {
-      const weather = (await res.text()).trim();
-      if (weather && weather.length > 0 && !weather.includes('<html') && !weather.includes('Unknown location')) {
-        return weather;
+      const data: any = await res.json();
+      const curr = data?.current_condition?.[0];
+      if (curr) {
+        const temp = curr.temp_C ? (Number(curr.temp_C) > 0 ? `+${curr.temp_C}` : curr.temp_C) : '+15';
+        const feels = curr.FeelsLikeC ? (Number(curr.FeelsLikeC) > 0 ? `+${curr.FeelsLikeC}` : curr.FeelsLikeC) : temp;
+        const wind = curr.windspeedKmph ? `${curr.windspeedKmph} км/ч` : '5 км/ч';
+        const desc = curr.lang_ru?.[0]?.value || curr.weatherDesc?.[0]?.value || 'ясно';
+
+        const feelsPart = feels !== temp ? ` (ощущается как ${feels}°C)` : '';
+        return `${temp}°C${feelsPart}, ${desc.toLowerCase()}, ветер ${wind}`;
       }
     }
   } catch (err: any) {
-    logger.warn('⚠️ [MorningBriefing] Weather fetch failed:', err?.message || err);
+    logger.warn(`⚠️ [MorningBriefing] Weather j2 fetch failed for ${cityOrLocation}:`, err?.message || err);
   }
 
-  // Фолбэк на краткий формат
+  // Фолбэк на короткий текстовый запрос
   try {
-    const res = await fetch('https://wttr.in/Moscow?format=%t,+%C', {
+    const res = await fetch(`https://wttr.in/${query}?format=%t,+%C,+ветер+%w&lang=ru`, {
       signal: AbortSignal.timeout(5000),
       headers: { 'Accept-Language': 'ru' }
     });
     if (res.ok) {
-      const weather = (await res.text()).trim();
-      if (weather && weather.length > 0 && !weather.includes('<html')) {
-        return weather;
+      const text = (await res.text()).trim();
+      if (text && !text.includes('<html') && !text.includes('Unknown location')) {
+        return text;
       }
     }
   } catch {}
 
-  return '+15°C, ясно, ветер легкий';
+  return '+15°C, переменная облачность, ветер легкий';
 }
 
-export async function getTodayVerseSummary(chatId: string): Promise<string> {
+/**
+ * Идемпотентная отметка об отправке утреннего брифинга
+ */
+export function markBriefingSent(chatId: string, dateStr: string): boolean {
+  if (!sqliteDb) return true;
   try {
-    let startDate: string | null = null;
-    if (sqliteDb) {
-      try {
-        const row = sqliteDb.prepare("SELECT start_date FROM bible_subs WHERE chat_id = ?").get(chatId) as any;
-        if (row?.start_date) {
-          startDate = row.start_date;
-        }
-      } catch {}
-    }
+    const exists = sqliteDb.prepare("SELECT 1 FROM briefing_sent_logs WHERE chat_id = ? AND date_str = ?")
+      .get(chatId, dateStr);
+    if (exists) return false;
 
-    const moscowDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
-    const dayIndex = getDayIndex(startDate || moscowDateStr);
-    const dayPlan = BIBLE_PLAN[dayIndex] || BIBLE_PLAN[0];
-    const item = dayPlan[0]; // Первый стих дня (например, Псалом)
+    sqliteDb.prepare("INSERT OR REPLACE INTO briefing_sent_logs (chat_id, date_str, created_at) VALUES (?, ?, ?)")
+      .run(chatId, dateStr, Date.now());
+    return true;
+  } catch (err) {
+    logger.warn(`⚠️ [Briefing] Failed to mark briefing_sent_logs for ${chatId}:`, err);
+    return true;
+  }
+}
 
-    if (item) {
-      let verseText = '';
-      try {
-        const res = await fetch('https://bible-api.com/' + encodeURIComponent(item.en) + '?translation=russian', {
-          signal: AbortSignal.timeout(6000)
-        });
-        if (res.ok) {
-          const data: any = await res.json();
-          verseText = (data?.text || '').trim().replace(/\s+/g, ' ');
-        }
-      } catch {}
+export function isBriefingAlreadySent(chatId: string, dateStr: string): boolean {
+  if (!sqliteDb) return false;
+  try {
+    const row = sqliteDb.prepare("SELECT 1 FROM briefing_sent_logs WHERE chat_id = ? AND date_str = ?")
+      .get(chatId, dateStr);
+    return !!row;
+  } catch {
+    return false;
+  }
+}
 
-      if (verseText) {
-        return `«${verseText}» (${item.ru})`;
-      }
-      return `${item.ru}`;
-    }
-  } catch (err: any) {
-    logger.warn('⚠️ [MorningBriefing] Verse fetch failed:', err?.message || err);
+/**
+ * Генерация полного текста брифинга для конкретного пользователя
+ */
+export async function buildUserMorningBriefing(chatId: string, userName?: string): Promise<string> {
+  const config: BriefingConfig = getUserBriefingConfig(chatId);
+  const userSettings = getUserSettings(chatId);
+  const tz = userSettings.tz || 'Europe/Moscow';
+  const name = userName ? userName.split(' ')[0] : 'друг';
+
+  const parts: string[] = [`☀️ Доброе утро, ${name}!`];
+
+  // 1. Погода
+  if (config.include_weather) {
+    const cityTarget = config.lat && config.lon ? `${config.lat},${config.lon}` : (config.city || 'Москва');
+    const weather = await fetchWeatherForUser(cityTarget);
+    const cityName = config.city || 'вашем городе';
+    parts.push(`В ${cityName}: ${weather}.`);
   }
 
-  return 'Господь — Пастырь мой; я ни в чем не буду нуждаться (Псалтирь 22:1)';
+  // 2. Притча: глава = числу дня месяца (1-31), 2-3 стиха
+  if (config.include_parable) {
+    try {
+      const now = new Date();
+      const dayOfMonth = parseInt(new Intl.DateTimeFormat('ru-RU', { timeZone: tz, day: 'numeric' }).format(now), 10) || 1;
+      const parableRes = await scriptureService.getPassage('Притчи', dayOfMonth, { start: 1, end: 3 });
+      if (parableRes?.text && !parableRes.text.includes('недоступен')) {
+        parts.push(`Притча ${dayOfMonth}: «${parableRes.text}»`);
+      }
+    } catch (pErr) {
+      logger.warn(`⚠️ [Briefing] Parable error for ${chatId}:`, pErr);
+    }
+  }
+
+  // 3. Псалом: randomPsalm(chatId) с не-повторением 3 дня
+  if (config.include_psalm) {
+    try {
+      const psalm = await scriptureService.randomPsalm(chatId);
+      if (psalm?.text && !psalm.text.includes('недоступен')) {
+        parts.push(`Псалом ${psalm.psalmNum}: «${psalm.text}»`);
+      }
+    } catch (psErr) {
+      logger.warn(`⚠️ [Briefing] Psalm error for ${chatId}:`, psErr);
+    }
+  }
+
+  // 4. Стих дня: из сегодняшнего чтения Плана Победы
+  if (config.include_verse) {
+    try {
+      const dayNum = getDayOfYear(tz);
+      const plan = oneYearPlan.getPlanForDay(dayNum);
+      const reading = plan.morning[0] || { b: 'Бытие', c: 1 };
+      const verseRes = await scriptureService.getPassage(reading.b, reading.c, { start: 1, end: 1 });
+      if (verseRes?.text && !verseRes.text.includes('недоступен')) {
+        parts.push(`Стих дня (${reading.b} ${reading.c}:1): «${verseRes.text}»`);
+      }
+    } catch (vErr) {
+      logger.warn(`⚠️ [Briefing] Verse error for ${chatId}:`, vErr);
+    }
+  }
+
+  parts.push('Хорошего и благословенного дня! 🙏');
+  return cleanForMax(parts.join(' '));
 }
 
-export async function sendMorningBriefingToAll(
-  sendText: (chatId: number, text: string, extra?: any) => Promise<void>
-) {
+/**
+ * Отправка брифинга конкретному пользователю
+ */
+export async function sendMorningBriefingToUser(
+  chatId: string,
+  userName?: string,
+  sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
+  sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
+): Promise<boolean> {
+  const numericId = parseInt(chatId, 10);
+  if (isNaN(numericId) || numericId <= 0) return false;
+
+  const userSettings = getUserSettings(chatId);
+  const briefingConfig = getUserBriefingConfig(chatId);
+  const planConfig = getUserPlanConfig(chatId);
+  const tz = userSettings.tz || 'Europe/Moscow';
+  const { dateStr } = getLocalTimeAndDate(tz);
+
+  if (!markBriefingSent(chatId, dateStr)) {
+    return false;
+  }
+
+  const text = await buildUserMorningBriefing(chatId, userName);
+
   try {
-    const candidateIds = new Set<string>();
-
-    // 1. Из таблицы subscriptions
-    if (sqliteDb) {
-      try {
-        const subRows = sqliteDb.prepare("SELECT chat_id FROM subscriptions WHERE active = 1").all() as any[];
-        for (const r of subRows) {
-          if (r.chat_id) candidateIds.add(String(r.chat_id).replace(/^[a-z_]+/, ''));
-        }
-      } catch {}
-
-      // 2. Из таблицы user_profiles
-      try {
-        const profRows = sqliteDb.prepare("SELECT chat_id FROM user_profiles WHERE briefing_enabled = 1").all() as any[];
-        for (const r of profRows) {
-          if (r.chat_id) candidateIds.add(String(r.chat_id).replace(/^[a-z_]+/, ''));
-        }
-      } catch {}
-
-      // 3. Из таблицы users
-      try {
-        const userRows = sqliteDb.prepare("SELECT chat_id FROM users WHERE greeted = 1").all() as any[];
-        for (const r of userRows) {
-          if (r.chat_id) candidateIds.add(String(r.chat_id).replace(/^[a-z_]+/, ''));
-        }
-      } catch {}
+    if (planConfig.voice_on !== 0) {
+      if (sendVoiceMessageFn) {
+        await sendVoiceMessageFn(numericId, text);
+      } else {
+        const { modernMaxAdapter } = await import('../../server');
+        await modernMaxAdapter.sendVoice(numericId, text);
+      }
+    } else {
+      if (sendTextMessageFn) {
+        await sendTextMessageFn(numericId, text, DISABLE_BRIEFING_EXTRA);
+      } else {
+        const { modernMaxAdapter } = await import('../../server');
+        await modernMaxAdapter.safeSendMessageToChat(numericId, text, DISABLE_BRIEFING_EXTRA);
+      }
     }
 
-    const OWNER = String(process.env.OWNER_CHAT_ID || '').trim();
-    if (OWNER) {
-      candidateIds.add(OWNER.replace(/^[a-z_]+/, ''));
-    }
+    logger.info(`☀️ [Brief] chat=${chatId} city=${briefingConfig.city} status=sent`);
+    return true;
+  } catch (err: any) {
+    logger.error(`❌ [Briefing] Delivery failed for ${chatId}:`, err?.message || err);
+    return false;
+  }
+}
 
-    const weather = await fetchWeatherSummary();
+/**
+ * Проверка расписания брифинга для всех пользователей
+ */
+export async function checkAndSendMorningBriefings(
+  sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
+  sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
+) {
+  if (!sqliteDb) return;
+  try {
+    const users = sqliteDb.prepare(`
+      SELECT chat_id, briefing_config, briefing_enabled, tz 
+      FROM user_profiles 
+      WHERE (briefing_enabled IS NULL OR briefing_enabled != 0)
+    `).all() as any[];
 
-    for (const cleanId of candidateIds) {
+    if (!users || users.length === 0) return;
+
+    for (const u of users) {
+      const cleanId = String(u.chat_id).replace(/^[a-z_]+/, '');
       const numericId = parseInt(cleanId, 10);
       if (isNaN(numericId) || numericId <= 0) continue;
 
-      // Проверка активности подписки
       const sub = getSubscription(cleanId);
       const isSubActive = !!(sub && Number(sub.active) === 1 && sub.paid_until && new Date(sub.paid_until).getTime() > Date.now());
       const isUserOwner = isOwner(cleanId);
@@ -151,56 +258,36 @@ export async function sendMorningBriefingToAll(
         continue;
       }
 
-      // Проверка настройки briefing_enabled
-      const settings = getUserSettings(cleanId);
-      if (settings.briefing_enabled !== 1) {
+      const cfg: BriefingConfig = getUserBriefingConfig(cleanId);
+      if (cfg.briefing_enabled === 0) continue;
+
+      const tz = u.tz || 'Europe/Moscow';
+      const { timeStr, dateStr } = getLocalTimeAndDate(tz);
+      const targetTime = cfg.time || '07:00';
+
+      if (timeStr !== targetTime) continue;
+
+      if (isBriefingAlreadySent(cleanId, dateStr)) {
         continue;
       }
 
-      const verse = await getTodayVerseSummary(cleanId);
-      const briefingText = cleanForMax(`☀️ Доброе утро! Погода сегодня: ${weather}. Стих дня: ${verse}. Хорошего дня! 🙏`);
-
+      let userName = '';
       try {
-        await sendText(numericId, briefingText, DISABLE_BRIEFING_EXTRA);
-        logger.info(`☀️ [MorningBriefing] Отправлен брифинг для chat_id=${cleanId}`);
-      } catch (sendErr: any) {
-        logger.error(`❌ [MorningBriefing] Ошибка отправки для chat_id=${cleanId}:`, sendErr?.message || sendErr);
-      }
+        const userRow = sqliteDb.prepare("SELECT name, username FROM users WHERE chat_id = ?").get(cleanId) as any;
+        userName = userRow?.name || userRow?.username || '';
+      } catch {}
+
+      await sendMorningBriefingToUser(cleanId, userName, sendTextMessageFn, sendVoiceMessageFn);
     }
   } catch (err: any) {
-    logger.error('❌ [MorningBriefing] Ошибка в планировщике утреннего брифинга:', err);
+    logger.error('❌ [MorningBriefing] Scheduler run error:', err);
   }
 }
 
 export function startMorningScheduler(
-  sendText: (chatId: number, text: string, extra?: any) => Promise<void>,
-  _sendVoice?: (chatId: number, text: string) => Promise<void>
+  sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
+  sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
 ) {
-  setInterval(async () => {
-    try {
-      const now = new Date();
-      const timeStr = new Intl.DateTimeFormat('ru-RU', {
-        timeZone: 'Europe/Moscow',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      }).format(now);
-
-      // Крон 0 7 * * * (07:00 Europe/Moscow)
-      if (timeStr !== '07:00') return;
-
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(now);
-      const g = global as any;
-      if (g['briefing_7am_' + dateStr]) return;
-      g['briefing_7am_' + dateStr] = true;
-
-      logger.info(`☀️ [MorningBriefing] Запуск утренней рассылки 07:00 MSK (дата: ${dateStr})`);
-      await sendMorningBriefingToAll(sendText);
-    } catch (e: any) {
-      logger.error('❌ [MorningBriefing] Scheduler error:', e);
-    }
-  }, 20000);
-
-  logger.info("☀️ Планировщик утреннего брифинга 7:00 MSK запущен (интервал 20 сек, зона Europe/Moscow)");
+  setInterval(() => checkAndSendMorningBriefings(sendTextMessageFn, sendVoiceMessageFn), 20000);
+  logger.info("☀️ Планировщик утреннего брифинга (пер-юзер) запущен (интервал 20 сек)");
 }
-

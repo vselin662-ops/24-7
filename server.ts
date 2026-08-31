@@ -300,6 +300,15 @@ async function startServer() {
       }
     );
 
+    // Start Subscription Reminder Scheduler
+    import("./src/fintech/subscriptions").then(({ startSubscriptionReminderScheduler }) => {
+      startSubscriptionReminderScheduler(async (chatId, text, extra) => {
+        await modernMaxAdapter.safeSendMessageToChat(chatId, text, extra);
+      });
+    }).catch((err) => {
+      logger.error("❌ Error initializing subscription reminder scheduler:", err);
+    });
+
     // Start Reminder Scheduler
     setInterval(async () => {
       try {

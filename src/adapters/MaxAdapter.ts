@@ -10,6 +10,7 @@ import { HOOK_TEXT, VOICE_HOOK_TEXT, getStartHookAudio } from "../services/Start
 import { ensureMp3Buffer } from "../lib/audioConvert";
 import { callVision, stripMarkdown } from "../core/LLMService";
 import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
+import { isOwner } from "../fintech/subscriptions";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
@@ -1242,8 +1243,9 @@ export class MaxAdapter {
         lowerText === 'выключить брифинг' ||
         lowerText === 'стоп брифинг'
       ) {
-        const { setBriefingEnabled } = await import("../services/ProfileService");
+        const { setBriefingEnabled, updateUserBriefingConfig } = await import("../services/ProfileService");
         setBriefingEnabled(cleanId, 0);
+        updateUserBriefingConfig(cleanId, { briefing_enabled: 0 });
         const reply = '✅ Брифинг отключён. Включить: команда «включить брифинг».';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, reply);
@@ -1259,9 +1261,10 @@ export class MaxAdapter {
         lowerText === '/briefing_on' ||
         lowerText === 'старт брифинг'
       ) {
-        const { setBriefingEnabled } = await import("../services/ProfileService");
+        const { setBriefingEnabled, updateUserBriefingConfig } = await import("../services/ProfileService");
         setBriefingEnabled(cleanId, 1);
-        const reply = '☀️ Утренний брифинг включён! Я буду присылать погоду и стих дня каждое утро в 7:00.';
+        updateUserBriefingConfig(cleanId, { briefing_enabled: 1 });
+        const reply = '☀️ Утренний брифинг включён! Я буду присылать погоду и наставление каждое утро в 7:00.';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, reply);
         } else {
@@ -1270,10 +1273,275 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === МЕНЮ НАСТРОЕК БРИФИНГА (⚙️ Брифинг) ===
+      if (
+        lowerText === '⚙️ брифинг' ||
+        lowerText === 'настройки брифинга' ||
+        lowerText === 'briefing_settings' ||
+        lowerText === '/briefing_settings' ||
+        lowerText === 'брифинг настройки'
+      ) {
+        const { getUserBriefingConfig } = await import("../services/ProfileService");
+        const cfg = getUserBriefingConfig(cleanId);
+        const menuText = `⚙️ **Настройки Утреннего Брифинга**:\n\n` +
+          `• 🏙 Город: **${cfg.city || 'Москва'}**\n` +
+          `• ⏰ Время: **${cfg.time || '07:00'}**\n` +
+          `• ☀️ Погода: ${cfg.include_weather ? '✅ Вкл' : '❌ Выкл'}\n` +
+          `• 📖 Притча: ${cfg.include_parable ? '✅ Вкл' : '❌ Выкл'}\n` +
+          `• 🎼 Псалом: ${cfg.include_psalm ? '✅ Вкл' : '❌ Выкл'}\n` +
+          `• ✝️ Стих дня: ${cfg.include_verse ? '✅ Вкл' : '❌ Выкл'}\n\n` +
+          `Чтобы изменить город, напишите: «город <название>» или пришлите геолокацию.`;
+
+        const menuExtra = {
+          attachments: [
+            {
+              type: 'inline_keyboard',
+              payload: {
+                buttons: [
+                  [
+                    { type: 'callback', text: `☀️ Погода ${cfg.include_weather ? '✅' : '❌'}`, payload: 'brief_toggle_weather' },
+                    { type: 'callback', text: `📖 Притча ${cfg.include_parable ? '✅' : '❌'}`, payload: 'brief_toggle_parable' }
+                  ],
+                  [
+                    { type: 'callback', text: `🎼 Псалом ${cfg.include_psalm ? '✅' : '❌'}`, payload: 'brief_toggle_psalm' },
+                    { type: 'callback', text: `✝️ Стих ${cfg.include_verse ? '✅' : '❌'}`, payload: 'brief_toggle_verse' }
+                  ],
+                  [
+                    { type: 'callback', text: '✅ Готово', payload: 'brief_done' }
+                  ]
+                ]
+              }
+            }
+          ]
+        };
+
+        await this.safeSendMessageToChat(cleanId, menuText, menuExtra);
+        return res.status(200).send('ok');
+      }
+
+      // === ПЕРЕХВАТ ВОПРОСОВ О БРИФИНГЕ ДО LLM ===
+      if (lowerText.includes('брифинг') || /брифинг[а-я]*/i.test(lowerText)) {
+        logger.info(`❓ [Intent] fn=briefing chat=${cleanId}`);
+        const { getUserBriefingConfig } = await import("../services/ProfileService");
+        const { BRIEFING_QUESTION_EXTRA } = await import("../services/bibleService");
+        const cfg = getUserBriefingConfig(cleanId);
+        const statusStr = cfg.briefing_enabled !== 0 ? 'вкл' : 'выкл';
+        const cityStr = cfg.city || 'Москва';
+
+        const parts: string[] = [];
+        if (cfg.include_weather) parts.push('погода');
+        if (cfg.include_parable) parts.push('притча');
+        if (cfg.include_psalm) parts.push('псалом');
+        if (cfg.include_verse) parts.push('стих дня');
+        const compList = parts.length > 0 ? parts.join(', ') : 'краткий';
+        const timeStr = cfg.time || '07:00';
+
+        const briefingReply = `☀️ Брифинг: ${statusStr}, город ${cityStr}, состав: ${compList}, время ${timeStr}. Завтра в 7:00 придёт голосом.`;
+
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, briefingReply);
+        }
+        await this.safeSendMessageToChat(cleanId, briefingReply, BRIEFING_QUESTION_EXTRA);
+        return res.status(200).send('ok');
+      }
+
+      // Тогглы брифинга
+      if (lowerText.startsWith('brief_toggle_') || lowerText === 'brief_done') {
+        const { getUserBriefingConfig, updateUserBriefingConfig } = await import("../services/ProfileService");
+        const cfg = getUserBriefingConfig(cleanId);
+
+        if (lowerText === 'brief_toggle_weather') {
+          updateUserBriefingConfig(cleanId, { include_weather: !cfg.include_weather });
+        } else if (lowerText === 'brief_toggle_parable') {
+          updateUserBriefingConfig(cleanId, { include_parable: !cfg.include_parable });
+        } else if (lowerText === 'brief_toggle_psalm') {
+          updateUserBriefingConfig(cleanId, { include_psalm: !cfg.include_psalm });
+        } else if (lowerText === 'brief_toggle_verse') {
+          updateUserBriefingConfig(cleanId, { include_verse: !cfg.include_verse });
+        } else if (lowerText === 'brief_done') {
+          const updatedCfg = getUserBriefingConfig(cleanId);
+          const parts: string[] = [];
+          if (updatedCfg.include_weather) parts.push('погода');
+          if (updatedCfg.include_parable) parts.push('притча');
+          if (updatedCfg.include_psalm) parts.push('псалом');
+          if (updatedCfg.include_verse) parts.push('стих дня');
+          const summaryStr = parts.length > 0 ? parts.join(', ') : 'краткий';
+          const doneMsg = `✅ Брифинг настроен: ${updatedCfg.city || 'Москва'}, состав: ${summaryStr}.`;
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, doneMsg);
+          } else {
+            await this.safeSendMessageToChat(cleanId, doneMsg);
+          }
+          return res.status(200).send('ok');
+        }
+
+        const newCfg = getUserBriefingConfig(cleanId);
+        const menuText = `⚙️ **Настройки Утреннего Брифинга**:\n\n` +
+          `• 🏙 Город: **${newCfg.city || 'Москва'}**\n` +
+          `• ⏰ Время: **${newCfg.time || '07:00'}**\n` +
+          `• ☀️ Погода: ${newCfg.include_weather ? '✅ Вкл' : '❌ Выкл'}\n` +
+          `• 📖 Притча: ${newCfg.include_parable ? '✅ Вкл' : '❌ Выкл'}\n` +
+          `• 🎼 Псалом: ${newCfg.include_psalm ? '✅ Вкл' : '❌ Выкл'}\n` +
+          `• ✝️ Стих дня: ${newCfg.include_verse ? '✅ Вкл' : '❌ Выкл'}\n\n` +
+          `Чтобы изменить город, напишите: «город <название>».`;
+
+        const menuExtra = {
+          attachments: [
+            {
+              type: 'inline_keyboard',
+              payload: {
+                buttons: [
+                  [
+                    { type: 'callback', text: `☀️ Погода ${newCfg.include_weather ? '✅' : '❌'}`, payload: 'brief_toggle_weather' },
+                    { type: 'callback', text: `📖 Притча ${newCfg.include_parable ? '✅' : '❌'}`, payload: 'brief_toggle_parable' }
+                  ],
+                  [
+                    { type: 'callback', text: `🎼 Псалом ${newCfg.include_psalm ? '✅' : '❌'}`, payload: 'brief_toggle_psalm' },
+                    { type: 'callback', text: `✝️ Стих ${newCfg.include_verse ? '✅' : '❌'}`, payload: 'brief_toggle_verse' }
+                  ],
+                  [
+                    { type: 'callback', text: '✅ Готово', payload: 'brief_done' }
+                  ]
+                ]
+              }
+            }
+          ]
+        };
+
+        await this.safeSendMessageToChat(cleanId, menuText, menuExtra);
+        return res.status(200).send('ok');
+      }
+
+      // Смена города для брифинга: «город Москва», «мой город Сочи»
+      const cityMatch = text.trim().match(/^(?:город|мой\s+город|смени\s+город\s+на)\s+(.+)$/i);
+      if (cityMatch && !lowerText.includes('как доехать') && !lowerText.includes('маршрут')) {
+        const inputCity = cityMatch[1].trim();
+        if (inputCity && inputCity.length >= 2) {
+          const { updateUserBriefingConfig } = await import("../services/ProfileService");
+          let resolvedCity = inputCity;
+          let lat: number | undefined;
+          let lon: number | undefined;
+
+          // Геокодинг города
+          try {
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(inputCity)}&format=json&limit=1`, {
+              signal: AbortSignal.timeout(5000),
+              headers: { 'User-Agent': 'SelinAI-Assistant/2.0' }
+            });
+            if (geoRes.ok) {
+              const geoData: any = await geoRes.json();
+              if (Array.isArray(geoData) && geoData.length > 0) {
+                resolvedCity = geoData[0].display_name.split(',')[0].trim();
+                lat = parseFloat(geoData[0].lat);
+                lon = parseFloat(geoData[0].lon);
+              }
+            }
+          } catch {}
+
+          updateUserBriefingConfig(cleanId, { city: resolvedCity, lat, lon });
+          const reply = `🏙 Город обновлён: **${resolvedCity}**. Теперь утренний брифинг будет присылать погоду для этого города!`;
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, reply);
+          } else {
+            await this.safeSendMessageToChat(cleanId, reply);
+          }
+          return res.status(200).send('ok');
+        }
+      }
+
+      // === МЕНЮ НАСТРОЕК ПЛАНА ПОБЕДЫ (⚙️ План Победы) ===
+      if (
+        lowerText === '⚙️ план победы' ||
+        lowerText === 'настройки плана' ||
+        lowerText === '/plan_settings' ||
+        lowerText === 'план победы настройки'
+      ) {
+        const { getUserPlanConfig } = await import("../services/ProfileService");
+        const cfg = getUserPlanConfig(cleanId);
+        const menuText = `⚙️ **Настройки Плана Победы**:\n\n` +
+          `• 🕊 Статус: **${cfg.plan_status === 'off' ? '❌ Отключен' : '✅ Активен'}**\n` +
+          `• 🌍 Часовой пояс: **${cfg.tz || 'Europe/Moscow'}**\n` +
+          `• 🔊 Голос: **${cfg.voice_on !== 0 ? 'Включен (TTS)' : 'Выключен (текст)'}**\n` +
+          `• ⏰ Расписание слотов:\n` +
+          `   🌅 Утро: ${cfg.slot_times.m} (Ветхий Завет)\n` +
+          `   ☀️ День: ${cfg.slot_times.n} (Новый Завет)\n` +
+          `   🌙 Вечер: ${cfg.slot_times.e} (Псалом и Притчи)`;
+
+        const menuExtra = {
+          attachments: [
+            {
+              type: 'inline_keyboard',
+              payload: {
+                buttons: [
+                  [
+                    { type: 'callback', text: `🔊 Голос: ${cfg.voice_on !== 0 ? 'Вкл ✅' : 'Выкл ❌'}`, payload: 'plan_toggle_voice' }
+                  ],
+                  [
+                    { type: 'callback', text: '🌍 Выбрать часовой пояс', payload: 'plan_choose_tz' }
+                  ],
+                  [
+                    { type: 'callback', text: '✅ Готово', payload: 'plan_done' }
+                  ]
+                ]
+              }
+            }
+          ]
+        };
+
+        await this.safeSendMessageToChat(cleanId, menuText, menuExtra);
+        return res.status(200).send('ok');
+      }
+
+      // Коллбэки настроек плана
+      if (lowerText === 'plan_toggle_voice') {
+        const { getUserPlanConfig, updateUserPlanConfig } = await import("../services/ProfileService");
+        const cfg = getUserPlanConfig(cleanId);
+        const newVoiceOn = cfg.voice_on !== 0 ? 0 : 1;
+        updateUserPlanConfig(cleanId, { voice_on: newVoiceOn });
+        const reply = `🔊 Озвучка Плана Победы: **${newVoiceOn === 1 ? 'Включена' : 'Выключена (только текст)'}**.`;
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText === 'plan_choose_tz') {
+        const { RUSSIAN_TIMEZONES } = await import("../services/ProfileService");
+        const buttons = RUSSIAN_TIMEZONES.slice(0, 6).map(tz => [
+          { type: 'callback', text: tz.label, payload: `plan_tz_${tz.id}` }
+        ]);
+
+        const tzExtra = {
+          attachments: [
+            {
+              type: 'inline_keyboard',
+              payload: { buttons }
+            }
+          ]
+        };
+
+        await this.safeSendMessageToChat(cleanId, '🌍 Выберите ваш часовой пояс:', tzExtra);
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText.startsWith('plan_tz_')) {
+        const tzId = text.substring('plan_tz_'.length).trim();
+        const { updateUserPlanConfig } = await import("../services/ProfileService");
+        updateUserPlanConfig(cleanId, { tz: tzId });
+        const reply = `🌍 Часовой пояс установлен: **${tzId}**. Рассылка будет приходить по вашему местному времени.`;
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      if (lowerText === 'plan_done') {
+        const doneReply = '✅ Настройки Плана Победы сохранены!';
+        await this.safeSendMessageToChat(cleanId, doneReply);
+        return res.status(200).send('ok');
+      }
+
       // === КНОПКИ И УПРАВЛЕНИЕ ПЛАНОМ ПОБЕДЫ ===
       if (lowerText === 'plan_keep' || lowerText === 'оставить как есть') {
-        const { setPlanStatus } = await import("../services/ProfileService");
+        const { setPlanStatus, updateUserPlanConfig } = await import("../services/ProfileService");
         setPlanStatus(cleanId, 'on_quiet');
+        updateUserPlanConfig(cleanId, { plan_status: 'on_quiet', plan_enabled: 1 });
         const reply = '✅ План Победы сохранён в тихом режиме (без дополнительных кнопок). Приятного прослушивания!';
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, reply);
@@ -1284,9 +1552,10 @@ export class MaxAdapter {
       }
 
       if (lowerText === 'plan_off' || lowerText === 'отключить план победы' || lowerText === 'выключить план победы' || lowerText === 'стоп план победы') {
-        const { setPlanStatus } = await import("../services/ProfileService");
+        const { setPlanStatus, updateUserPlanConfig } = await import("../services/ProfileService");
         const { sqliteDb } = await import("../../db");
         setPlanStatus(cleanId, 'off');
+        updateUserPlanConfig(cleanId, { plan_status: 'off', plan_enabled: 0 });
         try {
           if (sqliteDb) {
             sqliteDb.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
@@ -1304,10 +1573,10 @@ export class MaxAdapter {
       if (
         lowerText === 'включить план победы' ||
         lowerText === 'включить план' ||
-        lowerText === 'план победы' ||
+        lowerText === 'plan_on' ||
         lowerText === '/plan_on'
       ) {
-        const { setPlanStatus } = await import("../services/ProfileService");
+        const { setPlanStatus, updateUserPlanConfig } = await import("../services/ProfileService");
         const { sqliteDb } = await import("../../db");
         const { sendImmediatePlanPobedyVerse } = await import("../services/bibleService");
         const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
@@ -1319,6 +1588,7 @@ export class MaxAdapter {
         } catch {}
 
         setPlanStatus(cleanId, 'on_buttons');
+        updateUserPlanConfig(cleanId, { plan_status: 'on_buttons', plan_enabled: 1 });
         await sendImmediatePlanPobedyVerse(cleanId);
 
         const reply = '✅ План Победы включён! Отправил стих дня голосом. Благословений!';
@@ -1327,6 +1597,42 @@ export class MaxAdapter {
         } else {
           await this.safeSendMessageToChat(cleanId, reply);
         }
+        return res.status(200).send('ok');
+      }
+
+      // === ПЕРЕХВАТ ВОПРОСОВ О ПЛАНЕ ПОБЕДЫ ДО LLM ===
+      const isPlanQuestion = /план[а-я]*\s+побед[а-я]*/i.test(lowerText) || /побед[а-я]*\s+план[а-я]*/i.test(lowerText) || lowerText === 'план победы' || lowerText === 'план_победы';
+      if (isPlanQuestion) {
+        logger.info(`❓ [Intent] fn=plan chat=${cleanId}`);
+        const { getUserPlanConfig } = await import("../services/ProfileService");
+        const { getNearestPlanSlotTime, PLAN_QUESTION_EXTRA } = await import("../services/bibleService");
+        const cfg = getUserPlanConfig(cleanId);
+        const isEnabled = (cfg.plan_status === 'on_buttons' || cfg.plan_status === 'on_quiet' || cfg.plan_enabled === 1) && cfg.plan_status !== 'off';
+        const statusStr = isEnabled ? 'включён' : 'отключён';
+        const nextSlot = getNearestPlanSlotTime(cfg);
+
+        const planReply = `🕊 План Победы: ${statusStr}. Ближайшее голосовое: ${nextSlot}. Утро=ВЗ, обед=НЗ, вечер=Псалом+Притчи.`;
+
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, planReply);
+        }
+        await this.safeSendMessageToChat(cleanId, planReply, PLAN_QUESTION_EXTRA);
+        return res.status(200).send('ok');
+      }
+
+      // === КОМАНДА ВЛАДЕЛЬЦА 'план статистика' ===
+      if (isOwner(cleanId) && (lowerText === 'план статистика' || lowerText === 'план_статистика' || lowerText === '/plan_stats')) {
+        const { getPlanStatistics } = await import("../services/bibleService");
+        const statsReply = getPlanStatistics();
+        await this.safeSendMessageToChat(cleanId, statsReply);
+        return res.status(200).send('ok');
+      }
+
+      // === КОМАНДА ВЛАДЕЛЬЦА 'рассылка <текст>' (ЗАРЕЗЕРВИРОВАНО) ===
+      if (isOwner(cleanId) && lowerText.startsWith('рассылка')) {
+        logger.info(`📢 [Broadcast] Reserved command triggered by owner ${cleanId}: "${text}"`);
+        const reservedMsg = '📢 Массовые рассылки появятся в следующем релизе.';
+        await this.safeSendMessageToChat(cleanId, reservedMsg);
         return res.status(200).send('ok');
       }
 
@@ -1355,7 +1661,6 @@ export class MaxAdapter {
 
       // === ШАГ 3.1: КОМАНДА ВЛАДЕЛЬЦА 'заявки' ===
       if (lowerText === 'заявки' || lowerText === '/requests' || lowerText === '/claims' || lowerText === 'заявка') {
-        const { isOwner } = await import("../fintech/subscriptions");
         if (isOwner(cleanId)) {
           const { getPendingPaymentRequests } = await import("../fintech/payments");
           const pending = getPendingPaymentRequests();
@@ -1378,7 +1683,6 @@ export class MaxAdapter {
       // === ШАГ 3.2: КОМАНДА ВЛАДЕЛЬЦА 'активировать <chat_id> month|year' ===
       const activateMatch = text.trim().match(/^активировать\s+(\S+)(?:\s+(.+))?/i) || text.trim().match(/^\/activate\s+(\S+)(?:\s+(.+))?/i);
       if (activateMatch) {
-        const { isOwner } = await import("../fintech/subscriptions");
         if (isOwner(cleanId)) {
           const targetChatId = activateMatch[1].replace(/^[a-z_]+/, '');
           const requestedPeriod = (activateMatch[2] || 'month').trim();
@@ -1401,7 +1705,7 @@ export class MaxAdapter {
       }
 
       // === ШАГ 3: ПРОВЕРКА ДОСТУПА (Владелец / Активная подписка / Locked) ===
-      const { checkAccess, isOwner } = await import("../fintech/subscriptions");
+      const { checkAccess } = await import("../fintech/subscriptions");
       const hasAccess = checkAccess(cleanId);
 
       const fuzzyPaidRegex = /оплачен|оплатил|оплата|чек|перев|\/paid/i;

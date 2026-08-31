@@ -17,6 +17,14 @@ try {
       paid_until TEXT,
       active INTEGER
     );
+
+    CREATE TABLE IF NOT EXISTS reminder_sent_logs (
+      chat_id TEXT NOT NULL,
+      reminder_type TEXT NOT NULL,
+      date_str TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (chat_id, reminder_type, date_str)
+    );
   `);
 } catch (e) {
   logger.warn('⚠️ [Fintech] Subscriptions table initialization note:', e);
@@ -27,6 +35,116 @@ export interface Subscription {
   plan: string;
   paid_until: string;
   active: number;
+}
+
+export function markReminderSent(chatId: string, reminderType: string, dateStr: string): boolean {
+  if (!sqliteDb) return true;
+  try {
+    const exists = sqliteDb.prepare("SELECT 1 FROM reminder_sent_logs WHERE chat_id = ? AND reminder_type = ? AND date_str = ?")
+      .get(chatId, reminderType, dateStr);
+    if (exists) return false;
+
+    sqliteDb.prepare("INSERT OR REPLACE INTO reminder_sent_logs (chat_id, reminder_type, date_str, created_at) VALUES (?, ?, ?, ?)")
+      .run(chatId, reminderType, dateStr, Date.now());
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Проверка и отправка напоминаний об окончании подписки (9:00 ежедневно)
+ */
+export async function checkAndSendSubscriptionReminders(
+  sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>
+) {
+  if (!sqliteDb) return;
+  try {
+    const now = new Date();
+    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(now);
+    const subs = sqliteDb.prepare("SELECT * FROM subscriptions WHERE active = 1").all() as any[];
+
+    const { SUBSCRIPTION_EXTRA } = await import("../adapters/MaxAdapter");
+
+    for (const sub of subs) {
+      const cleanId = String(sub.chat_id).replace(/^[a-z_]+/, '');
+      const numericId = parseInt(cleanId, 10);
+      if (isNaN(numericId) || numericId <= 0) continue;
+      if (isOwner(cleanId)) continue; // Владельцу напоминания не нужны
+
+      if (!sub.paid_until) continue;
+      const paidUntilMs = new Date(sub.paid_until).getTime();
+      if (isNaN(paidUntilMs)) continue;
+
+      const diffMs = paidUntilMs - Date.now();
+      const daysLeft = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+
+      let reminderText = '';
+      let reminderType = '';
+
+      if (daysLeft === 3) {
+        reminderType = 'days_3';
+        reminderText = '🔔 Подписка заканчивается через 3 дня. Продлить — кнопки ниже.';
+      } else if (daysLeft === 1) {
+        reminderType = 'days_1';
+        reminderText = '⏰ Завтра подписка закончится. Продли, чтобы Селин не замолчал.';
+      } else if (daysLeft <= 0 && daysLeft >= -1) {
+        reminderType = 'days_0';
+        reminderText = '😢 Подписка закончилась. Спасибо, что был с нами! Продли — и я снова в строю.';
+      }
+
+      if (reminderType && reminderText) {
+        if (!markReminderSent(cleanId, reminderType, dateStr)) {
+          continue;
+        }
+
+        logger.info(`🔔 [Sub] reminder: chat=${cleanId} days=${daysLeft}`);
+
+        try {
+          if (sendTextMessageFn) {
+            await sendTextMessageFn(numericId, reminderText, SUBSCRIPTION_EXTRA);
+          } else {
+            const { modernMaxAdapter } = await import("../../server");
+            await modernMaxAdapter.safeSendMessageToChat(numericId, reminderText, SUBSCRIPTION_EXTRA);
+          }
+        } catch (err: any) {
+          logger.error(`❌ [Sub] Reminder delivery failed for ${cleanId}:`, err?.message || err);
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.error('❌ [Sub] Error checking subscription reminders:', err);
+  }
+}
+
+export function startSubscriptionReminderScheduler(
+  sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>
+) {
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const moscowTime = new Intl.DateTimeFormat('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).format(now);
+
+      if (moscowTime !== '09:00') return;
+
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(now);
+      const g = global as any;
+      if (g['sub_reminder_9am_' + dateStr]) return;
+      g['sub_reminder_9am_' + dateStr] = true;
+
+      logger.info(`🔔 [Sub] Запуск ежедневной проверки подписок 09:00 MSK (дата: ${dateStr})`);
+      await checkAndSendSubscriptionReminders(sendTextMessageFn);
+    } catch (e: any) {
+      logger.error('❌ [Sub] Scheduler error:', e);
+    }
+  }, 20000);
+
+  logger.info("🔔 Планировщик напоминаний подписки 9:00 MSK запущен (интервал 20 сек)");
 }
 
 export function getSubscription(chatId: string | number): Subscription | null {
