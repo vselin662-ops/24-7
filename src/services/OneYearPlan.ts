@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../logger';
+import { getUserPlanConfig, updateUserPlanConfig } from './ProfileService';
 
 export interface PlanChapter {
   b: string;       // Russian book name
@@ -241,6 +242,117 @@ export function getDayOfYear(date: Date = new Date(), timeZone: string = 'Europe
   }
 }
 
+export function isPlanFileExisting(): boolean {
+  const planPath = path.join(process.cwd(), 'data', 'one_year_plan.json');
+  return fs.existsSync(planPath);
+}
+
+export function getUserPlanDay(chatId: string | number, date: Date = new Date()): number {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const config = getUserPlanConfig(cleanId);
+  const tz = config.tz || 'Europe/Moscow';
+  const baseDay = getDayOfYear(date, tz);
+  const offset = config.plan_day_offset || 0;
+  return ((baseDay - 1 + offset) % 365 + 365) % 365 + 1;
+}
+
+export function getPlanDaySummary(chatId: string | number, isTomorrow: boolean = false): string {
+  if (!isPlanFileExisting()) {
+    return '⚠️ План не сгенерирован. Обратись к разработчику.';
+  }
+
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const config = getUserPlanConfig(cleanId);
+  const tz = config.tz || 'Europe/Moscow';
+
+  const now = new Date();
+  const targetDate = isTomorrow ? new Date(now.getTime() + 24 * 60 * 60 * 1000) : now;
+
+  const currentDay = getUserPlanDay(cleanId, now);
+  const targetDay = isTomorrow ? (((currentDay % 365) + 1)) : currentDay;
+
+  const dateFormatted = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: tz,
+    day: 'numeric',
+    month: 'long'
+  }).format(targetDate);
+
+  const plan = getPlanForDay(targetDay);
+  if (!plan) {
+    return '⚠️ План не сгенерирован. Обратись к разработчику.';
+  }
+
+  const mTime = (config.slot_times?.m || '07:30').replace(/^0/, '');
+  const nTime = (config.slot_times?.n || '13:00').replace(/^0/, '');
+  const eTime = (config.slot_times?.e || '21:00').replace(/^0/, '');
+
+  const morningStr = plan.morning && plan.morning.length > 0
+    ? plan.morning.map(c => c.ruName).join(', ')
+    : 'Бытие 1';
+  const noonStr = plan.noon && plan.noon.length > 0
+    ? plan.noon.map(c => c.ruName).join(', ')
+    : 'Матфея 1';
+  const psalmNum = plan.evening?.psalm?.c || ((targetDay - 1) % 150 + 1);
+  const proverbNum = plan.evening?.proverb?.c || 1;
+
+  const label = isTomorrow ? 'Завтра' : 'Сегодня';
+
+  return `📅 ${label}, ${dateFormatted}. День плана: ${targetDay}/365.\n🌅 Утро (${mTime}): ${morningStr}\n🌞 Обед (${nTime}): ${noonStr}\n🌙 Вечер (${eTime}): Псалом ${psalmNum}, Притча ${proverbNum}`;
+}
+
+export function getPlanContentsSummary(): string {
+  if (!isPlanFileExisting()) {
+    return '⚠️ План не сгенерирован. Обратись к разработчику.';
+  }
+
+  const plan = getOneYearPlan();
+  const otCount = 929;
+  const ntCount = 260;
+
+  const first7 = plan.slice(0, 7);
+  const last7 = plan.slice(358, 365);
+
+  const formatDay = (d: DayPlan) => {
+    const morning = d.morning.map(c => c.ruName).join(', ');
+    const noon = d.noon.map(c => c.ruName).join(', ');
+    const evening = `Псалом ${d.evening.psalm.c}, Притча ${d.evening.proverb.c}`;
+    return `• День ${d.day}: ВЗ: ${morning} | НЗ: ${noon} | ${evening}`;
+  };
+
+  const first7Str = first7.map(formatDay).join('\n');
+  const last7Str = last7.map(formatDay).join('\n');
+
+  return `📖 Содержание Плана Победы на 365 дней:
+
+📊 Общий объём:
+• 365 дней
+• ${otCount} глав Ветхого Завета
+• ${ntCount} глав Нового Завета
+• 150 псалмов
+• 31 притча
+
+Первые 7 дней:
+${first7Str}
+
+... [дни 8–358] ...
+
+Последние 7 дней:
+${last7Str}`;
+}
+
+export function skipUserPlanDays(chatId: string | number, days: number): string {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const config = getUserPlanConfig(cleanId);
+  const currentOffset = config.plan_day_offset || 0;
+  const newOffset = currentOffset + days;
+
+  updateUserPlanConfig(cleanId, { plan_day_offset: newOffset });
+
+  const newPlanDay = getUserPlanDay(cleanId);
+
+  return `⏩ План сдвинут на ${days} дн. Текущий день плана: ${newPlanDay}/365.`;
+}
+
 export function getPlanForDay(dayNumber: number): DayPlan {
   const plan = getOneYearPlan();
   const normalizedIndex = ((dayNumber - 1) % 365 + 365) % 365;
@@ -250,5 +362,11 @@ export function getPlanForDay(dayNumber: number): DayPlan {
 export const oneYearPlan = {
   getOneYearPlan,
   getPlanForDay,
-  getDayOfYear
+  getDayOfYear,
+  getUserPlanDay,
+  getPlanDaySummary,
+  getPlanContentsSummary,
+  skipUserPlanDays,
+  isPlanFileExisting
 };
+

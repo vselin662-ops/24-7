@@ -156,8 +156,11 @@ export class PureDatabase {
               let changes = 0;
               // Parse SET assignments
               const setPairs = setClause.split(",").map(p => p.trim());
+              const setParamCount = (setClause.match(/\?/g) || []).length;
+              const whereParams = params.slice(setParamCount);
+
               for (const [k, row] of Array.from(table.entries())) {
-                if (this.matchesWhere(row, whereClause, params)) {
+                if (this.matchesWhere(row, whereClause, whereParams)) {
                   let paramIdx = 0;
                   for (const pair of setPairs) {
                     const [c, valRaw] = pair.split("=").map(x => x.trim());

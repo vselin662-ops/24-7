@@ -53,6 +53,13 @@ export function isBibleQuery(text: string): boolean {
     lower.includes('бог благ и милость его велика') ||
     lower.includes('план победы') ||
     lower.includes('включить план') ||
+    lower.includes('план на сегодня') ||
+    lower.includes('план на завтра') ||
+    lower.includes('план сегодня') ||
+    lower.includes('план завтра') ||
+    lower.includes('план содержание') ||
+    lower.startsWith('план пропустить') ||
+    lower.startsWith('/plan_') ||
     lower.includes('тест рассылки') ||
     lower.includes('тест_рассылки') ||
     lower === '/bible' ||
@@ -1647,6 +1654,66 @@ export class MaxAdapter {
       const { isCreatorQuestion, handleCreatorQuestion } = await import("../services/IdentityService");
       if (isCreatorQuestion(lowerText)) {
         const reply = handleCreatorQuestion(cleanId);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      // === КОМАНДА 'план на сегодня' (для любого пользователя) ===
+      if (
+        lowerText === 'план на сегодня' ||
+        lowerText === 'план сегодня' ||
+        lowerText === 'план_на_сегодня' ||
+        lowerText === '/plan_today'
+      ) {
+        const { getPlanDaySummary } = await import("../services/bibleService");
+        const reply = getPlanDaySummary(cleanId, false);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      // === КОМАНДА 'план на завтра' (для любого пользователя) ===
+      if (
+        lowerText === 'план на завтра' ||
+        lowerText === 'план завтра' ||
+        lowerText === 'план_на_завтра' ||
+        lowerText === '/plan_tomorrow'
+      ) {
+        const { getPlanDaySummary } = await import("../services/bibleService");
+        const reply = getPlanDaySummary(cleanId, true);
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      // === КОМАНДА ВЛАДЕЛЬЦА 'план содержание' ===
+      if (
+        isOwner(cleanId) &&
+        (lowerText === 'план содержание' ||
+         lowerText === 'план_содержание' ||
+         lowerText === '/plan_contents' ||
+         lowerText === '/plan_content')
+      ) {
+        const { getPlanContentsSummary } = await import("../services/bibleService");
+        const reply = getPlanContentsSummary();
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
+      // === КОМАНДА ВЛАДЕЛЬЦА 'план пропустить <N дней>' ===
+      const skipMatch = lowerText.match(/^план\s+пропустить\s+(-?\d+)(?:\s+дн[еяй]|\s+дня|\s+дней)?/i) ||
+        lowerText.match(/^\/plan_skip\s+(-?\d+)/i);
+      if (isOwner(cleanId) && skipMatch) {
+        const skipDays = parseInt(skipMatch[1], 10);
+        const { skipUserPlanDays } = await import("../services/bibleService");
+        const reply = skipUserPlanDays(cleanId, skipDays);
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, reply);
         }

@@ -26,6 +26,7 @@ export interface UserPlanConfig {
   slot_times: SlotTimes;
   voice_on: number; // 1 = voice, 0 = text only
   recent_motivations: string[];
+  plan_day_offset?: number;
 }
 
 export interface BriefingConfig {
@@ -83,6 +84,7 @@ if (sqliteDb) {
         last_lat REAL,
         last_lon REAL,
         last_route TEXT,
+        plan_day_offset INTEGER DEFAULT 0,
         updated_at TEXT
       );
 
@@ -119,7 +121,8 @@ if (sqliteDb) {
       { name: 'briefing_enabled', sql: `ALTER TABLE user_profiles ADD COLUMN briefing_enabled INTEGER DEFAULT 1;` },
       { name: 'last_lat', sql: `ALTER TABLE user_profiles ADD COLUMN last_lat REAL;` },
       { name: 'last_lon', sql: `ALTER TABLE user_profiles ADD COLUMN last_lon REAL;` },
-      { name: 'last_route', sql: `ALTER TABLE user_profiles ADD COLUMN last_route TEXT;` }
+      { name: 'last_route', sql: `ALTER TABLE user_profiles ADD COLUMN last_route TEXT;` },
+      { name: 'plan_day_offset', sql: `ALTER TABLE user_profiles ADD COLUMN plan_day_offset INTEGER DEFAULT 0;` }
     ];
 
     for (const col of columnsToEnsure) {
@@ -168,12 +171,13 @@ export function getUserPlanConfig(chatId: string | number): UserPlanConfig {
     tz: 'Europe/Moscow',
     slot_times: { m: '07:30', n: '13:00', e: '21:00' },
     voice_on: 1,
-    recent_motivations: []
+    recent_motivations: [],
+    plan_day_offset: 0
   };
 
   if (!sqliteDb) return defaults;
   try {
-    const row = sqliteDb.prepare("SELECT plan_enabled, plan_status, tz, slot_times, voice_on, recent_motivations FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    const row = sqliteDb.prepare("SELECT plan_enabled, plan_status, tz, slot_times, voice_on, recent_motivations, plan_day_offset FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
     if (row) {
       let slot_times: SlotTimes = defaults.slot_times;
       if (row.slot_times) {
@@ -195,7 +199,8 @@ export function getUserPlanConfig(chatId: string | number): UserPlanConfig {
         tz: row.tz || 'Europe/Moscow',
         slot_times,
         voice_on: row.voice_on !== null && row.voice_on !== undefined ? Number(row.voice_on) : 1,
-        recent_motivations
+        recent_motivations,
+        plan_day_offset: row.plan_day_offset !== null && row.plan_day_offset !== undefined ? Number(row.plan_day_offset) : 0
       };
     }
   } catch (err) {
@@ -220,7 +225,7 @@ export function updateUserPlanConfig(chatId: string | number, partial: Partial<U
     if (exists) {
       sqliteDb.prepare(`
         UPDATE user_profiles 
-        SET plan_enabled = ?, plan_status = ?, tz = ?, slot_times = ?, voice_on = ?, recent_motivations = ?, updated_at = ?
+        SET plan_enabled = ?, plan_status = ?, tz = ?, slot_times = ?, voice_on = ?, recent_motivations = ?, plan_day_offset = ?, updated_at = ?
         WHERE chat_id = ?
       `).run(
         updated.plan_enabled,
@@ -229,20 +234,23 @@ export function updateUserPlanConfig(chatId: string | number, partial: Partial<U
         JSON.stringify(updated.slot_times),
         updated.voice_on,
         JSON.stringify(updated.recent_motivations),
+        updated.plan_day_offset ?? 0,
         nowStr,
         cleanId
       );
     } else {
       sqliteDb.prepare(`
-        INSERT INTO user_profiles (chat_id, plan_enabled, plan_status, tz, slot_times, voice_on, recent_motivations, briefing_enabled, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO user_profiles (chat_id, plan_enabled, plan_status, tz, slot_times, voice_on, recent_motivations, plan_day_offset, briefing_enabled, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
+        cleanId,
         updated.plan_enabled,
         updated.plan_status,
         updated.tz,
         JSON.stringify(updated.slot_times),
         updated.voice_on,
         JSON.stringify(updated.recent_motivations),
+        updated.plan_day_offset ?? 0,
         1,
         nowStr
       );

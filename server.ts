@@ -51,7 +51,12 @@ export {
   checkAndSendBibleBroadcast,
   BIBLE_SLOTS,
   getDaysPassed,
-  getDayIndex
+  getDayIndex,
+  getPlanDaySummary,
+  getPlanContentsSummary,
+  skipUserPlanDays,
+  getUserPlanDay,
+  isPlanFileExisting
 } from "./src/services/bibleService";
 import { startBibleScheduler } from "./src/services/bibleService";
 import { startMorningScheduler } from "./src/services/morningBriefing";

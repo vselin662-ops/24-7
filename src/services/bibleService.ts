@@ -10,8 +10,26 @@ import {
   PlanStatus 
 } from "./ProfileService";
 import { scriptureService } from "./ScriptureService";
-import { oneYearPlan, DayPlan } from "./OneYearPlan";
+import { 
+  oneYearPlan, 
+  DayPlan, 
+  getDayOfYear, 
+  getUserPlanDay, 
+  getPlanDaySummary, 
+  getPlanContentsSummary, 
+  skipUserPlanDays, 
+  isPlanFileExisting 
+} from "./OneYearPlan";
+import { isOwner } from "../fintech/subscriptions";
 import { llmService } from "../core/LLMService";
+
+export { 
+  getUserPlanDay, 
+  getPlanDaySummary, 
+  getPlanContentsSummary, 
+  skipUserPlanDays, 
+  isPlanFileExisting 
+};
 
 export interface BibleSlotConfig {
   slotIndex: number;
@@ -311,7 +329,7 @@ export async function sendPlanSlotToUser(
 
   const planConfig = getUserPlanConfig(chatId);
   const tz = planConfig.tz || 'Europe/Moscow';
-  const dayNum = getDayOfYear(tz);
+  const dayNum = getUserPlanDay(chatId);
   const { dateStr } = getLocalTimeAndDate(tz);
 
   if (!markPlanSlotSent(chatId, slot, dateStr)) {
@@ -424,6 +442,50 @@ export async function handleBibleSubscription(
     } catch {}
     sendImmediatePlanPobedyVerse(cleanId).catch(() => {});
     return '✅ План Победы включён! Отправляю стих дня голосом. Приятного прослушивания!';
+  }
+
+  // === КОМАНДА 1: 'план на сегодня' ===
+  if (
+    lower === 'план на сегодня' ||
+    lower === 'план сегодня' ||
+    lower === 'план_на_сегодня' ||
+    lower === '/plan_today'
+  ) {
+    return getPlanDaySummary(cleanId, false);
+  }
+
+  // === КОМАНДА 2: 'план на завтра' ===
+  if (
+    lower === 'план на завтра' ||
+    lower === 'план завтра' ||
+    lower === 'план_на_завтра' ||
+    lower === '/plan_tomorrow'
+  ) {
+    return getPlanDaySummary(cleanId, true);
+  }
+
+  // === КОМАНДА 3: 'план содержание' (только OWNER) ===
+  if (
+    lower === 'план содержание' ||
+    lower === 'план_содержание' ||
+    lower === '/plan_contents' ||
+    lower === '/plan_content'
+  ) {
+    if (isOwner(cleanId)) {
+      return getPlanContentsSummary();
+    }
+    return null; // от не-владельца -> игнор
+  }
+
+  // === КОМАНДА 4: 'план пропустить <N дней>' (только OWNER) ===
+  const skipMatch = lower.match(/^план\s+пропустить\s+(-?\d+)(?:\s+дн[еяй]|\s+дня|\s+дней)?/i) ||
+    lower.match(/^\/plan_skip\s+(-?\d+)/i);
+  if (skipMatch) {
+    if (isOwner(cleanId)) {
+      const skipDays = parseInt(skipMatch[1], 10);
+      return skipUserPlanDays(cleanId, skipDays);
+    }
+    return null; // от не-владельца -> игнор
   }
 
   const isPlanQuestion = /план[а-я]*\s+побед[а-я]*/i.test(lower) || /побед[а-я]*\s+план[а-я]*/i.test(lower) || lower === 'план победы' || lower === 'план_победы';
