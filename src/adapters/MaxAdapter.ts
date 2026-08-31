@@ -1628,6 +1628,26 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === КОМАНДА ВЛАДЕЛЬЦА 'произношение добавить <слово> | <разметка>' ===
+      if (isOwner(cleanId) && lowerText.startsWith('произношение добавить')) {
+        const payloadStr = text.replace(/^произношение\s+добавить\s*/i, '').trim();
+        const parts = payloadStr.split('|');
+        if (parts.length >= 2) {
+          const word = parts[0].trim();
+          const pattern = parts[1].trim();
+          const { addStressWord } = await import("../services/StressService");
+          const result = addStressWord(word, pattern);
+          const reply = result.success
+            ? `✅ Запомнил: ${result.word}.`
+            : `❌ Не удалось сохранить: ${word}`;
+          await this.safeSendMessageToChat(cleanId, reply);
+          return res.status(200).send('ok');
+        } else {
+          await this.safeSendMessageToChat(cleanId, 'Формат команды: произношение добавить <слово> | <разметка с +>\nПример: произношение добавить семья | семь+я');
+          return res.status(200).send('ok');
+        }
+      }
+
       // === КОМАНДА ВЛАДЕЛЬЦА 'рассылка <текст>' (ЗАРЕЗЕРВИРОВАНО) ===
       if (isOwner(cleanId) && lowerText.startsWith('рассылка')) {
         logger.info(`📢 [Broadcast] Reserved command triggered by owner ${cleanId}: "${text}"`);

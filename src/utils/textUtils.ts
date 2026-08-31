@@ -1,4 +1,5 @@
 import { normalizeForVoice as normalizeVoiceUtil, normalizeForSpeech as normalizeSpeechUtil } from "./voiceNormalizer";
+import { preprocessTextForTTS, applyStressDict, prepareIntonation, TTSEngineType } from "../services/StressService";
 
 export function cleanForMax(text: string): string {
   if (!text) return '';
@@ -53,10 +54,14 @@ export function normalizeForVoice(text: string): string {
 /**
  * Глобальный нормализатор для всех TTS ответов (ШАГ 5)
  */
-export function normalizeForSpeech(text: string): string {
+export function normalizeForSpeech(text: string, engine: TTSEngineType = 'edge'): string {
   if (!text) return '';
-  return normalizeSpeechUtil(text);
+  const normalized = normalizeSpeechUtil(text);
+  return preprocessTextForTTS(normalized, engine);
 }
+
+export { preprocessTextForTTS, applyStressDict, prepareIntonation };
+export type { TTSEngineType };
 
 /**
  * Правильная нарезка текста на чанки по границам предложений (ШАГ 2):

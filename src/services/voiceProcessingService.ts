@@ -1,6 +1,6 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { getVoiceConfig } from "../../db";
-import { normalizeForVoice } from "../utils/textUtils";
+import { normalizeForSpeech } from "../utils/textUtils";
 import { logger } from "../logger";
 
 export async function transcribeAudio(audioBuffer: Buffer, filename: string = 'voice.ogg'): Promise<string> {
@@ -94,7 +94,7 @@ export async function downloadMaxAudio(fileUrl: string): Promise<Buffer> {
 }
 
 export async function generateAudioTtsBuffer(text: string, chatId?: string | number): Promise<{ buffer: Buffer; voiceName: string }> {
-  const voicePrepared = normalizeForVoice(text);
+  const voicePrepared = normalizeForSpeech(text);
   const voiceConfig = getVoiceConfig(chatId);
   const tts = new MsEdgeTTS();
   await tts.setMetadata(
