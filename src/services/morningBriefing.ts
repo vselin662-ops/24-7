@@ -82,7 +82,7 @@ export async function fetchWeatherForUser(cityOrLocation: string): Promise<strin
     }
   } catch {}
 
-  return '+15°C, переменная облачность, ветер легкий';
+  return 'погода недоступна';
 }
 
 /**
@@ -131,7 +131,11 @@ export async function buildUserMorningBriefing(chatId: string, userName?: string
     const cityTarget = config.lat && config.lon ? `${config.lat},${config.lon}` : (config.city || 'Москва');
     const weather = await fetchWeatherForUser(cityTarget);
     const cityName = config.city || 'вашем городе';
-    parts.push(`В ${cityName}: ${weather}.`);
+    if (weather === 'погода недоступна') {
+      parts.push('Погода недоступна.');
+    } else {
+      parts.push(`В ${cityName}: ${weather}.`);
+    }
   }
 
   // 2. Притча: глава = числу дня месяца (1-31), 2-3 стиха

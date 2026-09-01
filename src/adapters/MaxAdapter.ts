@@ -1334,6 +1334,44 @@ export class MaxAdapter {
         }
       }
 
+      // === ПРИОРИТЕТНЫЙ ОБРАБОТЧИК 'тест.*брифинг' (ВЛАДЕЛЬЦА) ===
+      // Триггер проверяется СТРОГО ДО триггера статуса /брифинг/, порядок роутинга зафиксирован.
+      const isTestBriefing = isOwner(cleanId) && (
+        /тест.*брифинг/i.test(lowerText) ||
+        /тест_брифинг/i.test(lowerText) ||
+        /тестбрифинг/i.test(lowerText) ||
+        lowerText === '/test_briefing' ||
+        lowerText === '/test_brief' ||
+        lowerText === 'брифинг тест'
+      );
+
+      if (isTestBriefing) {
+        logger.info(`☀️ [Briefing] test sent chat=${cleanId}`);
+        console.log(`☀️ [Briefing] test sent chat=${cleanId}`);
+        const { buildUserMorningBriefing } = await import("../services/morningBriefing");
+        const senderName = raw.body?.message?.sender?.name || raw.message?.sender?.name || raw.sender?.name || 'Владелец';
+        
+        let briefingText = '';
+        try {
+          briefingText = await buildUserMorningBriefing(cleanId, senderName);
+        } catch (buildErr: any) {
+          logger.warn(`⚠️ [Briefing] test build failed for ${cleanId}: ${buildErr?.message || buildErr}`);
+          const name = senderName ? senderName.split(' ')[0] : 'друг';
+          briefingText = `☀️ Доброе утро, ${name}! Желаю вам благословенного, мирного и продуктивного дня! 🙏`;
+        }
+
+        try {
+          // Отправка голосового сообщения через единую точку синтеза
+          await this.synthesizeAndSendVoice(cleanId, briefingText);
+        } catch (ttsErr: any) {
+          logger.error(`❌ [Briefing] Test voice delivery failed: ${ttsErr?.message || ttsErr}`);
+          // Ошибка TTS -> тот же состав текстом, НЕ молчать
+          await this.safeSendMessageToChat(cleanId, briefingText);
+        }
+
+        return res.status(200).send('ok');
+      }
+
       // === ПЕРЕХВАТ ВОПРОСОВ О БРИФИНГЕ ДО LLM ===
       if (lowerText.includes('брифинг') || /брифинг[а-я]*/i.test(lowerText)) {
         logger.info(`❓ [Intent] fn=briefing chat=${cleanId}`);
@@ -1471,27 +1509,6 @@ export class MaxAdapter {
           await this.synthesizeAndSendVoice(cleanId, reply);
         }
         await this.safeSendMessageToChat(cleanId, reply);
-        return res.status(200).send('ok');
-      }
-
-      // === КОМАНДА ВЛАДЕЛЬЦА 'тест брифинг' ===
-      if (
-        isOwner(cleanId) && (
-          lowerText === 'тест брифинг' ||
-          lowerText === 'тест_брифинг' ||
-          lowerText === 'тестбрифинг' ||
-          lowerText === '/test_briefing' ||
-          lowerText === '/test_brief' ||
-          lowerText === 'брифинг тест'
-        )
-      ) {
-        logger.info(`☀️ [Briefing] Owner ${cleanId} triggered immediate test briefing`);
-        const { sendMorningBriefingToUser } = await import("../services/morningBriefing");
-        const senderName = raw.body?.message?.sender?.name || raw.message?.sender?.name || raw.sender?.name || 'Владелец';
-        const ok = await sendMorningBriefingToUser(cleanId, senderName, undefined, undefined, true);
-        if (!ok) {
-          await this.safeSendMessageToChat(cleanId, '⚠️ Не удалось отправить тестовый брифинг. Проверьте логи сервера.');
-        }
         return res.status(200).send('ok');
       }
 
