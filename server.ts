@@ -58,6 +58,15 @@ export {
   getUserPlanDay,
   isPlanFileExisting
 } from "./src/services/bibleService";
+export {
+  handleCallback,
+  handleCityInput,
+  renderBriefingMenu,
+  renderPlanMenu,
+  geocodeCityWithNominatim,
+  isWaitingForCity,
+  setWaitingForCity
+} from "./src/services/CallbackRouter";
 import { startBibleScheduler } from "./src/services/bibleService";
 import { startMorningScheduler } from "./src/services/morningBriefing";
 import { SecurityGateway } from "./src/core/SecurityGateway";
@@ -297,8 +306,8 @@ async function startServer() {
       }
     );
     startMorningScheduler(
-      async (chatId, text) => {
-        await modernMaxAdapter.sendMessage(chatId, text);
+      async (chatId, text, extra) => {
+        await modernMaxAdapter.safeSendMessageToChat(chatId, text, extra);
       },
       async (chatId, text) => {
         await modernMaxAdapter.sendVoice(chatId, text);

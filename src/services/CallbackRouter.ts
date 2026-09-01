@@ -35,9 +35,9 @@ export interface CallbackResult {
 /**
  * Геокодирование города через Nominatim OpenStreetMap
  */
-export async function geocodeCityWithNominatim(cityNameOrQuery: string): Promise<{ resolvedCity: string; lat?: number; lon?: number }> {
+export async function geocodeCityWithNominatim(cityNameOrQuery: string): Promise<{ resolvedCity?: string; lat?: number; lon?: number; error?: boolean }> {
   const query = (cityNameOrQuery || '').trim();
-  if (!query) return { resolvedCity: 'Москва' };
+  if (!query || query.length < 2) return { error: true };
 
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`, {
@@ -57,11 +57,13 @@ export async function geocodeCityWithNominatim(cityNameOrQuery: string): Promise
           lon: !isNaN(lon) ? lon : undefined
         };
       }
+      return { error: true };
     }
+    return { error: true };
   } catch (e: any) {
     logger.warn(`⚠️ [Nominatim] Geocoding failed for "${query}": ${e?.message || e}`);
+    return { error: true };
   }
-  return { resolvedCity: query };
 }
 
 /**
@@ -74,7 +76,7 @@ export async function handleCityInput(
   lon?: number
 ): Promise<{ success: boolean; city: string; reply: string }> {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
-  let resolvedCity = inputText.trim();
+  let resolvedCity = (inputText || '').trim();
   let resolvedLat = lat;
   let resolvedLon = lon;
 
@@ -90,15 +92,30 @@ export async function handleCityInput(
         const c = addr?.city || addr?.town || addr?.village || addr?.hamlet || addr?.county || data?.display_name?.split(',')?.[0]?.trim();
         if (c) resolvedCity = c;
       }
-    } catch {}
+    } catch {
+      logger.warn(`⚠️ [Nominatim] Reverse geocoding failed for lat=${lat}, lon=${lon}`);
+    }
   } else if (resolvedCity) {
     const geo = await geocodeCityWithNominatim(resolvedCity);
+    if (geo.error || !geo.resolvedCity) {
+      return {
+        success: false,
+        city: '',
+        reply: 'Не понял город, напиши иначе.'
+      };
+    }
     resolvedCity = geo.resolvedCity;
     if (geo.lat != null) resolvedLat = geo.lat;
     if (geo.lon != null) resolvedLon = geo.lon;
   }
 
-  if (!resolvedCity) resolvedCity = 'Москва';
+  if (!resolvedCity) {
+    return {
+      success: false,
+      city: '',
+      reply: 'Не понял город, напиши иначе.'
+    };
+  }
 
   updateUserBriefingConfig(cleanId, {
     city: resolvedCity,
@@ -187,7 +204,7 @@ export function renderPlanMenu(chatId: string | number): { text: string; extra: 
             ],
             [
               { type: 'callback', text: `🌙 Вечер: ${cfg.slot_times.e}`, payload: 'plan_time_e' },
-              { type: 'callback', text: `🌍 Пояс: ${tzCode}`, payload: 'plan_tz' }
+              { type: 'callback', text: `🌍 ${tzCode}`, payload: 'plan_tz' }
             ],
             [
               { type: 'callback', text: `🔊 Голос: ${cfg.voice_on !== 0 ? 'вкл' : 'выкл'}`, payload: 'plan_voice' }
@@ -217,8 +234,8 @@ export async function handleCallback(
   const lower = payload.toLowerCase();
 
   // 1. Обязательный лог нажатия кнопки
-  console.log(`🔘 [CB] payload=${payload} chat=${cleanId}`);
-  logger.info(`🔘 [CB] payload=${payload} chat=${cleanId}`);
+  console.log(`🔘 [CB] p=${payload}`);
+  logger.info(`🔘 [CB] p=${payload}`);
 
   // === 2. БРИФИНГ ===
   if (
@@ -291,17 +308,9 @@ export async function handleCallback(
   }
 
   if (lower === 'brief_done') {
-    const cfg = getUserBriefingConfig(cleanId);
-    const parts: string[] = [];
-    if (cfg.include_weather) parts.push('погода');
-    if (cfg.include_parable) parts.push('притча');
-    if (cfg.include_psalm) parts.push('псалом');
-    if (cfg.include_verse) parts.push('стих дня');
-    const compList = parts.length > 0 ? parts.join(', ') : 'краткий';
-    const replyText = `✅ Брифинг настроен: ${cfg.city || 'Москва'}, состав: ${compList}, время ${cfg.time || '07:00'}.`;
     return {
       handled: true,
-      replyText
+      replyText: '✅ Брифинг настроен.'
     };
   }
 
@@ -527,6 +536,6 @@ export async function handleCallback(
 
   return {
     handled: true,
-    replyText: '🔧 Кнопка в доработке, попробуйте позже.'
+    replyText: '🔧 В доработке.'
   };
 }

@@ -183,53 +183,93 @@ export async function buildUserMorningBriefing(chatId: string, userName?: string
  * Отправка брифинга конкретному пользователю
  */
 export async function sendMorningBriefingToUser(
-  chatId: string,
+  chatId: string | number,
   userName?: string,
   sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
-  sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
+  sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>,
+  force: boolean = false
 ): Promise<boolean> {
-  const numericId = parseInt(chatId, 10);
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim();
+  const numericId = parseInt(cleanId, 10);
   if (isNaN(numericId) || numericId <= 0) return false;
 
-  const userSettings = getUserSettings(chatId);
-  const briefingConfig = getUserBriefingConfig(chatId);
-  const planConfig = getUserPlanConfig(chatId);
+  const userSettings = getUserSettings(cleanId);
+  const briefingConfig = getUserBriefingConfig(cleanId);
+  const planConfig = getUserPlanConfig(cleanId);
   const tz = userSettings.tz || 'Europe/Moscow';
   const { dateStr } = getLocalTimeAndDate(tz);
 
-  if (!markBriefingSent(chatId, dateStr)) {
+  if (!force && isBriefingAlreadySent(cleanId, dateStr)) {
     return false;
   }
 
-  const text = await buildUserMorningBriefing(chatId, userName);
+  let text = '';
+  try {
+    text = await buildUserMorningBriefing(cleanId, userName);
+  } catch (buildErr: any) {
+    logger.warn(`⚠️ [Briefing] err Failed to build full briefing for ${cleanId}: ${buildErr?.message || buildErr}`);
+    const name = userName ? userName.split(' ')[0] : 'друг';
+    text = `☀️ Доброе утро, ${name}! Желаю вам благословенного, мирного и продуктивного дня! 🙏`;
+  }
+
+  let delivered = false;
 
   try {
     if (planConfig.voice_on !== 0) {
-      if (sendVoiceMessageFn) {
-        await sendVoiceMessageFn(numericId, text);
-      } else {
-        const { modernMaxAdapter } = await import('../../server');
-        await modernMaxAdapter.sendVoice(numericId, text);
+      try {
+        if (sendVoiceMessageFn) {
+          await sendVoiceMessageFn(numericId, text);
+          delivered = true;
+        } else {
+          const { modernMaxAdapter } = await import('../../server');
+          await modernMaxAdapter.sendVoice(numericId, text);
+          delivered = true;
+        }
+      } catch (voiceErr: any) {
+        logger.warn(`⚠️ [Briefing] err Voice delivery failed for chat=${cleanId}, falling back to text: ${voiceErr?.message || voiceErr}`);
+        console.warn(`⚠️ [Briefing] err Voice delivery failed for chat=${cleanId}, falling back to text`);
+        // Fallback to text
+        if (sendTextMessageFn) {
+          await sendTextMessageFn(numericId, text, DISABLE_BRIEFING_EXTRA);
+          delivered = true;
+        } else {
+          const { modernMaxAdapter } = await import('../../server');
+          await modernMaxAdapter.safeSendMessageToChat(numericId, text, DISABLE_BRIEFING_EXTRA);
+          delivered = true;
+        }
       }
     } else {
       if (sendTextMessageFn) {
         await sendTextMessageFn(numericId, text, DISABLE_BRIEFING_EXTRA);
+        delivered = true;
       } else {
         const { modernMaxAdapter } = await import('../../server');
         await modernMaxAdapter.safeSendMessageToChat(numericId, text, DISABLE_BRIEFING_EXTRA);
+        delivered = true;
       }
     }
 
-    logger.info(`☀️ [Brief] chat=${chatId} city=${briefingConfig.city} status=sent`);
-    return true;
+    if (delivered) {
+      if (!force) {
+        markBriefingSent(cleanId, dateStr);
+      }
+      const cityName = briefingConfig.city || 'Москва';
+      logger.info(`☀️ [Briefing] sent chat=${cleanId} city=${cityName}`);
+      console.log(`☀️ [Briefing] sent chat=${cleanId} city=${cityName}`);
+      return true;
+    }
+
+    return false;
   } catch (err: any) {
-    logger.error(`❌ [Briefing] Delivery failed for ${chatId}:`, err?.message || err);
+    const reason = err?.message || String(err);
+    logger.error(`⚠️ [Briefing] err Delivery failed for chat=${cleanId}: ${reason}`);
+    console.error(`⚠️ [Briefing] err Delivery failed for chat=${cleanId}: ${reason}`);
     return false;
   }
 }
 
 /**
- * Проверка расписания брифинга для всех пользователей
+ * Проверка расписания брифинга для всех пользователей (тик каждую минуту)
  */
 export async function checkAndSendMorningBriefings(
   sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
@@ -237,50 +277,78 @@ export async function checkAndSendMorningBriefings(
 ) {
   if (!sqliteDb) return;
   try {
-    const users = sqliteDb.prepare(`
-      SELECT chat_id, briefing_config, briefing_enabled, tz 
-      FROM user_profiles 
-      WHERE (briefing_enabled IS NULL OR briefing_enabled != 0)
-    `).all() as any[];
+    // Получаем всех потенциальных пользователей из базы
+    let candidateRows: any[] = [];
+    try {
+      candidateRows = sqliteDb.prepare(`
+        SELECT DISTINCT chat_id FROM (
+          SELECT chat_id FROM user_profiles WHERE (briefing_enabled IS NULL OR briefing_enabled != 0)
+          UNION
+          SELECT chat_id FROM subscriptions WHERE active = 1
+          UNION
+          SELECT chat_id FROM user_sessions
+          UNION
+          SELECT chat_id FROM users
+        )
+      `).all() as any[];
+    } catch {
+      try {
+        candidateRows = sqliteDb.prepare(`
+          SELECT chat_id FROM user_profiles WHERE (briefing_enabled IS NULL OR briefing_enabled != 0)
+        `).all() as any[];
+      } catch {}
+    }
 
-    if (!users || users.length === 0) return;
+    if (!candidateRows || candidateRows.length === 0) return;
 
-    for (const u of users) {
-      const cleanId = String(u.chat_id).replace(/^[a-z_]+/, '');
+    for (const row of candidateRows) {
+      const cleanId = String(row.chat_id || '').replace(/^[a-z_]+/, '').trim();
       const numericId = parseInt(cleanId, 10);
       if (isNaN(numericId) || numericId <= 0) continue;
 
-      const sub = getSubscription(cleanId);
-      const isSubActive = !!(sub && Number(sub.active) === 1 && sub.paid_until && new Date(sub.paid_until).getTime() > Date.now());
-      const isUserOwner = isOwner(cleanId);
-
-      if (!isSubActive && !isUserOwner) {
-        continue;
-      }
-
-      const cfg: BriefingConfig = getUserBriefingConfig(cleanId);
-      if (cfg.briefing_enabled === 0) continue;
-
-      const tz = u.tz || 'Europe/Moscow';
-      const { timeStr, dateStr } = getLocalTimeAndDate(tz);
-      const targetTime = cfg.time || '07:00';
-
-      if (timeStr !== targetTime) continue;
-
-      if (isBriefingAlreadySent(cleanId, dateStr)) {
-        continue;
-      }
-
-      let userName = '';
       try {
-        const userRow = sqliteDb.prepare("SELECT name, username FROM users WHERE chat_id = ?").get(cleanId) as any;
-        userName = userRow?.name || userRow?.username || '';
-      } catch {}
+        const sub = getSubscription(cleanId);
+        const isSubActive = !!(sub && Number(sub.active) === 1 && sub.paid_until && new Date(sub.paid_until).getTime() > Date.now());
+        const isUserOwner = isOwner(cleanId);
 
-      await sendMorningBriefingToUser(cleanId, userName, sendTextMessageFn, sendVoiceMessageFn);
+        if (!isSubActive && !isUserOwner) {
+          continue;
+        }
+
+        const cfg: BriefingConfig = getUserBriefingConfig(cleanId);
+        if (cfg.briefing_enabled === 0) continue;
+
+        const userSettings = getUserSettings(cleanId);
+        const tz = userSettings.tz || 'Europe/Moscow';
+        const { timeStr, dateStr } = getLocalTimeAndDate(tz);
+
+        const targetTime = (cfg.time || '07:00').trim();
+        const normTarget = targetTime.length === 4 ? `0${targetTime}` : targetTime;
+        const normCurrent = timeStr.length === 4 ? `0${timeStr}` : timeStr;
+
+        if (normCurrent !== normTarget) continue;
+
+        if (isBriefingAlreadySent(cleanId, dateStr)) {
+          continue;
+        }
+
+        let userName = '';
+        try {
+          const userRow = sqliteDb.prepare("SELECT name, username FROM users WHERE chat_id = ?").get(cleanId) as any;
+          userName = userRow?.name || userRow?.username || '';
+        } catch {}
+
+        await sendMorningBriefingToUser(cleanId, userName, sendTextMessageFn, sendVoiceMessageFn, false);
+      } catch (userLoopErr: any) {
+        const reason = userLoopErr?.message || String(userLoopErr);
+        logger.error(`⚠️ [Briefing] err Processing user ${cleanId}: ${reason}`);
+        console.error(`⚠️ [Briefing] err Processing user ${cleanId}: ${reason}`);
+      }
     }
   } catch (err: any) {
-    logger.error('❌ [MorningBriefing] Scheduler run error:', err);
+    const reason = err?.message || String(err);
+    logger.error(`⚠️ [Briefing] err Scheduler run error: ${reason}`);
+    console.error(`⚠️ [Briefing] err Scheduler run error: ${reason}`);
   }
 }
 
@@ -288,6 +356,17 @@ export function startMorningScheduler(
   sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
   sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
 ) {
-  setInterval(() => checkAndSendMorningBriefings(sendTextMessageFn, sendVoiceMessageFn), 20000);
-  logger.info("☀️ Планировщик утреннего брифинга (пер-юзер) запущен (интервал 20 сек)");
+  // Крон тикает каждую минуту (60 000 мс)
+  setInterval(() => {
+    checkAndSendMorningBriefings(sendTextMessageFn, sendVoiceMessageFn).catch((err) => {
+      logger.error(`⚠️ [Briefing] err Cron tick failed: ${err?.message || err}`);
+    });
+  }, 60000);
+
+  // Выполняем первую проверку сразу при старте (с задержкой 3 сек)
+  setTimeout(() => {
+    checkAndSendMorningBriefings(sendTextMessageFn, sendVoiceMessageFn).catch(() => {});
+  }, 3000);
+
+  logger.info("☀️ [Briefing] Планировщик утреннего брифинга запущен (тик каждую минуту)");
 }

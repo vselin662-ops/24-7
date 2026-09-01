@@ -343,11 +343,21 @@ export async function sendPlanSlotToUser(
 
   try {
     if (planConfig.voice_on !== 0) {
-      if (sendVoiceMessageFn) {
-        await sendVoiceMessageFn(numericId, fullText);
-      } else {
-        const { modernMaxAdapter } = await import("../../server");
-        await modernMaxAdapter.sendVoice(numericId, fullText);
+      try {
+        if (sendVoiceMessageFn) {
+          await sendVoiceMessageFn(numericId, fullText);
+        } else {
+          const { modernMaxAdapter } = await import("../../server");
+          await modernMaxAdapter.sendVoice(numericId, fullText);
+        }
+      } catch (voiceErr: any) {
+        logger.warn(`⚠️ [Plan] Voice delivery failed for ${chatId}, falling back to text: ${voiceErr?.message || voiceErr}`);
+        if (sendTextMessageFn) {
+          await sendTextMessageFn(numericId, fullText);
+        } else {
+          const { modernMaxAdapter } = await import("../../server");
+          await modernMaxAdapter.safeSendMessageToChat(numericId, fullText);
+        }
       }
     } else {
       if (sendTextMessageFn) {

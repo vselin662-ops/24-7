@@ -1474,6 +1474,27 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === КОМАНДА ВЛАДЕЛЬЦА 'тест брифинг' ===
+      if (
+        isOwner(cleanId) && (
+          lowerText === 'тест брифинг' ||
+          lowerText === 'тест_брифинг' ||
+          lowerText === 'тестбрифинг' ||
+          lowerText === '/test_briefing' ||
+          lowerText === '/test_brief' ||
+          lowerText === 'брифинг тест'
+        )
+      ) {
+        logger.info(`☀️ [Briefing] Owner ${cleanId} triggered immediate test briefing`);
+        const { sendMorningBriefingToUser } = await import("../services/morningBriefing");
+        const senderName = raw.body?.message?.sender?.name || raw.message?.sender?.name || raw.sender?.name || 'Владелец';
+        const ok = await sendMorningBriefingToUser(cleanId, senderName, undefined, undefined, true);
+        if (!ok) {
+          await this.safeSendMessageToChat(cleanId, '⚠️ Не удалось отправить тестовый брифинг. Проверьте логи сервера.');
+        }
+        return res.status(200).send('ok');
+      }
+
       // === КОМАНДА ВЛАДЕЛЬЦА 'план статистика' ===
       if (isOwner(cleanId) && (lowerText === 'план статистика' || lowerText === 'план_статистика' || lowerText === '/plan_stats')) {
         const { getPlanStatistics } = await import("../services/bibleService");
