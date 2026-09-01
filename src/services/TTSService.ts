@@ -3,6 +3,7 @@ import { logger } from '../logger';
 import { getVoiceGender } from '../../db';
 import { normalizeForSpeech, chunkText } from '../utils/textUtils';
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
+import { synthesizeWithGroq, getCachedStaticAudio, saveCachedStaticAudio } from './tts/groq-tts';
 
 function escapeXml(unsafe: string): string {
   return unsafe.replace(/[<>&'"]/g, (c) => {
@@ -389,41 +390,51 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   const cleanId = chatId ? String(chatId) : 'default';
   const isSelfTest = (chatId === "test_self_check_chat");
 
-  // Шаг 5: Глобальный нормализатор (для всех ответов)
+  // Шаг 1: Проверка кэша статики (хук и приветствия) -> assets/*.mp3
+  const staticCached = await getCachedStaticAudio(text);
+  if (staticCached) {
+    return staticCached;
+  }
+
+  // Шаг 2: Глобальный нормализатор (для всех ответов)
   const normalized = normalizeForSpeech(text);
   if (!normalized.trim()) {
     return ttsService.synthesize("", {}, isSelfTest);
   }
 
-  // Шаг 2: Правильная нарезка на чанки по границам предложений
+  // Шаг 3: Нарезка на чанки по границам предложений
   const chunks = chunkText(normalized, 300);
   const chunksCount = chunks.length;
 
   let engine = 'Edge';
   let audioBuffer: Buffer | null = null;
 
-  // Шаг 3: Синтез через OpenAI TTS (если задан OPENAI_API_KEY)
-  if (process.env.OPENAI_API_KEY) {
+  // Шаг 4: Попытка синтеза через нейронный Groq TTS
+  if (process.env.GROQ_API_KEY) {
     try {
-      engine = 'OpenAI';
       const audioParts: Buffer[] = [];
       for (const chunk of chunks) {
-        audioParts.push(await synthesizeWithOpenAI(chunk));
+        const part = await synthesizeWithGroq(chunk);
+        if (!part) {
+          throw new Error("Groq synthesis returned null");
+        }
+        audioParts.push(part);
       }
       audioBuffer = Buffer.concat(audioParts);
-      console.log(`🎙️ [TTS] engine=${engine} chunks=${chunksCount} glued into one audio`);
-      logger.info(`🎙️ [TTS] engine=${engine} chunks=${chunksCount} glued into one audio`);
+      engine = 'Groq';
     } catch (err: any) {
-      logger.warn(`⚠️ [TTS] OpenAI TTS failed: ${err.message || err}. Falling back to Edge TTS.`);
-      engine = 'Edge';
+      // Observability: '⚠️ [TTS] groq fail → edge'
+      logger.warn(`⚠️ [TTS] groq fail → edge. Error: ${err?.message || err}`);
+      audioBuffer = null;
     }
   }
 
-  // Шаг 4: Синтез через Edge TTS
+  // Шаг 5: Фолбэк на нейронный Edge TTS (ru-RU-DmitryNeural) при ошибке или отсутствии ключа
   let voice = process.env.TTS_VOICE || 'ru-RU-DmitryNeural';
   if (voice.toLowerCase().includes('svetlana') || voice.toLowerCase().includes('female')) {
     voice = 'ru-RU-DmitryNeural';
   }
+
   if (!audioBuffer) {
     engine = 'Edge';
     const rate = '+0%'; // rate 1.0 — стандартная ораторская скорость
@@ -436,14 +447,16 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
         logger.info(`🎙️ [TTS] engine=${engine} chunks=${chunksCount} glued into one audio`);
       }
     } catch (fallbackErr: any) {
-      logger.warn(`⚠️ [TTS] Male voice DmitryNeural synthesis failed, falling back. DO NOT switch to female voice. Error: ${fallbackErr.message || fallbackErr}`);
+      logger.error(`❌ [TTS] Edge TTS fallback failed: ${fallbackErr.message || fallbackErr}`);
     }
   }
 
+  // Сохранение в кэш статики (если это хук или приветствие)
+  if (audioBuffer && audioBuffer.length > 0) {
+    await saveCachedStaticAudio(text, audioBuffer);
+  }
+
   if (audioBuffer) {
-    const voiceName = (engine === 'OpenAI') ? 'onyx' : voice;
-    console.log(`🎙 [TTS] voice=${voiceName} gender=male rate=1.0`);
-    logger.info(`🎙 [TTS] voice=${voiceName} gender=male rate=1.0`);
     return audioBuffer;
   }
 
