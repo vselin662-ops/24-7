@@ -245,6 +245,33 @@ export function splitTextSmart(text: string, maxLen: number = 3800): string[] {
   return chunks;
 }
 
+function adjustKeyboardForMode(extra: any): any {
+  if (!extra || !extra.attachments) return extra;
+  const btnMode = process.env.BTN_MODE || 'text';
+  if (btnMode !== 'text') return extra;
+
+  try {
+    const cloned = JSON.parse(JSON.stringify(extra));
+    for (const att of cloned.attachments) {
+      if (att && att.type === 'inline_keyboard' && att.payload && Array.isArray(att.payload.buttons)) {
+        for (const row of att.payload.buttons) {
+          if (Array.isArray(row)) {
+            for (const btn of row) {
+              if (btn && btn.type === 'callback') {
+                btn.type = 'message';
+              }
+            }
+          }
+        }
+      }
+    }
+    return cloned;
+  } catch (err) {
+    logger.warn(`⚠️ [MaxAdapter] Failed to adjust keyboard for mode: ${err}`);
+    return extra;
+  }
+}
+
 export class MaxAdapter {
   private bot: Bot | null = null;
   private core: SelinCore;
@@ -321,6 +348,7 @@ export class MaxAdapter {
     extra?: Record<string, unknown>
   ): Promise<unknown> {
     if (text) text = cleanForMax(text);
+    if (extra) extra = adjustKeyboardForMode(extra);
     if (!this.bot) {
       logger.warn("⚠️ [MaxAdapter] Cannot send message: bot instance is not connected.");
       return null;
@@ -881,7 +909,11 @@ export class MaxAdapter {
   public async handleWebhook(req: any, res: any): Promise<void> {
     try {
       const raw = req.body || {};
-      logger.info(`📨 [MaxAdapter] Webhook received`);
+      const type = raw.update_type || raw.type || raw.event || 'unknown';
+      const rawJson = JSON.stringify(raw);
+      const jsonShort = rawJson.length > 150 ? rawJson.substring(0, 150) + "..." : rawJson;
+      logger.info(`📥 [RAW] ${type} ${jsonShort}`);
+      console.log(`📥 [RAW] ${type} ${jsonShort}`);
 
       // 1. Идемпотентность: извлечение ID сообщения и фильтрация дублей
       const messageId = raw.body?.mid || raw.body?.seq || raw.message?.body?.mid || raw.message_id || raw.mid || raw.seq || raw.payload?.mid || raw.payload?.seq;
@@ -1304,6 +1336,19 @@ export class MaxAdapter {
           }
           return res.status(200).send('ok');
         }
+      }
+
+      // === ТЕКСТОВЫЙ РОУТЕР КНОПОК (ВЕТКА Б) ===
+      const { handleTextCommand } = await import("../services/CallbackRouter");
+      const textCmdRes = await handleTextCommand(cleanId, text, isVoiceInput);
+      if (textCmdRes) {
+        if (textCmdRes.replyText) {
+          if (isVoiceInput || textCmdRes.sendImmediateVoice) {
+            await this.synthesizeAndSendVoice(cleanId, textCmdRes.replyText);
+          }
+          await this.safeSendMessageToChat(cleanId, textCmdRes.replyText, textCmdRes.replyExtra);
+        }
+        return res.status(200).send('ok');
       }
 
       // === ОЖИДАНИЕ ВВОДА ГОРОДА (brief_city) ===

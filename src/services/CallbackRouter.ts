@@ -32,6 +32,73 @@ export interface CallbackResult {
   sendImmediateVoice?: boolean;
 }
 
+export const activeMenuMap = new Map<string, 'briefing' | 'plan'>();
+
+export async function handleTextCommand(
+  chatId: string | number,
+  rawText: string,
+  isVoiceInput: boolean = false
+): Promise<CallbackResult | null> {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  const trimmed = (rawText || '').trim();
+  const lower = trimmed.toLowerCase();
+
+  let action: string | null = null;
+
+  if (lower === '⚙️ брифинг' || lower === 'брифинг настройки' || lower === 'настройки брифинга') {
+    action = 'brief_open';
+  } else if (lower.startsWith('🏙 город') || lower === '🏙 город' || lower === 'город') {
+    action = 'brief_city';
+  } else if (lower.startsWith('☀️ погода') || lower === '☀️ погода' || lower === 'погода') {
+    action = 'brief_weather';
+  } else if (lower.startsWith('📖 притча') || lower === '📖 притча' || lower === 'притча') {
+    action = 'brief_parable';
+  } else if (lower.startsWith('🎼 псалом') || lower === '🎼 псалом' || lower === 'псалом') {
+    action = 'brief_psalm';
+  } else if (lower.startsWith('✝️ стих') || lower === '✝️ стих' || lower === 'стих') {
+    action = 'brief_verse';
+  } else if (lower.startsWith('✅ готово') || lower === 'готово' || lower === '✅ готово') {
+    action = 'brief_done';
+  } else if (lower.startsWith('▶️ включить') || lower.includes('включить план') || lower === 'включить план победы') {
+    action = 'plan_on';
+  } else if (lower.startsWith('❌ отключить') || lower.includes('отключить план') || lower === 'отключить план победы' || lower === 'выключить план победы') {
+    action = 'plan_off';
+  } else if (lower === '⚙️ план победы' || lower === 'план победы' || lower === 'план победы настройки' || lower === 'настройки плана') {
+    action = 'plan_open';
+  } else if (lower.startsWith('🌅 утро') || lower.includes('утро')) {
+    action = 'plan_time_m';
+  } else if (lower.startsWith('🌞 обед') || lower.includes('обед')) {
+    action = 'plan_time_n';
+  } else if (lower.startsWith('🌙 вечер') || lower.includes('вечер')) {
+    action = 'plan_time_e';
+  } else if (lower.includes('пояс') || lower.includes('🌍')) {
+    action = 'plan_tz';
+  } else if (lower.startsWith('🔊 голос') || lower.includes('голос')) {
+    action = 'plan_voice';
+  }
+
+  if (!action) return null;
+
+  // Track active menu context for '✅ готово'
+  if (action === 'brief_open') {
+    activeMenuMap.set(cleanId, 'briefing');
+  } else if (action === 'plan_open') {
+    activeMenuMap.set(cleanId, 'plan');
+  } else if (action === 'brief_done') {
+    const active = activeMenuMap.get(cleanId);
+    if (active === 'plan') {
+      action = 'plan_done';
+    }
+    activeMenuMap.delete(cleanId);
+  }
+
+  // Log btn mode text action
+  console.log(`🔘 [BTN] mode=text p=${action}`);
+  logger.info(`🔘 [BTN] mode=text p=${action}`);
+
+  return await handleCallback(cleanId, action, isVoiceInput);
+}
+
 /**
  * Геокодирование города через Nominatim OpenStreetMap
  */
@@ -134,6 +201,7 @@ export async function handleCityInput(
  */
 export function renderBriefingMenu(chatId: string | number): { text: string; extra: any } {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  activeMenuMap.set(cleanId, 'briefing');
   const cfg = getUserBriefingConfig(cleanId);
 
   const text = `⚙️ **Настройки Утреннего Брифинга**:\n\n` +
@@ -179,6 +247,7 @@ export function renderBriefingMenu(chatId: string | number): { text: string; ext
  */
 export function renderPlanMenu(chatId: string | number): { text: string; extra: any } {
   const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  activeMenuMap.set(cleanId, 'plan');
   const cfg = getUserPlanConfig(cleanId);
   const tzCode = getTzCode(cfg.tz);
   const isEnabled = (cfg.plan_status === 'on_buttons' || cfg.plan_status === 'on_quiet' || cfg.plan_enabled === 1) && cfg.plan_status !== 'off';
@@ -234,8 +303,8 @@ export async function handleCallback(
   const lower = payload.toLowerCase();
 
   // 1. Обязательный лог нажатия кнопки
-  console.log(`🔘 [CB] p=${payload}`);
-  logger.info(`🔘 [CB] p=${payload}`);
+  console.log(`🔘 [BTN] mode=callback p=${payload}`);
+  logger.info(`🔘 [BTN] mode=callback p=${payload}`);
 
   // === 2. БРИФИНГ ===
   if (
