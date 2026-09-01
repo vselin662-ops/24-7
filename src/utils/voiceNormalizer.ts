@@ -381,6 +381,100 @@ const BIBLE_BOOKS_PATTERN = [
   'Откровение', 'Откровения', 'Апокалипсис', 'Откр', 'Отк',
 ].join('|');
 
+const bookSpokenNames: Record<string, string> = {
+  'быт': 'Бытие', 'бытие': 'Бытие', 'бытия': 'Бытие',
+  'исх': 'Исход', 'исхода': 'Исход',
+  'лев': 'Левит', 'левита': 'Левит',
+  'чис': 'Числа', 'числ': 'Числа', 'чисел': 'Числа',
+  'втор': 'Второзаконие', 'второзакония': 'Второзаконие',
+  'нав': 'Иисус Навин', 'иисуса навина': 'Иисус Навин', 'навин': 'Иисус Навин',
+  'суд': 'Судьи', 'судей': 'Судьи',
+  'руф': 'Руфь', 'руфи': 'Руфь',
+  'езд': 'Ездра', 'ездры': 'Ездра',
+  'неем': 'Неемия', 'неемии': 'Неемия',
+  'есф': 'Есфирь', 'есфири': 'Есфирь',
+  'иов': 'Иова',
+  'пс': 'псалом', 'псалом': 'псалом', 'псалтирь': 'псалом', 'псалмы': 'псалом',
+  'прит': 'Притчи', 'притч': 'Притчи', 'притча': 'Притчи', 'притчей': 'Притчи',
+  'еккл': 'Екклесиаст', 'екк': 'Екклесиаст', 'екклесиаста': 'Екклесиаст', 'экклезиаст': 'Екклесиаст',
+  'песн': 'Песнь Песней', 'песнь': 'Песнь Песней',
+  'ис': 'Исаия', 'исаии': 'Исаия', 'исайи': 'Исаия',
+  'иер': 'Иеремия', 'иеремии': 'Иеремия',
+  'плач': 'Плач Иеремии',
+  'иез': 'Иезекииль', 'иезекииля': 'Иезекииль',
+  'дан': 'Даниила', 'даниил': 'Даниила',
+  'ос': 'Осии', 'осия': 'Осии',
+  'иоил': 'Иоиля', 'иоиль': 'Иоиля',
+  'ам': 'Амоса', 'амос': 'Амоса',
+  'авд': 'Авдия', 'авдий': 'Авдия',
+  'ион': 'Ионы', 'иона': 'Ионы',
+  'мих': 'Михея', 'михей': 'Михея',
+  'наум': 'Наума',
+  'авв': 'Аввакума', 'аввакум': 'Аввакума',
+  'соф': 'Софонии', 'софония': 'Софонии',
+  'агг': 'Аггея', 'аггей': 'Аггея',
+  'зах': 'Захарии', 'захария': 'Захарии',
+  'мал': 'Малахии', 'малахия': 'Малахии',
+  'мф': 'Матфея', 'матфея': 'Матфея', 'матфей': 'Матфея', 'мт': 'Матфея',
+  'мк': 'Марка', 'марка': 'Марка', 'марк': 'Марка', 'мр': 'Марка',
+  'лк': 'Луки', 'луки': 'Луки', 'лука': 'Луки',
+  'ин': 'Иоанна', 'иоанна': 'Иоанна', 'иоанн': 'Иоанна', 'инн': 'Иоанна',
+  'деян': 'Деяния', 'дея': 'Деяния', 'деяния': 'Деяния', 'деяний': 'Деяния',
+  'иак': 'Иакова', 'иакова': 'Иакова',
+  'иуд': 'Иуды', 'иуды': 'Иуды',
+  'rim': 'Римлянам', 'рим': 'Римлянам', 'римлянам': 'Римлянам',
+  'гал': 'Галатам', 'галатам': 'Галатам',
+  'еф': 'Ефесянам', 'ефес': 'Ефесянам', 'ефесянам': 'Ефесянам',
+  'флп': 'Филиппийцам', 'фил': 'Филиппийцам', 'филиппийцам': 'Филиппийцам',
+  'кол': 'Колоссянам', 'колоссянам': 'Колоссянам',
+  'сол': 'Солунянам', 'солунянам': 'Солунянам',
+  'тит': 'Титу', 'титу': 'Титу',
+  'флм': 'Филимону', 'филимону': 'Филимону',
+  'евр': 'Евреям', 'евреям': 'Евреям',
+  'откр': 'Откровение', 'отк': 'Откровение', 'откровения': 'Откровение', 'апокалипсис': 'Откровение'
+};
+
+export function getBookSpokenName(book: string): string {
+  let bookCleaned = book.trim().toLowerCase();
+  let prefix = '';
+  const numPrefixMatch = bookCleaned.match(/^([1234])(?:-е|-я|-я\s+книга\s+|-е\s+послание\s+|\s)*\s*/);
+  if (numPrefixMatch) {
+    const num = numPrefixMatch[1];
+    bookCleaned = bookCleaned.substring(numPrefixMatch[0].length);
+    const isFemaleBook = /^(?:царств|цар|паралипоменон|пар)$/i.test(bookCleaned);
+    if (isFemaleBook) {
+      if (num === '1') prefix = 'первая ';
+      else if (num === '2') prefix = 'вторая ';
+      else if (num === '3') prefix = 'третья ';
+      else if (num === '4') prefix = 'четвёртая ';
+    } else {
+      if (num === '1') prefix = 'первое ';
+      else if (num === '2') prefix = 'второе ';
+      else if (num === '3') prefix = 'третье ';
+    }
+  }
+
+  let baseName = bookSpokenNames[bookCleaned] || bookCleaned;
+  
+  if (bookCleaned === 'царств' || bookCleaned === 'цар') baseName = 'Царств';
+  if (bookCleaned === 'паралипоменон' || bookCleaned === 'пар') baseName = 'Паралипоменон';
+  if (bookCleaned === 'коринфянам' || bookCleaned === 'кор') baseName = 'Коринфянам';
+  if (bookCleaned === 'петра' || bookCleaned === 'пет') baseName = 'Петра';
+  if (bookCleaned === 'иоанна' || bookCleaned === 'ин' || bookCleaned === 'инн') {
+    baseName = 'Иоанна';
+  }
+  if (bookCleaned === 'тимофею' || bookCleaned === 'тим') baseName = 'Тимофею';
+  if (bookCleaned === 'фессалоникийцам' || bookCleaned === 'фесс' || bookCleaned === 'солунянам' || bookCleaned === 'сол') baseName = 'Фессалоникийцам';
+
+  let result = prefix + baseName;
+  if (result.toLowerCase() !== 'псалом') {
+    result = result.charAt(0).toUpperCase() + result.slice(1);
+  } else {
+    result = result.toLowerCase();
+  }
+  return result;
+}
+
 export function replaceBiblicalReferences(text: string, countRef?: { count: number }): string {
   const bibleRegex = new RegExp(
     `(?<![а-яА-ЯёЁ0-9a-zA-Z])(${BIBLE_BOOKS_PATTERN})\\s+(\\d{1,3})[:.](\\d{1,3})(?:-(\\d{1,3}))?(?!\\d)`,
@@ -391,20 +485,21 @@ export function replaceBiblicalReferences(text: string, countRef?: { count: numb
     if (countRef) countRef.count++;
     const ch = parseInt(chStr, 10);
     const vStart = parseInt(vStartStr, 10);
-    const isPsalm = /^(?:псалом|псалтирь|псалмы|пс)$/i.test(book.trim());
+    const spokenBook = getBookSpokenName(book);
+    const isPsalm = spokenBook.toLowerCase() === 'псалом';
 
     if (vEndStr) {
       const vEnd = parseInt(vEndStr, 10);
       if (isPsalm) {
-        return `${book} ${ordinalM(ch)}, стихи с ${ordinalGenM(vStart)} по ${ordinalM(vEnd)}`;
+        return `${spokenBook} ${ordinalM(ch)}, стихи с ${ordinalGenM(vStart)} по ${ordinalM(vEnd)}`;
       }
-      return `${book}, глава ${ordinalF(ch)}, стихи с ${ordinalGenM(vStart)} по ${ordinalM(vEnd)}`;
+      return `${spokenBook}, глава ${ordinalF(ch)}, стихи с ${ordinalGenM(vStart)} по ${ordinalM(vEnd)}`;
     }
 
     if (isPsalm) {
-      return `${book} ${ordinalM(ch)}, стих ${ordinalM(vStart)}`;
+      return `${spokenBook} ${ordinalM(ch)}, стих ${ordinalM(vStart)}`;
     }
-    return `${book}, глава ${ordinalF(ch)}, стих ${ordinalM(vStart)}`;
+    return `${spokenBook}, глава ${ordinalF(ch)}, стих ${ordinalM(vStart)}`;
   });
 }
 
@@ -654,6 +749,32 @@ export function normalizeForVoice(text: string, prepareFn?: (t: string) => strin
 
   // а) Библейские ссылки
   res = replaceBiblicalReferences(res, counter);
+
+  // Новая замена: глава \d+ -> глава первая, главы/главе/главу \d+ -> ...
+  res = res.replace(/(?<![а-яА-ЯёЁ])глав([аыеу])\s+(\d+)\b/gi, (_match, suffix, numStr) => {
+    counter.count++;
+    const num = parseInt(numStr, 10);
+    const suff = suffix.toLowerCase();
+    if (suff === 'а') {
+      return `глава ${ordinalF(num)}`;
+    } else if (suff === 'у') {
+      let ord = ordinalF(num);
+      if (ord.endsWith('ая')) {
+        ord = ord.slice(0, -2) + 'ую';
+      } else if (ord.endsWith('ья')) {
+        ord = ord.slice(0, -2) + 'ью';
+      }
+      return `главу ${ord}`;
+    } else {
+      let ord = ordinalF(num);
+      if (ord.endsWith('ая')) {
+        ord = ord.slice(0, -2) + 'ой';
+      } else if (ord.endsWith('ья')) {
+        ord = ord.slice(0, -2) + 'ей';
+      }
+      return `глав${suffix} ${ord}`;
+    }
+  });
 
   // б) Даты
   res = replaceDates(res, counter);

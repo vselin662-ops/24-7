@@ -4,6 +4,43 @@ import { getVoiceGender } from '../../db';
 import { normalizeForSpeech, chunkText } from '../utils/textUtils';
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 
+function escapeXml(unsafe: string): string {
+  return unsafe.replace(/[<>&'"]/g, (c) => {
+    switch (c) {
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '&': return '&amp;';
+      case '\'': return '&apos;';
+      case '"': return '&quot;';
+      default: return c;
+    }
+  });
+}
+
+export function prepareSSMLText(text: string): string {
+  let marked = text;
+  marked = marked.replace(/\n+/g, ' __BREAK_600__ ');
+  marked = marked.replace(/\.\.\./g, ' __BREAK_600__ ');
+  marked = marked.replace(/([;:])(?!\d)/g, '$1 __BREAK_500__ ');
+  marked = marked.replace(/(\s[—-]\s)/g, '$1 __BREAK_400__ ');
+  marked = marked.replace(/(?<!\d)([.!?])(?!\d)/g, '$1 __BREAK_500__ ');
+
+  let escaped = escapeXml(marked);
+
+  escaped = escaped.replace(/__BREAK_600__/g, '<break time="600ms"/>');
+  escaped = escaped.replace(/__BREAK_500__/g, '<break time="500ms"/>');
+  escaped = escaped.replace(/__BREAK_400__/g, '<break time="400ms"/>');
+
+  return escaped;
+}
+
+export function preparePlainProsody(text: string): string {
+  let processed = text;
+  processed = processed.replace(/\n+/g, ' ... — ... ');
+  processed = processed.replace(/([;:])(?!\d)/g, '$1 — ... ');
+  return processed;
+}
+
 export interface TTSSynthesisOptions {
   voice?: string;
   rate?: string;
@@ -33,8 +70,8 @@ export class TTSService {
    */
   public async synthesize(text: string, options: TTSSynthesisOptions = {}, isSelfTest: boolean = false): Promise<Buffer | null> {
     const cleanText = text.trim();
-    const voice = options.voice || 'ru-RU-DmitryNeural';
-    const rate = options.rate || '-4%';
+    const voice = options.voice || process.env.TTS_VOICE || 'ru-RU-SvetlanaNeural';
+    const rate = options.rate || '-10%';
     const pitch = options.pitch || '+0Hz';
 
     if (!cleanText) {
@@ -177,7 +214,8 @@ export class TTSService {
 
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
-      const streamRes = tts.toStream(chunk, { rate, pitch });
+      const plainChunk = preparePlainProsody(chunk);
+      const streamRes = tts.toStream(plainChunk, { rate, pitch });
       const readable = (streamRes && (streamRes as any).audioStream) ? (streamRes as any).audioStream : streamRes;
 
       const chunkBuffers: Buffer[] = [];
@@ -206,11 +244,12 @@ export class TTSService {
     const chunks = chunkText(text, 300);
     const audioChunks: Buffer[] = [];
 
-    const selectedVoice = voice.includes('Neural') ? voice : 'ru-RU-DmitryNeural';
+    const selectedVoice = voice.includes('Neural') ? voice : (process.env.TTS_VOICE || 'ru-RU-SvetlanaNeural');
 
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
-      const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='ru-RU'><voice name='${selectedVoice}'><prosody rate='${rate}' pitch='${pitch}'>${chunk}</prosody></voice></speak>`;
+      const ssmlChunk = prepareSSMLText(chunk);
+      const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='ru-RU'><voice name='${selectedVoice}'><prosody rate='${rate}' pitch='${pitch}'>${ssmlChunk}</prosody></voice></speak>`;
 
       const response = await fetch('https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4', {
         method: 'POST',
@@ -361,17 +400,15 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   }
 
   // Шаг 4: Синтез через Edge TTS
+  let voice = process.env.TTS_VOICE || 'ru-RU-SvetlanaNeural';
   if (!audioBuffer) {
     engine = 'Edge';
     const gender = getVoiceGender(cleanId);
-    let voice = 'ru-RU-DmitryNeural';
-    let rate = '-4%';
+    let rate = '-10%'; // rate 0.9 corresponds to -10% in Edge TTS
     let pitch = '+0Hz';
 
-    if (gender === 'female') {
-      voice = 'ru-RU-SvetlanaNeural';
-      rate = '-4%';
-      pitch = '+0Hz';
+    if (gender === 'male' && !process.env.TTS_VOICE) {
+      voice = 'ru-RU-DmitryNeural';
     }
 
     try {
@@ -386,8 +423,16 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   }
 
   if (audioBuffer) {
+    const voiceName = (engine === 'OpenAI') ? 'onyx' : voice;
+    console.log(`🎙 [TTS] voice=${voiceName} refs=ord`);
+    logger.info(`🎙 [TTS] voice=${voiceName} refs=ord`);
     return audioBuffer;
   }
 
-  return ttsService.synthesize(normalized, {}, isSelfTest);
+  const fallbackBuffer = await ttsService.synthesize(normalized, {}, isSelfTest);
+  if (fallbackBuffer) {
+    console.log(`🎙 [TTS] voice=${voice} refs=ord`);
+    logger.info(`🎙 [TTS] voice=${voice} refs=ord`);
+  }
+  return fallbackBuffer;
 }
