@@ -19,6 +19,7 @@ function escapeXml(unsafe: string): string {
 
 export function prepareSSMLText(text: string): string {
   let marked = text;
+  // Паузы между абзацами 600мс
   marked = marked.replace(/\n+/g, ' __BREAK_600__ ');
   marked = marked.replace(/\.\.\./g, ' __BREAK_600__ ');
   marked = marked.replace(/([;:])(?!\d)/g, '$1 __BREAK_500__ ');
@@ -31,12 +32,24 @@ export function prepareSSMLText(text: string): string {
   escaped = escaped.replace(/__BREAK_500__/g, '<break time="500ms"/>');
   escaped = escaped.replace(/__BREAK_400__/g, '<break time="400ms"/>');
 
+  // Акценты на ключевых словах через SSML <emphasis> при поддержке
+  escaped = escaped.replace(/Селин/g, '<emphasis level="moderate">Селин</emphasis>');
+  escaped = escaped.replace(/дешевле чашки кофе/g, '<emphasis level="moderate">дешевле чашки кофе</emphasis>');
+  escaped = escaped.replace(/с этой минуты/g, '<emphasis level="moderate">с этой минуты</emphasis>');
+
   return escaped;
 }
 
 export function preparePlainProsody(text: string): string {
   let processed = text;
+  // Паузы между абзацами 600мс в не-SSML
   processed = processed.replace(/\n+/g, ' ... — ... ');
+  
+  // Интонационная пунктуация на ключевых словах
+  processed = processed.replace(/Селин/g, 'Селин — ');
+  processed = processed.replace(/дешевле чашки кофе/g, '— дешевле чашки кофе! —');
+  processed = processed.replace(/с этой минуты/g, 'с этой минуты!');
+  
   processed = processed.replace(/([;:])(?!\d)/g, '$1 — ... ');
   return processed;
 }
@@ -70,8 +83,12 @@ export class TTSService {
    */
   public async synthesize(text: string, options: TTSSynthesisOptions = {}, isSelfTest: boolean = false): Promise<Buffer | null> {
     const cleanText = text.trim();
-    const voice = options.voice || process.env.TTS_VOICE || 'ru-RU-SvetlanaNeural';
-    const rate = options.rate || '-10%';
+    let voice = options.voice || process.env.TTS_VOICE || 'ru-RU-DmitryNeural';
+    if (voice.toLowerCase().includes('svetlana') || voice.toLowerCase().includes('female')) {
+      logger.warn("⚠️ [TTS] Female voice detected. Forcing male voice DmitryNeural.");
+      voice = 'ru-RU-DmitryNeural';
+    }
+    const rate = '+0%'; // rate 1.0 — стандартная ораторская скорость, без замедления и ускорения
     const pitch = options.pitch || '+0Hz';
 
     if (!cleanText) {
@@ -244,7 +261,10 @@ export class TTSService {
     const chunks = chunkText(text, 300);
     const audioChunks: Buffer[] = [];
 
-    const selectedVoice = voice.includes('Neural') ? voice : (process.env.TTS_VOICE || 'ru-RU-SvetlanaNeural');
+    let selectedVoice = voice.includes('Neural') ? voice : (process.env.TTS_VOICE || 'ru-RU-DmitryNeural');
+    if (selectedVoice.toLowerCase().includes('svetlana') || selectedVoice.toLowerCase().includes('female')) {
+      selectedVoice = 'ru-RU-DmitryNeural';
+    }
 
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
@@ -400,16 +420,14 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   }
 
   // Шаг 4: Синтез через Edge TTS
-  let voice = process.env.TTS_VOICE || 'ru-RU-SvetlanaNeural';
+  let voice = process.env.TTS_VOICE || 'ru-RU-DmitryNeural';
+  if (voice.toLowerCase().includes('svetlana') || voice.toLowerCase().includes('female')) {
+    voice = 'ru-RU-DmitryNeural';
+  }
   if (!audioBuffer) {
     engine = 'Edge';
-    const gender = getVoiceGender(cleanId);
-    let rate = '-10%'; // rate 0.9 corresponds to -10% in Edge TTS
-    let pitch = '+0Hz';
-
-    if (gender === 'male' && !process.env.TTS_VOICE) {
-      voice = 'ru-RU-DmitryNeural';
-    }
+    const rate = '+0%'; // rate 1.0 — стандартная ораторская скорость
+    const pitch = '+0Hz';
 
     try {
       audioBuffer = await ttsService.synthesize(normalized, { voice, rate, pitch }, isSelfTest);
@@ -418,21 +436,22 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
         logger.info(`🎙️ [TTS] engine=${engine} chunks=${chunksCount} glued into one audio`);
       }
     } catch (fallbackErr: any) {
-      logger.error(`❌ [synthesizeForChat] Edge TTS attempt failed: ${fallbackErr.message || fallbackErr}`);
+      logger.warn(`⚠️ [TTS] Male voice DmitryNeural synthesis failed, falling back. DO NOT switch to female voice. Error: ${fallbackErr.message || fallbackErr}`);
     }
   }
 
   if (audioBuffer) {
     const voiceName = (engine === 'OpenAI') ? 'onyx' : voice;
-    console.log(`🎙 [TTS] voice=${voiceName} refs=ord`);
-    logger.info(`🎙 [TTS] voice=${voiceName} refs=ord`);
+    console.log(`🎙 [TTS] voice=${voiceName} gender=male rate=1.0`);
+    logger.info(`🎙 [TTS] voice=${voiceName} gender=male rate=1.0`);
     return audioBuffer;
   }
 
-  const fallbackBuffer = await ttsService.synthesize(normalized, {}, isSelfTest);
+  logger.warn(`⚠️ [TTS] Primary male voice DmitryNeural unavailable. Attempting backup male voice synthesis...`);
+  const fallbackBuffer = await ttsService.synthesize(normalized, { voice }, isSelfTest);
   if (fallbackBuffer) {
-    console.log(`🎙 [TTS] voice=${voice} refs=ord`);
-    logger.info(`🎙 [TTS] voice=${voice} refs=ord`);
+    console.log(`🎙 [TTS] voice=${voice} gender=male rate=1.0`);
+    logger.info(`🎙 [TTS] voice=${voice} gender=male rate=1.0`);
   }
   return fallbackBuffer;
 }

@@ -301,18 +301,6 @@ export function initDataStore() {
 }
 
 export function getVoiceGender(chatId?: string | number | null): 'male' | 'female' {
-  if (!chatId) return 'male';
-  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim() || String(chatId).trim();
-  if (sqliteDb) {
-    try {
-      const row = sqliteDb.prepare("SELECT gender FROM voice_prefs WHERE chat_id = ?").get(cleanId);
-      if (row?.gender === 'female' || row?.gender === 'male') {
-        return row.gender;
-      }
-    } catch (e) {
-      logger.warn(`⚠️ [voice_prefs] Error getting voice gender: ${e}`);
-    }
-  }
   return 'male';
 }
 
@@ -321,8 +309,8 @@ export function setVoiceGender(chatId: string | number, gender: 'male' | 'female
   const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim() || String(chatId).trim();
   if (sqliteDb) {
     try {
-      sqliteDb.prepare("INSERT OR REPLACE INTO voice_prefs (chat_id, gender) VALUES (?, ?)").run(cleanId, gender);
-      logger.info(`🎙️ [voice_prefs] Set gender for chat ${cleanId} to ${gender}`);
+      sqliteDb.prepare("INSERT OR REPLACE INTO voice_prefs (chat_id, gender) VALUES (?, ?)").run(cleanId, 'male');
+      logger.info(`🎙️ [voice_prefs] Set gender for chat ${cleanId} to male`);
     } catch (e) {
       logger.warn(`⚠️ [voice_prefs] Error setting voice gender: ${e}`);
     }
@@ -330,19 +318,10 @@ export function setVoiceGender(chatId: string | number, gender: 'male' | 'female
 }
 
 export function getVoiceConfig(chatId?: string | number | null): { voice: string; rate: string; pitch: string; gender: 'male' | 'female' } {
-  const gender = getVoiceGender(chatId);
-  if (gender === 'female') {
-    return {
-      voice: 'ru-RU-SvetlanaNeural',
-      rate: '-5%',
-      pitch: '-2Hz',
-      gender: 'female'
-    };
-  }
   return {
     voice: 'ru-RU-DmitryNeural',
-    rate: '-8%',
-    pitch: '-4Hz',
+    rate: '+0%',
+    pitch: '+0Hz',
     gender: 'male'
   };
 }
