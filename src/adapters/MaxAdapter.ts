@@ -16,6 +16,16 @@ const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
 const MAX_TEXT_LIMIT = 3800;
 
+// Периодическая очистка старых сообщений каждые 5 минут
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > MESSAGE_TTL) {
+      processedMessages.delete(id);
+    }
+  }
+}, 5 * 60 * 1000).unref?.();
+
 export const YOOMONEY_PAY_URL = 'https://yoomoney.ru/to/4100119243483246';
 
 export const SUBSCRIPTION_BUTTONS = [
@@ -922,16 +932,23 @@ export class MaxAdapter {
         const idStr = String(messageId);
         const now = Date.now();
 
-        // Очистка старых записей (>10 минут)
-        for (const [id, timestamp] of processedMessages.entries()) {
-          if (now - timestamp > MESSAGE_TTL) {
-            processedMessages.delete(id);
-          }
-        }
-
         if (processedMessages.has(idStr)) {
           console.log('♻️ [MAX] Дубль пропущен: ' + idStr);
           return res.status(200).send('ok');
+        }
+
+        if (processedMessages.size >= 10000) {
+          let oldestKey: string | null = null;
+          let oldestTime = Infinity;
+          for (const [id, timestamp] of processedMessages.entries()) {
+            if (timestamp < oldestTime) {
+              oldestTime = timestamp;
+              oldestKey = id;
+            }
+          }
+          if (oldestKey) {
+            processedMessages.delete(oldestKey);
+          }
         }
 
         processedMessages.set(idStr, now);
@@ -1717,7 +1734,7 @@ export class MaxAdapter {
         // г. Библия (всегда бесплатно для всех)
         if (isBibleQuery(text)) {
           const isPlanSubscribe = lowerText === 'подписаться на библию' || lowerText === '/bible' || lowerText.includes('бог благ и милость его велика');
-          const { handleBibleSubscription } = await import("../../server");
+          const { handleBibleSubscription } = await import("../services/bibleCommands");
           const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
           if (bibleReply) {
             if (isVoiceInput) {
@@ -1821,7 +1838,7 @@ export class MaxAdapter {
       // Библия для разблокированных
       if (isBibleQuery(text)) {
         const isPlanSubscribe = lowerText === 'подписаться на библию' || lowerText === '/bible' || lowerText.includes('бог благ и милость его велика');
-        const { handleBibleSubscription } = await import("../../server");
+        const { handleBibleSubscription } = await import("../services/bibleCommands");
         const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
         if (bibleReply) {
           if (isVoiceInput) {

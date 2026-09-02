@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import Groq from "groq-sdk";
 import OpenAI from "openai";
+import { LRUCache } from "lru-cache";
 import { ChatMemory } from "./types";
 import { logger } from "../logger";
 import { searchWeb } from "../services/WebSearchService";
@@ -258,9 +259,13 @@ function markFail(provider: string) {
 export class LLMService {
   private gemini: GoogleGenAI | null = null;
   private groq: Groq | null = null;
-  private chatMemories: Map<string, ChatMemory> = new Map();
+  private chatMemories: LRUCache<string, ChatMemory>;
 
   constructor(geminiApiKey?: string, groqApiKey?: string) {
+    this.chatMemories = new LRUCache<string, ChatMemory>({
+      max: 1000,
+      ttl: 30 * 60 * 1000, // 30 мин
+    });
     const gKey = geminiApiKey || process.env.GEMINI_API_KEY;
     if (gKey && !gKey.includes('your_') && !gKey.includes('placeholder') && gKey.length > 10) {
       this.gemini = new GoogleGenAI({ apiKey: gKey });
@@ -426,6 +431,33 @@ export class LLMService {
     userMessage: string,
     systemPrompt?: string
   ): Promise<string> {
+    const signal = AbortSignal.timeout(15000);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      signal.addEventListener("abort", () => {
+        reject(new Error("Timeout"));
+      });
+    });
+
+    try {
+      return await Promise.race([
+        this.smartCallInternal(chatId, userMessage, systemPrompt, signal),
+        timeoutPromise
+      ]);
+    } catch (err: any) {
+      if (err.message === "Timeout" || signal.aborted) {
+        logger.warn(`⚠️ [smartCall] Timeout 15s exceeded for chatId: ${chatId}`);
+        return "Извините, ответ занимает слишком много времени. Пожалуйста, попробуйте отправить запрос еще раз.";
+      }
+      throw err;
+    }
+  }
+
+  private async smartCallInternal(
+    chatId: string,
+    userMessage: string,
+    systemPrompt?: string,
+    signal?: AbortSignal
+  ): Promise<string> {
     const memory = this.getMemory(chatId);
 
     // Сохраняем сообщение пользователя
@@ -520,7 +552,17 @@ ${identityBlock}
     if (weatherKeywords.test(userMessage)) {
       console.log('🌤️ [Weather] запрос погоды');
       try {
-        const weatherRes = await fetch('https://wttr.in/Moscow?format=j1', { signal: AbortSignal.timeout(8000) });
+        let city = 'Moscow';
+        try {
+          const { getUserBriefingConfig } = await import("../services/ProfileService");
+          const briefingConfig = await getUserBriefingConfig(chatId);
+          if (briefingConfig && briefingConfig.city) {
+            city = briefingConfig.city;
+          }
+        } catch (e) {
+          logger.warn("⚠️ [LLMService] Failed to load user briefing config for weather:", e);
+        }
+        const weatherRes = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`, { signal: AbortSignal.timeout(8000) });
         if (weatherRes.ok) {
           const wd: any = await weatherRes.json();
           const current = wd?.current_condition?.[0];
@@ -529,7 +571,7 @@ ${identityBlock}
             const feels = current.FeelsLikeC;
             const desc = current.lang_ru?.[0]?.value || current.weatherDesc?.[0]?.value || 'ясно';
             const wind = current.windspeedKmph;
-            const weatherInfo = `Актуальная погода в Москве: ${temp}°C (ощущается как ${feels}°C), ${desc}, ветер ${wind} км/ч.`;
+            const weatherInfo = `Актуальная погода в городе ${city}: ${temp}°C (ощущается как ${feels}°C), ${desc}, ветер ${wind} км/ч.`;
             const fullPrompt = finalSystem + '\n\nДОПОЛНИТЕЛЬНО: ' + weatherInfo + '\nИспользуй эти данные в ответе.';
             const reply = await this.callWithSystem(userMessage, fullPrompt);
             if (reply) {

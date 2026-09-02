@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
 import { getVoiceGender } from '../../db';
 import { normalizeForSpeech, chunkText } from '../utils/textUtils';
@@ -73,10 +74,13 @@ export interface TTSSynthesisOptions {
  * 4. Бесшовная склейка буферов в единый аудиопоток
  */
 export class TTSService {
-  private cache: Map<string, { contentType: string; buffer: Buffer }> = new Map();
+  private cache: LRUCache<string, { contentType: string; buffer: Buffer }>;
 
   constructor() {
-    // Инициализация не требует дополнительных клиентов
+    this.cache = new LRUCache<string, { contentType: string; buffer: Buffer }>({
+      max: 200,
+      ttl: 30 * 60 * 1000, // 30 минут
+    });
   }
 
   /**

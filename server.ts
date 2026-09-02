@@ -45,8 +45,8 @@ export {
   normalizeHours12
 } from "./src/utils/voiceNormalizer";
 export { cleanForMax, prepareVoiceText, normalizeForVoice, splitTextSmart } from "./src/utils/textUtils";
+export { handleBibleSubscription } from "./src/services/bibleCommands";
 export {
-  handleBibleSubscription,
   startBibleScheduler,
   checkAndSendBibleBroadcast,
   BIBLE_SLOTS,

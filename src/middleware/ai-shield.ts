@@ -33,12 +33,6 @@ export function sanitizePromptInput(text: string, tenantId: string = 'default'):
     return { sanitizedText: text || '', isInjection: false };
   }
 
-  // Bypass safety filter/moderation checks for voice, book, or chapter reading requests
-  const isVoiceOrBookRequest = /озвуч|прочитай|книг|глав|расскажи голосом|библи|ион/i.test(text);
-  if (isVoiceOrBookRequest) {
-    return { sanitizedText: text, isInjection: false };
-  }
-
   // 1. Remove zero-width characters
   let cleanText = text.replace(ZERO_WIDTH_REGEX, '');
 

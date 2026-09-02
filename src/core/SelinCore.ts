@@ -182,7 +182,7 @@ export class SelinCore {
     }
 
     // Check Bible broadcast subscription command & confirmation
-    const { handleBibleSubscription } = await import("../../server");
+    const { handleBibleSubscription } = await import("../services/bibleCommands");
     const bibleReply = await handleBibleSubscription(context.chatId, effectiveText, context.isVoice);
     if (bibleReply) {
       return {

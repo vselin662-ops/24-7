@@ -1,9 +1,18 @@
+import crypto from "crypto";
 import { logger } from "../logger";
 
 export function checkRequiredEnvVars() {
-  process.env.JWT_SECRET = process.env.JWT_SECRET || "selin_jwt_secret_dev_key_default";
+  if (!process.env.JWT_SECRET) {
+    if (process.env.NODE_ENV === "production") {
+      logger.error("❌ CRITICAL: Missing required env vars: JWT_SECRET");
+      process.exit(1);
+    } else {
+      logger.warn("⚠️ JWT_SECRET is not set in environment. Generating an ephemeral secret for development session.");
+      process.env.JWT_SECRET = crypto.randomBytes(32).toString("hex");
+    }
+  }
 
-  const required = ["JWT_SECRET"];
+  const required: string[] = [];
   const missing = required.filter((v) => !process.env[v]);
   if (missing.length > 0) {
     logger.error(`❌ CRITICAL: Missing required env vars: ${missing.join(", ")}`);
