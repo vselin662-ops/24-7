@@ -1,7 +1,34 @@
 import React, { useState } from 'react';
 import { GlassPanel } from './GlassPanel';
 import { NeonButton } from './NeonButton';
-import { HelpCircle, Shield, Key, Eye, Check, AlertTriangle, Copy, FileText } from 'lucide-react';
+import { HelpCircle, Shield, Key, Eye, Check, AlertTriangle, Copy, FileText, Sparkles } from 'lucide-react';
+
+const PRODUCT_PRESENTATION_MARKDOWN = `# 🌍 Selin AI — Ваш личный голосовой помощник и наставник прямо в Максе
+
+Selin AI — это умный голосовой ассистент общего назначения, созданный специально для приложения Макс. Он заменяет целый штат помощников: репетитора по языкам, бизнес-тренера и личного секретаря. С Selin вы общаетесь простым голосом, как с реальным человеком.
+
+## ✨ Что умеет делать Selin AI:
+
+1. 🌍 ПОМОГАЕТ ЛЕГКО УЧИТЬ ЯЗЫКИ
+   - Учит новые слова с вами по научно доказанной методике интервальных повторений — вы запоминаете их навсегда.
+   - Помогает тренировать правильное произношение: вы говорите, а Selin мгновенно оценивает произношение и подсказывает, как говорить лучше.
+   - С ним можно просто поболтать на иностранном языке на любую тему.
+
+2. 💼 ВАШ ЛИЧНЫЙ БИЗНЕС-ТРЕНЕР И НАСТАВНИК
+   - Поможет составить четкий план развития вашего дела.
+   - Напоминает о самой главной задаче дня (метод SMART) — чтобы вы не отвлекались на мелочи и шли к результату.
+   - Тренирует ваши навыки продаж: притворяется клиентом и разыгрывает с вами реальный диалог покупки.
+
+3. 🎙️ ЖИВОЙ И ПРИЯТНЫЙ ГОЛОС
+   - Отвечает красивым, естественным и чистым голосом. Вы можете выбрать приятный мужской или женский тембр.
+   - Понимает ваши голосовые команды с полуслова.
+
+4. 🛡️ ПОЛНАЯ БЕЗОПАСНОСТЬ
+   - Все ваши личные данные под надежной защитой в соответствии с законом РФ.
+   - Вы можете полностью стереть всю переписку и голосовые записи в один клик в любой момент.
+
+👉 Запустите Selin AI прямо сейчас в приложении Макс!`;
+
 const TECHNICAL_REPORT_MARKDOWN = `# Технический отчет Selin AI
 - Платформа: Selin AI
 - Безопасность: 152-ФЗ РФ, шифрование данных
@@ -23,6 +50,8 @@ export const FAQPanel: React.FC<FAQPanelProps> = ({ onWipeData, systemPrompts })
   const [showPromptIndex, setShowPromptIndex] = useState<number | null>(null);
   const [showWipeConfirm, setShowWipeConfirm] = useState(false);
   const [wiped, setWiped] = useState(false);
+  const [copiedPresentation, setCopiedPresentation] = useState(false);
+  const [showFullPresentation, setShowFullPresentation] = useState(true);
   const [copiedReport, setCopiedReport] = useState(false);
   const [showFullReport, setShowFullReport] = useState(false);
   const [copiedTgSetup, setCopiedTgSetup] = useState(false);
@@ -83,6 +112,29 @@ export const FAQPanel: React.FC<FAQPanelProps> = ({ onWipeData, systemPrompts })
     }
   };
 
+  const handleCopyPresentation = () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(PRODUCT_PRESENTATION_MARKDOWN);
+        setCopiedPresentation(true);
+        setTimeout(() => setCopiedPresentation(false), 2000);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = PRODUCT_PRESENTATION_MARKDOWN;
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setCopiedPresentation(true);
+        setTimeout(() => setCopiedPresentation(false), 2000);
+      }
+    } catch (err) {
+      console.error("Failed to copy product presentation", err);
+    }
+  };
+
   const handleCopyTgSetup = () => {
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -123,6 +175,65 @@ export const FAQPanel: React.FC<FAQPanelProps> = ({ onWipeData, systemPrompts })
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Search & FAQs */}
         <div className="lg:col-span-7 space-y-6">
+          {/* Product Presentation Card */}
+          <div className="premium-card p-6 rounded-2xl space-y-4 relative overflow-hidden border border-[#C5A059]/30 bg-[#161210]/60">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-[#C5A059]/5 rounded-full filter blur-xl animate-pulse animate-duration-10000" />
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-[#C5A059]/10 rounded-xl text-[#C5A059] border border-[#C5A059]/25">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white font-display uppercase tracking-wider">🌟 Презентация Selin AI</h4>
+                  <p className="text-[10px] text-[#C5A059]/70 uppercase tracking-widest mt-0.5">Краткое и понятное объяснение продукта</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowFullPresentation(!showFullPresentation)}
+                  className="text-[10px] font-bold uppercase tracking-wider text-[#C5A059] hover:text-white transition-colors px-3 py-1.5 rounded bg-[#C5A059]/10 hover:bg-[#C5A059]/20 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Eye className="h-4 w-4" />
+                  {showFullPresentation ? 'Скрыть' : 'Показать'}
+                </button>
+
+                <NeonButton
+                  variant={copiedPresentation ? "accent" : "glass"}
+                  onClick={handleCopyPresentation}
+                  className="text-[10px] font-bold tracking-wider uppercase px-4 py-2.5 flex items-center gap-1.5"
+                  glow={false}
+                >
+                  {copiedPresentation ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 text-emerald-300" />
+                      Скопировано!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5" />
+                      Копировать
+                    </>
+                  )}
+                </NeonButton>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed font-light">
+              Готовая презентация возможностей Selin AI. Скопируйте структурированное описание продукта для презентаций, партнеров или личных заметок.
+            </p>
+
+            {showFullPresentation && (
+              <div className="mt-4 max-h-[350px] overflow-y-auto bg-black/60 border border-[#C5A059]/15 rounded-2xl p-5 text-xs text-slate-200 space-y-3 leading-relaxed scrollbar-thin">
+                <pre className="whitespace-pre-wrap font-sans text-xs text-slate-200 leading-relaxed">
+                  {PRODUCT_PRESENTATION_MARKDOWN}
+                </pre>
+              </div>
+            )}
+          </div>
+
           {/* Telegram Bot Setup Card */}
           <div className="premium-card p-6 rounded-2xl space-y-4 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-24 h-24 bg-accent/5 rounded-full filter blur-xl animate-pulse animate-duration-10000" />
