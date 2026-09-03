@@ -26,11 +26,18 @@ RUN apk add --no-cache ffmpeg curl ca-certificates && update-ca-certificates
 ENV NODE_ENV=production
 ENV PORT=3000
 
-COPY package.json ./
+# Create data directory and ensure ownership by the 'node' user
+RUN mkdir -p /app/data && chown -R node:node /app
+
+COPY --chown=node:node package.json ./
 RUN npm install --only=production
 
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/index.html ./dist/index.html
+COPY --chown=node:node --from=builder /app/dist ./dist
+COPY --chown=node:node --from=builder /app/index.html ./dist/index.html
+COPY --chown=node:node data ./data
+
+# Switch to unprivileged user
+USER node
 
 EXPOSE 3000
 

@@ -197,6 +197,12 @@ if (sqliteDb) {
       } catch {}
     }
 
+    try {
+      sqliteDb.exec(`CREATE INDEX IF NOT EXISTS idx_user_profiles_plan ON user_profiles(plan_status);`);
+    } catch (idxErr) {
+      logger.error("❌ [Profile] Failed to create idx_user_profiles_plan index:", idxErr);
+    }
+
     logger.info("📁 [Profile] user_profiles and Spirit Core tables verified.");
   } catch (err: any) {
     logger.error("❌ [Profile] Database initialization failed:", err);

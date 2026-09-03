@@ -2,7 +2,7 @@ import { PureDatabase as Database } from "./src/lib/pure-sqlite";
 import path from "path";
 import { logger } from "./src/logger";
 
-const dbPath = path.join(process.cwd(), "selin_data.db");
+const dbPath = path.join(process.cwd(), "data", "selin_data.db");
 
 
 let sqliteDb: any = null;
@@ -274,6 +274,8 @@ try {
     CREATE INDEX IF NOT EXISTS idx_lang_prog_tenant ON language_progress(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_lang_less_tenant ON language_lessons(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_biz_tasks_tenant ON business_tasks(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_subscriptions_chat ON subscriptions(chat_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_chat ON payments(chat_id, created_at);
   `);
 
   // Safe migration for adding tenant_id to pre-existing tables if created without it

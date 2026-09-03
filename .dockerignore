@@ -1,12 +1,15 @@
 node_modules
 .env
 .env.*
+dist
+logs
 *.db
 *.db-journal
 *.db-shm
 *.db-wal
 tests
-dist
 .git
 .github
+Dockerfile
+docker-compose.yml
 README.md

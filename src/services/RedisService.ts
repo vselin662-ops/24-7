@@ -161,6 +161,21 @@ export class RedisService {
       }
     }
   }
+
+  // Gracefully close the connection
+  async disconnect(): Promise<void> {
+    if (this.client) {
+      try {
+        await this.client.quit();
+        this.isConnected = false;
+        logger.info('🔴 [Redis] connection gracefully closed via quit');
+      } catch (err) {
+        this.client.disconnect();
+        this.isConnected = false;
+        logger.warn('⚠️ [Redis] forced disconnect on shutdown');
+      }
+    }
+  }
 }
 
 export const redisService = new RedisService();

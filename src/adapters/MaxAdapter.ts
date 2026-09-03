@@ -11,6 +11,7 @@ import { ensureMp3Buffer } from "../lib/audioConvert";
 import { callVision, stripMarkdown } from "../core/LLMService";
 import { sqliteDb, getVoiceConfig, setVoiceGender } from "../../db";
 import { isOwner } from "../fintech/subscriptions";
+import { maskPII } from "../utils/security";
 
 const processedMessages = new Map<string, number>();
 const MESSAGE_TTL = 10 * 60 * 1000; // 10 минут
@@ -920,7 +921,8 @@ export class MaxAdapter {
     try {
       const raw = req.body || {};
       const type = raw.update_type || raw.type || raw.event || 'unknown';
-      const rawJson = JSON.stringify(raw);
+      const maskedRaw = maskPII(raw);
+      const rawJson = JSON.stringify(maskedRaw);
       const jsonShort = rawJson.length > 150 ? rawJson.substring(0, 150) + "..." : rawJson;
       logger.info(`📥 [RAW] ${type} ${jsonShort}`);
       console.log(`📥 [RAW] ${type} ${jsonShort}`);
@@ -955,7 +957,7 @@ export class MaxAdapter {
       }
 
       // 🔥 ЛОГ ВСЕГО ТЕЛА ЗАПРОСА
-      logger.info(`📦 RAW BODY: ${JSON.stringify(raw)}`);
+      logger.info(`📦 RAW BODY: ${JSON.stringify(maskedRaw)}`);
 
       // 1. Извлекаем senderId / chatId с приоритетом payload?.user?.user_id || body.user_id
       let chatId = 
@@ -1145,7 +1147,7 @@ export class MaxAdapter {
       };
       collectFrom(raw);
 
-      logger.info(`📎 ATTACHMENTS: ${JSON.stringify(allAttachments)}`);
+      logger.info(`📎 ATTACHMENTS: ${JSON.stringify(maskPII(allAttachments))}`);
 
       for (const att of allAttachments) {
         const typeStr = String(att?.type || '').toLowerCase();

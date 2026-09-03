@@ -1,6 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 import Groq from "groq-sdk";
 import OpenAI from "openai";
+import crypto from "crypto";
+import { redisService } from "../services/RedisService";
+import { llmRequestsTotal, llmLatencySeconds } from "../metrics/prometheus";
 import { LRUCache } from "lru-cache";
 import { ChatMemory } from "./types";
 import { logger } from "../logger";
@@ -431,22 +434,74 @@ export class LLMService {
     userMessage: string,
     systemPrompt?: string
   ): Promise<string> {
-    const signal = AbortSignal.timeout(15000);
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    // Глобальный таймаут на выполнение запроса на 15 секунд
     const timeoutPromise = new Promise<never>((_, reject) => {
-      signal.addEventListener("abort", () => {
+      const timer = setTimeout(() => {
+        controller.abort();
         reject(new Error("Timeout"));
-      });
+      }, 15000);
+      timer.unref();
     });
 
+    // Формируем уникальный MD5-ключ на основе параметров запроса
+    const hash = crypto
+      .createHash("md5")
+      .update(String(chatId) + userMessage + (systemPrompt || ""))
+      .digest("hex");
+    const redisKey = `llm:${hash}`;
+
     try {
-      return await Promise.race([
-        this.smartCallInternal(chatId, userMessage, systemPrompt, signal),
-        timeoutPromise
-      ]);
+      // 1. Попытка получить ответ из кэша Redis (сбой Redis не должен прерывать основной флоу)
+      try {
+        const cachedResponse = await redisService.get(redisKey);
+        if (cachedResponse) {
+          logger.info(`💾 [smartCall] Cache hit for key: ${redisKey}`);
+          return cachedResponse;
+        }
+      } catch (cacheErr) {
+        logger.warn(`⚠️ [smartCall] Redis cache get failed: ${cacheErr}`);
+      }
+
+      const start = Date.now();
+      const provider = process.env.PRIMARY_PROVIDER || "openrouter";
+      
+      let response: string;
+      try {
+        // Выполняем запрос с гонкой таймаута
+        response = await Promise.race([
+          this.smartCallInternal(chatId, userMessage, systemPrompt, signal),
+          timeoutPromise
+        ]);
+
+        // Сбор метрик успешного запроса
+        const latencySec = (Date.now() - start) / 1000;
+        llmRequestsTotal.inc({ provider, status: "success" });
+        llmLatencySeconds.observe({ provider }, latencySec);
+      } catch (callErr: any) {
+        // Сбор метрик ошибок/таймаута
+        const latencySec = (Date.now() - start) / 1000;
+        const status = (callErr.message === "Timeout" || signal.aborted) ? "timeout" : "error";
+        llmRequestsTotal.inc({ provider, status });
+        llmLatencySeconds.observe({ provider }, latencySec);
+        throw callErr;
+      }
+
+      // 2. Сохраняем успешный ответ в кэш на 1 час (3600 секунд)
+      try {
+        await redisService.set(redisKey, response, 3600);
+        logger.info(`💾 [smartCall] Saved response to cache: ${redisKey}`);
+      } catch (cacheErr) {
+        logger.warn(`⚠️ [smartCall] Redis cache set failed: ${cacheErr}`);
+      }
+
+      return response;
     } catch (err: any) {
       if (err.message === "Timeout" || signal.aborted) {
         logger.warn(`⚠️ [smartCall] Timeout 15s exceeded for chatId: ${chatId}`);
-        return "Извините, ответ занимает слишком много времени. Пожалуйста, попробуйте отправить запрос еще раз.";
+        return "Система временно перегружена. Попробуйте через минуту.";
       }
       throw err;
     }

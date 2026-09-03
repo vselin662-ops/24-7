@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
+import { ttsRequestsTotal } from "../metrics/prometheus";
 import { getVoiceGender } from '../../db';
 import { normalizeForSpeech, chunkText } from '../utils/textUtils';
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
@@ -122,6 +123,7 @@ export class TTSService {
       audioBuffer = await this.synthesizeWithLibrary(cleanText, voice, rate, pitch);
       if (audioBuffer) {
         contentType = 'audio/mpeg';
+        ttsRequestsTotal.inc({ engine: 'edge-library' });
         if (isSelfTest) {
           logger.info("🎙️ [TTS] active engine: edge");
         }
@@ -136,6 +138,7 @@ export class TTSService {
         audioBuffer = await this.synthesizeEdgeDirect(cleanText, voice, rate, pitch);
         if (audioBuffer) {
           contentType = 'audio/mpeg';
+          ttsRequestsTotal.inc({ engine: 'edge-direct' });
           if (isSelfTest) {
             logger.info("🎙️ [TTS] active engine: edge");
           }
@@ -151,6 +154,7 @@ export class TTSService {
         audioBuffer = await this.callGeminiTTS(cleanText);
         if (audioBuffer) {
           contentType = 'audio/wav';
+          ttsRequestsTotal.inc({ engine: 'gemini' });
           if (isSelfTest) {
             logger.info("🎙️ [TTS] active engine: gemini");
           }
@@ -166,6 +170,7 @@ export class TTSService {
         logger.warn('[TTSService] All Edge TTS attempts failed. Generating offline fallback tone.');
         audioBuffer = this.generateFallbackToneWav(cleanText);
         contentType = 'audio/wav';
+        ttsRequestsTotal.inc({ engine: 'fallback' });
       } else {
         logger.warn('[TTSService] All TTS engines failed for user. No fallback tone generated.');
         return null;
