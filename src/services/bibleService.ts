@@ -472,6 +472,9 @@ export function startBibleScheduler(
   sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
   sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
 ) {
-  setInterval(() => checkAndSendBibleBroadcast(sendTextMessageFn, sendVoiceMessageFn), 60000);
-  logger.info("🕊 Планировщик Плана Победы запущен (интервал 1 минута)");
+  import("./PlanScheduler").then(({ planScheduler }) => {
+    planScheduler.start();
+  }).catch(err => {
+    logger.error("❌ Failed to start PlanScheduler:", err);
+  });
 }

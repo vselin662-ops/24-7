@@ -60,34 +60,24 @@ export async function handleBibleSubscription(
     logger.info(`✨ [Moisey] Owner ${cleanId} triggered forced Victory Plan test.`);
 
     try {
-      const { getSlotScripture, generateAnalysisAndMotivation, getUserPlanDay } = await import("./bibleService");
-      const { cleanForMax } = await import("../utils/textUtils");
+      const { buildSlotContent } = await import("./PlanContentBuilder");
+      const { modernMaxAdapter } = await import("../../server");
 
       // Определяем текущий временной слот в зависимости от текущего часа по Московскому времени
       const nowTime = new Date();
       const hour = parseInt(new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', hour12: false }).format(nowTime), 10);
-      let slot: 'm' | 'n' | 'e' = 'm';
-      if (hour >= 12 && hour < 18) slot = 'n';
-      else if (hour >= 18) slot = 'e';
+      let slotKey: 'morning' | 'noon' | 'evening' = 'morning';
+      if (hour >= 12 && hour < 18) slotKey = 'noon';
+      else if (hour >= 18) slotKey = 'evening';
 
-      const dayNum = getUserPlanDay(cleanId);
-      const { refStr, text: scriptureText } = await getSlotScripture(dayNum, slot);
-      const { analysis, motivation } = await generateAnalysisAndMotivation(cleanId, refStr, scriptureText, slot);
+      const content = await buildSlotContent(cleanId, slotKey);
 
-      const slotTitle = slot === 'm' ? 'Утреннее чтение' : slot === 'n' ? 'Дневное чтение' : 'Вечернее чтение';
-      const forcedText = cleanForMax(
-        `🕊 План Победы (День ${dayNum}/365 — ${slotTitle}: ${refStr}).\n\n` +
-        `«${scriptureText}»\n\n` +
-        `💭 Разбор:\n${analysis}\n\n` +
-        `💪 Мотивация на сегодня:\n${motivation}\n\n` +
-        `📖 Тест: Иисус вчера, сегодня и вовеки Тот же.`
-      );
+      // Отправляем красивый текст
+      await modernMaxAdapter.sendToUser(cleanId, content.text);
+      // И аудио голосом
+      await modernMaxAdapter.sendVoice(cleanId, content.voiceText);
 
-      // Принудительно отправляем голосовое сообщение с использованием TTSService/modernMaxAdapter
-      const { modernMaxAdapter } = await import("../../server");
-      await modernMaxAdapter.sendVoice(parseInt(cleanId, 10), forcedText);
-
-      return "✅ Тест Маисей выполнен. Проверьте голосовое сообщение.";
+      return "✅ Тест Маисей выполнен. Проверьте сообщения и голосовую версию.";
     } catch (err: any) {
       logger.error(`❌ [Moisey] Error during forced test delivery:`, err);
       return `❌ Ошибка выполнения теста Маисей: ${err?.message || err}`;
