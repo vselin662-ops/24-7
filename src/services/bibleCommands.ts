@@ -38,7 +38,7 @@ export async function handleBibleSubscription(
         } catch {}
 
         sendImmediatePlanPobedyVerse(cleanId).catch(() => {});
-        return 'План победы подключён на 365 дней. Отправляю первый стих голосом. Благословений!';
+        return '✅ План Победы включён! Отправляю стих дня голосом. Приятного прослушивания!';
       }
 
       if (lower === 'нет' || lower.startsWith('нет ') || lower.startsWith('нет,') || lower.startsWith('нет.')) {
@@ -50,7 +50,52 @@ export async function handleBibleSubscription(
     }
   }
 
-  if (lower.includes('включить план победы') || lower === 'включить план' || lower === 'plan_on' || lower === '/plan_on') {
+  // === СЕКРЕТНАЯ ТЕСТОВАЯ КОМАНДА "МАИСЕЙ" ===
+  if (lower === 'маисей') {
+    if (!isOwner(cleanId)) {
+      logger.warn(`⚠️ [Security] Unauthorized user ${cleanId} attempted secret command 'Маисей'`);
+      return null; // Игнорируем не-владельцев
+    }
+
+    logger.info(`✨ [Moisey] Owner ${cleanId} triggered forced Victory Plan test.`);
+
+    try {
+      const { getSlotScripture, generateAnalysisAndMotivation, getUserPlanDay } = await import("./bibleService");
+      const { cleanForMax } = await import("../utils/textUtils");
+
+      // Определяем текущий временной слот в зависимости от текущего часа по Московскому времени
+      const nowTime = new Date();
+      const hour = parseInt(new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', hour12: false }).format(nowTime), 10);
+      let slot: 'm' | 'n' | 'e' = 'm';
+      if (hour >= 12 && hour < 18) slot = 'n';
+      else if (hour >= 18) slot = 'e';
+
+      const dayNum = getUserPlanDay(cleanId);
+      const { refStr, text: scriptureText } = await getSlotScripture(dayNum, slot);
+      const { analysis, motivation } = await generateAnalysisAndMotivation(cleanId, refStr, scriptureText, slot);
+
+      const slotTitle = slot === 'm' ? 'Утреннее чтение' : slot === 'n' ? 'Дневное чтение' : 'Вечернее чтение';
+      const forcedText = cleanForMax(
+        `🕊 План Победы (День ${dayNum}/365 — ${slotTitle}: ${refStr}).\n\n` +
+        `«${scriptureText}»\n\n` +
+        `💭 Разбор:\n${analysis}\n\n` +
+        `💪 Мотивация на сегодня:\n${motivation}\n\n` +
+        `📖 Тест: Иисус вчера, сегодня и вовеки Тот же.`
+      );
+
+      // Принудительно отправляем голосовое сообщение с использованием TTSService/modernMaxAdapter
+      const { modernMaxAdapter } = await import("../../server");
+      await modernMaxAdapter.sendVoice(parseInt(cleanId, 10), forcedText);
+
+      return "✅ Тест Маисей выполнен. Проверьте голосовое сообщение.";
+    } catch (err: any) {
+      logger.error(`❌ [Moisey] Error during forced test delivery:`, err);
+      return `❌ Ошибка выполнения теста Маисей: ${err?.message || err}`;
+    }
+  }
+
+  // === ЗАДАЧА 3: Текстовые команды ===
+  if (lower === 'включить план победы' || lower === 'включить план' || lower === 'plan_on' || lower === '/plan_on') {
     updateUserPlanConfig(cleanId, { plan_enabled: 1, plan_status: 'on_buttons' });
     try {
       sqliteDb?.prepare("INSERT OR REPLACE INTO bible_subs (chat_id, start_date, active, period_days) VALUES (?, ?, ?, ?)")
@@ -58,6 +103,27 @@ export async function handleBibleSubscription(
     } catch {}
     sendImmediatePlanPobedyVerse(cleanId).catch(() => {});
     return '✅ План Победы включён! Отправляю стих дня голосом. Приятного прослушивания!';
+  }
+
+  if (lower === 'отключить план победы' || lower === 'выключить план победы' || lower === 'stop_plan' || lower === 'plan_off' || lower === '/plan_off') {
+    updateUserPlanConfig(cleanId, { plan_enabled: 0, plan_status: 'off' });
+    try {
+      sqliteDb?.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
+    } catch {}
+    return '❌ План Победы выключен.';
+  }
+
+  if (lower === 'настройки план победы' || lower === 'настройки плана победы' || lower === 'план победы настройки') {
+    try {
+      const { renderPlanMenu } = await import("./CallbackRouter");
+      const menu = renderPlanMenu(cleanId);
+      const { modernMaxAdapter } = await import("../../server");
+      await modernMaxAdapter.safeSendMessageToChat(cleanId, menu.text, menu.extra);
+      return "[HANDLED_WITH_BUTTONS]";
+    } catch (err) {
+      logger.error(`❌ Error rendering plan settings menu:`, err);
+      return "⚠️ Не удалось открыть меню настроек.";
+    }
   }
 
   // === КОМАНДА 1: 'план на сегодня' ===
@@ -104,14 +170,40 @@ export async function handleBibleSubscription(
     return null; // от не-владельца -> игнор
   }
 
-  const isPlanQuestion = /план[а-я]*\s+побед[а-я]*/i.test(lower) || /побед[а-я]*\s+план[а-я]*/i.test(lower) || lower === 'план победы' || lower === 'план_победы';
+  // === ЗАДАЧА 1: Упрощённое меню (при команде "план победы") ===
+  const isPlanQuestion = lower === 'план победы' || lower === 'план_победы' || lower === '/plan';
   if (isPlanQuestion) {
     logger.info(`❓ [Intent] fn=plan chat=${cleanId}`);
     const cfg = getUserPlanConfig(cleanId);
     const isEnabled = (cfg.plan_status === 'on_buttons' || cfg.plan_status === 'on_quiet' || cfg.plan_enabled === 1) && cfg.plan_status !== 'off';
-    const statusStr = isEnabled ? 'включён' : 'отключён';
-    const nextSlot = getNearestPlanSlotTime(cfg);
-    return `🕊 План Победы: ${statusStr}. Ближайшее голосовое: ${nextSlot}. Утро=ВЗ, обед=НЗ, вечер=Псалом+Притчи.`;
+    const statusStr = isEnabled ? 'включён' : 'выключен';
+
+    const menuText = `🕊 **План Победы**\n\nКаждый день вы будете получать духовный разбор Писания и практическую мотивацию в виде голосовых сообщений.\n\nТекущий статус: **${statusStr}**\n\nВыберите действие:`;
+
+    const extra = {
+      attachments: [
+        {
+          type: 'inline_keyboard',
+          payload: {
+            buttons: [
+              [
+                { type: 'callback', text: '✅ Включить', payload: 'plan_on' },
+                { type: 'callback', text: '❌ Выключить', payload: 'plan_off' }
+              ]
+            ]
+          }
+        }
+      ]
+    };
+
+    try {
+      const { modernMaxAdapter } = await import("../../server");
+      await modernMaxAdapter.safeSendMessageToChat(cleanId, menuText, extra);
+    } catch (err) {
+      logger.error(`❌ Error sending simple plan menu:`, err);
+    }
+
+    return "[HANDLED_WITH_BUTTONS]";
   }
 
   if (lower === 'тест рассылки' || lower === 'тест_рассылки') {
@@ -127,7 +219,7 @@ export async function handleBibleSubscription(
       try {
         sqliteDb?.prepare("UPDATE bible_subs SET active = 0 WHERE chat_id = ?").run(cleanId);
       } catch {}
-      return 'План победы остановлен. Возвращайся!';
+      return '❌ План Победы выключен. Возвращайся!';
     } else {
       biblePendingConfirmations.set(cleanId, Date.now());
       return 'Команда включает План победы на год: каждый день голосовые стихи и разборы по расписанию. Это твой личный годовой план. Отключить можно той же командой. Подключаем? Ответь: да или нет.';

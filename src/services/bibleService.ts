@@ -488,6 +488,6 @@ export function startBibleScheduler(
   sendTextMessageFn?: (chatId: number, text: string, extra?: any) => Promise<void>,
   sendVoiceMessageFn?: (chatId: number, text: string) => Promise<void>
 ) {
-  setInterval(() => checkAndSendBibleBroadcast(sendTextMessageFn, sendVoiceMessageFn), 20000);
-  logger.info("🕊 Планировщик Плана Победы v2 запущен (интервал 20 сек)");
+  setInterval(() => checkAndSendBibleBroadcast(sendTextMessageFn, sendVoiceMessageFn), 60000);
+  logger.info("🕊 Планировщик Плана Победы запущен (интервал 1 минута)");
 }

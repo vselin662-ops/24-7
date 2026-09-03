@@ -73,6 +73,7 @@ export function isBibleQuery(text: string): boolean {
     lower.startsWith('/plan_') ||
     lower.includes('тест рассылки') ||
     lower.includes('тест_рассылки') ||
+    lower.includes('маисей') ||
     lower === '/bible' ||
     lower === 'подписаться на библию' ||
     lower.startsWith('библи') ||
@@ -1739,6 +1740,9 @@ export class MaxAdapter {
           const { handleBibleSubscription } = await import("../services/bibleCommands");
           const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
           if (bibleReply) {
+            if (bibleReply === "[HANDLED_WITH_BUTTONS]") {
+              return res.status(200).send('ok');
+            }
             if (isVoiceInput) {
               await this.synthesizeAndSendVoice(cleanId, bibleReply);
             } else {
@@ -1843,6 +1847,9 @@ export class MaxAdapter {
         const { handleBibleSubscription } = await import("../services/bibleCommands");
         const bibleReply = await handleBibleSubscription(cleanId, isPlanSubscribe ? 'бог благ и милость его велика' : text, isVoiceInput);
         if (bibleReply) {
+          if (bibleReply === "[HANDLED_WITH_BUTTONS]") {
+            return res.status(200).send('ok');
+          }
           if (isVoiceInput) {
             await this.synthesizeAndSendVoice(cleanId, bibleReply);
           } else {

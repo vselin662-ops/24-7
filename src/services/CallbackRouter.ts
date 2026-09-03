@@ -433,7 +433,7 @@ export async function handleCallback(
 
     return {
       handled: true,
-      replyText: '✅ План включён!',
+      replyText: '✅ План Победы включён!',
       sendImmediateVoice: true
     };
   }
@@ -454,7 +454,7 @@ export async function handleCallback(
     } catch {}
     return {
       handled: true,
-      replyText: '✅ План отключён.'
+      replyText: '❌ План Победы выключен.'
     };
   }
 

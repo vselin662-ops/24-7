@@ -185,6 +185,12 @@ export class SelinCore {
     const { handleBibleSubscription } = await import("../services/bibleCommands");
     const bibleReply = await handleBibleSubscription(context.chatId, effectiveText, context.isVoice);
     if (bibleReply) {
+      if (bibleReply === "[HANDLED_WITH_BUTTONS]") {
+        return {
+          text: "",
+          confidence: 1.0
+        };
+      }
       return {
         text: bibleReply,
         confidence: 1.0
