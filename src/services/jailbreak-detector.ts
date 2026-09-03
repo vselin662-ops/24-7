@@ -65,6 +65,49 @@ export interface JailbreakCheckResult {
   blockedUntil?: number;
 }
 
+export const PROHIBITED_POLICY_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
+  // 1. Однополые браки и ЛГБТ-тематика — полный отказ от обсуждения. Пропаганда ЛГБТ (ФЗ-436)
+  {
+    pattern: /\b(лгбт|lgbt|лгбтк|lgbtq|геи|гей|лесбиян|гомосексуал|гомосексуализм|бисексуал|трансгендер|транссексуал|квир|однополые браки|однополый брак|содомия)\b|однопол(ые|ых|ого|ому|ым|ому) брак/i,
+    description: "LGBT/Same-sex marriage"
+  },
+  // 2. Призывы к терроризму, экстремизму (ст. 205, 280 УК РФ)
+  {
+    pattern: /\b(игил|исламское государство|терроризм|террорист|террористический|экстремизм|экстремист|экстремистский|шахид|джихад|взорвать|убить неверных|совершить теракт|теракт)\b/i,
+    description: "Terrorism/Extremism (Art. 205, 280 CC RF)"
+  },
+  // 3. Дискредитация ВС РФ (ст. 280.3)
+  {
+    pattern: /\b(дискредитация вс|дискредитация армии|армия рф убийцы|оккупанты рф|русский военный корабль|смерть русским|военные преступления рф|буча геноцид)\b/i,
+    description: "Discrediting Armed Forces of RF (Art. 280.3 CC RF)"
+  },
+  // 4. Военная пропаганда и агитация
+  {
+    pattern: /\b(нет войне|слава украине|героям слава|путин хуйло|военная пропаганда|военная агитация)\b/i,
+    description: "War propaganda and agitation"
+  },
+  // 5. Разжигание розни (ст. 282)
+  {
+    pattern: /\b(чурки|хачи|жиды|негры|москали|хохлы|укропы|кацапы|черножопые|расовое превосходство|уничтожать евреев|ненавижу мусульман|ненавижу христиан)\b/i,
+    description: "Inciting hatred (Art. 282 CC RF)"
+  },
+  // 6. АУЕ, воровские традиции, тюремная романтика (ФЗ-327)
+  {
+    pattern: /\b(ауе|жизнь ворам|вечер в хату|фарту масти|блатной|блатная романтика|воры в законе|вор в законе|по понятиям|тюремные понятия|феня|по фене|хата тюрьма)\b/i,
+    description: "AUE/Prison romance (Federal Law 327)"
+  },
+  // 7. Инструкции по наркотикам, оружию, взрывчатке
+  {
+    pattern: /\b(сварить мет|синтезировать наркотик|купить героин|рецепт наркотика|сделать бомбу|изготовить тротил|чертеж пистолета|печать оружия на 3д|изготовить порох|как сделать взрывчатку)\b/i,
+    description: "Drugs, weapons, explosives instruction"
+  },
+  // 8. Детская порнография
+  {
+    pattern: /\b(детское порно|детская порнография|цп|cp porn|pedophilia|педофилия|лоликон|loli porn)\b/i,
+    description: "Child pornography"
+  }
+];
+
 export function checkJailbreak(tenantId: string, text: string): JailbreakCheckResult {
   if (!text) return { isJailbreak: false, isBlocked: false };
 
@@ -72,6 +115,20 @@ export function checkJailbreak(tenantId: string, text: string): JailbreakCheckRe
   const isVoiceOrBookRequest = /озвуч|прочитай|книг|глав|расскажи голосом|библи|ион/i.test(text);
   if (isVoiceOrBookRequest) {
     return { isJailbreak: false, isBlocked: false };
+  }
+
+  // 1. Scan text for Prohibited Policy Patterns (UK RF boundaries, LGBT-themed, etc.)
+  for (const item of PROHIBITED_POLICY_PATTERNS) {
+    if (item.pattern.test(text)) {
+      logger.warn(`🛡️ Policy Violation Filter matched: ${item.description}`, { tenantId });
+      return {
+        isJailbreak: true,
+        isBlocked: false,
+        matchedPattern: item.description,
+        reason: "Я не обсуждаю эту тему.",
+        blockedUntil: 0
+      };
+    }
   }
 
   const now = Date.now();
@@ -84,7 +141,7 @@ export function checkJailbreak(tenantId: string, text: string): JailbreakCheckRe
         return {
           isJailbreak: true,
           isBlocked: true,
-          reason: `User is temporarily blocked until ${new Date(row.blocked_until).toISOString()} due to multiple jailbreak attempts.`,
+          reason: "Я не обсуждаю эту тему.",
           blockedUntil: row.blocked_until
         };
       }
@@ -150,7 +207,7 @@ export function checkJailbreak(tenantId: string, text: string): JailbreakCheckRe
         isJailbreak: true,
         isBlocked: count > 3,
         matchedPattern: item.description,
-        reason: "Я не могу выполнить эту просьбу. Я — Selin AI, ваш бизнес-ассистент.",
+        reason: "Я не обсуждаю эту тему.",
         blockedUntil
       };
     }

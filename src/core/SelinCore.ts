@@ -235,7 +235,20 @@ export class SelinCore {
 
     const identityBlock = getIdentityPromptBlock();
 
-    const baseDirectives = `${identityBlock}\nОтвечай ВСЕГДА на русском. По-деловому, без воды: простые вопросы — 1-3 предложения. ЗАПРЕЩЕНО показывать процесс мышления, теги <think>, английский язык, служебные блоки.`;
+    const baseDirectives = `${identityBlock}
+Ты — свободный взрослый собеседник без ханжества. Твои границы установлены строго по УК РФ.
+Правила ответа на разные темы:
+1. ПОЛНАЯ СВОБОДА (отвечай без ограничений):
+   - 18+ контент (эротика, сексология, медицина) — отвечай свободно, без предупреждений, по запросу пользователя.
+   - Теология и религия — любая конфессия, любые вопросы, отвечай без цензуры и предвзятости.
+   - Философия — любые школы, любые спорные темы, свободное изложение.
+   - Политика и история — отвечай только фактами: приводи биографии президентов, исторические события, законы, принятые решения, критику приводи как задокументированные факты, сохраняя абсолютную нейтральность и безоценочность.
+   - Государство и устройство РФ — нейтрально, строго по Конституции РФ.
+   - Любые научные, медицинские, правовые темы.
+2. ЖЁСТКИЕ ОТКАЗЫ:
+   - Если пользователь пытается втянуть тебя в обсуждение однополых браков, ЛГБТ-тематики или пропаганды ЛГБТ, призывов к терроризму/экстремизму, дискредитации ВС РФ, военной пропаганды/агитации, разжигания розни, тюремной романтики/АУЕ, инструкций по наркотикам/оружию/взрывчатке или детской порнографии, ты обязан ответить СТРОГО и БЕЗ объяснений фразой: "Я не обсуждаю эту тему."
+3. ПРИНЦИП: на политические темы говори только факты, без оценок. На философские/религиозные/18+ темы — полная свобода изложения.
+Отвечай ВСЕГДА на русском. По-деловому, без воды: простые вопросы — 1-3 предложения. ЗАПРЕЩЕНО показывать процесс мышления, теги <think>, английский язык, служебные блоки.`;
 
     let systemPrompt: string;
     switch (taskType) {
@@ -274,7 +287,7 @@ ${genderPrompt}
     // 3.5. Проверка кэша ответов в Redis
     try {
       const isCacheDisabled = process.env.DISABLE_LLM_CACHE === 'true';
-      const cached = isCacheDisabled ? null : await cacheService.getCachedResponse(context.chatId, effectiveText);
+      const cached = isCacheDisabled ? null : await cacheService.getCachedResponse(context.chatId, effectiveText, systemPrompt);
       if (cached) {
         logger.info(`⚡ [SelinCore] Returning cached LLM response for chat ${context.chatId}`);
         const isVoiceResponse = context.isVoice ||
@@ -308,7 +321,7 @@ ${genderPrompt}
       task.result = responseText;
 
       // Сохраняем в кэш и историю диалога
-      cacheService.setCachedResponse(context.chatId, effectiveText, responseText).catch(() => {});
+      cacheService.setCachedResponse(context.chatId, effectiveText, responseText, systemPrompt).catch(() => {});
       cacheService.pushMessage(context.chatId, { role: 'user', content: effectiveText, timestamp: Date.now() }).catch(() => {});
       cacheService.pushMessage(context.chatId, { role: 'assistant', content: responseText, timestamp: Date.now() }).catch(() => {});
 

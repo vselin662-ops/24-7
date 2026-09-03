@@ -240,7 +240,7 @@ const blockState = new Map<string, { consecutiveFailures: number; blockedUntil: 
 function isBlocked(provider: string): boolean {
   const state = blockState.get(provider);
   if (!state) return false;
-  if (state.consecutiveFailures >= 3 && Date.now() < state.blockedUntil) {
+  if (Date.now() < state.blockedUntil) {
     return true;
   }
   return false;
@@ -250,11 +250,28 @@ function markOk(provider: string) {
   blockState.delete(provider);
 }
 
-function markFail(provider: string) {
+function markFail(provider: string, error?: any) {
   const state = blockState.get(provider) || { consecutiveFailures: 0, blockedUntil: 0 };
   state.consecutiveFailures += 1;
-  if (state.consecutiveFailures >= 3) {
-    state.blockedUntil = Date.now() + 60 * 1000; // block for 1 minute
+  
+  const errStr = String(error?.message || error || '').toLowerCase();
+  const isCreditOrRateLimit = errStr.includes('credit') || 
+                              errStr.includes('402') || 
+                              errStr.includes('429') || 
+                              errStr.includes('rate-limit') || 
+                              errStr.includes('rate limit') || 
+                              errStr.includes('quota') || 
+                              errStr.includes('billing') ||
+                              errStr.includes('payment') ||
+                              errStr.includes('insufficient');
+                              
+  if (isCreditOrRateLimit) {
+    state.blockedUntil = Date.now() + 10 * 60 * 1000; // block for 10 minutes
+    logger.warn(`🛑 [CircuitBreaker] Provider ${provider} blocked for 10 minutes due to credit/rate-limit/quota error: ${errStr}`);
+  } else {
+    if (state.consecutiveFailures >= 3) {
+      state.blockedUntil = Date.now() + 60 * 1000; // block for 1 minute for other failures
+    }
   }
   blockState.set(provider, state);
 }
@@ -501,9 +518,10 @@ export class LLMService {
     } catch (err: any) {
       if (err.message === "Timeout" || signal.aborted) {
         logger.warn(`⚠️ [smartCall] Timeout 15s exceeded for chatId: ${chatId}`);
-        return "Система временно перегружена. Попробуйте через минуту.";
+      } else {
+        logger.error(`❌ [smartCall] Unhandled error: ${err?.message || err}`);
       }
-      throw err;
+      return "Я потеряла нить разговора. Связь с нейросетью временно недоступна. Повтори вопрос через минуту.";
     }
   }
 
@@ -678,171 +696,60 @@ ${identityBlock}
       }))
     ] as any;
 
-    // === PRIMARY PROVIDER/MODEL FIRST CALL ===
-    try {
-      let primaryResponse: string | null = null;
-      if (PRIMARY_PROVIDER === 'openrouter') {
-        primaryResponse = await this.callCompat(messages, PRIMARY_MODEL);
-      } else if (PRIMARY_PROVIDER === 'groq') {
-        primaryResponse = await this.callGroq(messages);
-      } else if (PRIMARY_PROVIDER === 'gemini') {
-        primaryResponse = await this.callGemini(messages, finalSystem);
-      } else if (PRIMARY_PROVIDER === 'orca') {
-        primaryResponse = await this.callOrca(messages);
-      } else if (PRIMARY_PROVIDER === 'teamo') {
-        primaryResponse = await this.callTeamo(messages);
+    // === ROUTING CHAIN (groq → gemini → teamo → openrouter) ===
+    const startTime = Date.now();
+    const failedList: string[] = [];
+    let responseText: string | null = null;
+    let successfulProvider: string | null = null;
+
+    // Ordered list of providers
+    const providersToTry = [
+      { name: 'groq', call: () => this.callGroq(messages) },
+      { name: 'gemini', call: () => this.callGemini(messages, finalSystem) },
+      { name: 'teamo', call: () => this.callTeamo(messages) },
+      { name: 'openrouter', call: () => this.callOpenRouterChain(messages) }
+    ];
+
+    for (const prov of providersToTry) {
+      if (isBlocked(prov.name)) {
+        failedList.push(`${prov.name} (blocked)`);
+        continue;
       }
 
-      if (primaryResponse) {
-        const cleanResponse = sanitize(primaryResponse);
-        memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
-        if (memory.history.length > 30) {
-          memory.history = memory.history.slice(-30);
-        }
-        return cleanResponse;
-      }
-    } catch (pErr: any) {
-      console.log(`⚠️ [LLM] Primary provider ${PRIMARY_PROVIDER} failed: ${pErr.message}`);
-    }
-
-    // 1. OpenRouter (gemini-2.5 → claude → llama)
-    try {
-      const orKey = process.env.OPENROUTER_API_KEY;
-      if (orKey && !orKey.includes('your_') && !orKey.includes('placeholder') && orKey.length > 10) {
-        console.log('🤖 [Router] Attempting OpenRouter chain');
-        const openrouter = new OpenAI({
-          baseURL: 'https://openrouter.ai/api/v1',
-          apiKey: orKey,
-          defaultHeaders: {
-            'HTTP-Referer': 'https://selin.ai',
-            'X-Title': 'SelinAI'
-          }
-        });
-
-        const chainModels = [
-          "google/gemini-2.5-flash",
-          "anthropic/claude-sonnet-4",
-          "meta-llama/llama-3.3-70b-instruct",
-          "qwen/qwen-2.5-72b-instruct"
-        ];
-
-        for (const model of chainModels) {
-          try {
-            console.log(`🤖 [Router] Trying OpenRouter model: ${model}`);
-            const completion = await openrouter.chat.completions.create({
-              model: model,
-              messages,
-              temperature: 0.8,
-              max_tokens: 2000,
-              reasoning: { exclude: true },
-              include_reasoning: false
-            } as any);
-            const response = completion.choices[0]?.message?.content?.trim();
-            if (response) {
-              const cleanResponse = sanitize(response);
-              memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
-              if (memory.history.length > 30) {
-                memory.history = memory.history.slice(-30);
-              }
-              return cleanResponse;
-            }
-          } catch (err: any) {
-            console.log(`⚠️ [Router] OpenRouter model ${model} failed: ${err.message}`);
-          }
-        }
-      }
-    } catch (e: any) {
-      console.log('⚠️ [Router] OpenRouter provider failed: ' + e.message);
-    }
-
-    // 3. Orca Router (ПРАВКА 2)
-    const orcaResponse = await this.callOrca(messages);
-    if (orcaResponse) {
-      const cleanResponse = sanitize(orcaResponse);
-      memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
-      if (memory.history.length > 30) {
-        memory.history = memory.history.slice(-30);
-      }
-      return cleanResponse;
-    }
-
-    // 4. Teamo Router (ПРАВКА 2)
-    const teamoResponse = await this.callTeamo(messages);
-    if (teamoResponse) {
-      const cleanResponse = sanitize(teamoResponse);
-      memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
-      if (memory.history.length > 30) {
-        memory.history = memory.history.slice(-30);
-      }
-      return cleanResponse;
-    }
-
-    // 5. Groq
-    try {
-      const groq = this.getGroqClient();
-      if (groq) {
-        console.log('🤖 [Router] Attempting Groq');
-        const model = await pickGroqModel();
-        try {
-          const completion = await groq.chat.completions.create({
-            messages,
-            model: model,
-            temperature: 0.8,
-            max_tokens: 2000,
-          });
-
-          const response = completion.choices[0]?.message?.content?.trim();
-          if (response) {
-            const cleanResponse = sanitize(response);
-            memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
-            if (memory.history.length > 30) {
-              memory.history = memory.history.slice(-30);
-            }
-            return cleanResponse;
-          }
-        } catch (mErr: any) {
-          logger.warn(`⚠️ [smartCallLLM] Groq model ${model} failed: ${mErr?.message || mErr}`);
-        }
-      }
-    } catch (err: any) {
-      logger.error(`❌ [Router] Groq provider initialization error: ${err?.message || err}`);
-    }
-
-    // 6. Gemini
-    if (this.gemini) {
       try {
-        console.log('🤖 [Router] Attempting Gemini');
-        const contents: any[] = context.map(msg => ({
-          role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: msg.content }]
-        }));
-
-        const completion = await this.gemini.models.generateContent({
-          model: GEMINI_MODEL,
-          contents: contents,
-          config: {
-            systemInstruction: finalSystem,
-            temperature: 0.8
-          }
-        });
-
-        const response = completion.text?.trim();
-        if (response) {
-          const cleanResponse = sanitize(response);
-          memory.history.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
-          if (memory.history.length > 30) {
-            memory.history = memory.history.slice(-30);
-          }
-          return cleanResponse;
+        console.log(`🤖 [Router] Attempting provider: ${prov.name}`);
+        const res = await prov.call();
+        if (res && res.trim()) {
+          responseText = sanitize(res.trim());
+          successfulProvider = prov.name;
+          markOk(prov.name);
+          break;
+        } else {
+          failedList.push(prov.name);
+          markFail(prov.name, new Error("Empty response"));
         }
-      } catch (gErr: any) {
-        logger.warn(`⚠️ [smartCallLLM] Gemini attempt failed: ${gErr?.message || gErr}`);
+      } catch (err: any) {
+        failedList.push(prov.name);
+        markFail(prov.name, err);
       }
     }
 
-    // 7. Офлайн-ответ (ПРАВКА 1 - Selin AI латиницей)
-    console.log('🚨 [Router] All providers failed. Falling back to Orca/Teamo резерв.');
-    return "Привет! Я — Selin AI. К сожалению, сейчас мои основные вычислительные узлы временно перегружены запросами. Но я всё равно с вами и готова обсудить ваши планы или помочь, как только соединение полностью стабилизируется!";
+    const duration = Date.now() - startTime;
+    if (successfulProvider) {
+      // Лог одной строкой: какой провайдер ответил, сколько мс, какие упали.
+      logger.info(`[Router] responded=${successfulProvider} latency=${duration}ms failed=${failedList.join(',') || 'none'}`);
+      
+      memory.history.push({ role: 'assistant', content: responseText!, timestamp: Date.now() });
+      if (memory.history.length > 30) {
+        memory.history = memory.history.slice(-30);
+      }
+      return responseText!;
+    } else {
+      logger.error(`[Router] responded=none latency=${duration}ms failed=${failedList.join(',')}`);
+      
+      // Если ВСЕ упали — вернуть фразу
+      return "Я потеряла нить разговора. Связь с нейросетью временно недоступна. Повтори вопрос через минуту.";
+    }
   }
 
   public async call(
@@ -1142,8 +1049,12 @@ ${identityBlock}
         console.log("🧠 [LLM] orca/" + model);
         return sanitize(t.trim());
       }
-    } catch {}
-    markFail("orca"); return null;
+    } catch (err: any) {
+      markFail("orca", err);
+      return null;
+    }
+    markFail("orca", new Error("Empty response"));
+    return null;
   }
 
   private async callTeamo(messages: any[]): Promise<string | null> {
@@ -1167,8 +1078,12 @@ ${identityBlock}
         console.log("🧠 [LLM] teamo/" + model);
         return sanitize(t.trim());
       }
-    } catch {}
-    markFail("teamo"); return null;
+    } catch (err: any) {
+      markFail("teamo", err);
+      return null;
+    }
+    markFail("teamo", new Error("Empty response"));
+    return null;
   }
 
   private async callCompat(messages: any[], model: string): Promise<string | null> {
@@ -1204,6 +1119,55 @@ ${identityBlock}
     return null;
   }
 
+  private async callOpenRouterChain(messages: any[]): Promise<string | null> {
+    const orKey = process.env.OPENROUTER_API_KEY;
+    if (!orKey || orKey.includes('your_') || orKey.includes('placeholder') || orKey.length < 10 || isBlocked("openrouter")) {
+      return null;
+    }
+
+    const openrouter = new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: orKey,
+      defaultHeaders: {
+        'HTTP-Referer': 'https://selin.ai',
+        'X-Title': 'SelinAI'
+      }
+    });
+
+    const chainModels = [
+      "google/gemini-2.5-flash",
+      "anthropic/claude-sonnet-4",
+      "meta-llama/llama-3.3-70b-instruct",
+      "qwen/qwen-2.5-72b-instruct"
+    ];
+
+    for (const model of chainModels) {
+      try {
+        console.log(`🤖 [Router] Trying OpenRouter model: ${model}`);
+        const completion = await openrouter.chat.completions.create({
+          model: model,
+          messages,
+          temperature: 0.8,
+          max_tokens: 2000,
+          reasoning: { exclude: true },
+          include_reasoning: false
+        } as any);
+        const response = completion.choices[0]?.message?.content?.trim();
+        if (response) {
+          markOk("openrouter");
+          return sanitize(response);
+        }
+      } catch (err: any) {
+        logger.warn(`⚠️ [Router] OpenRouter model ${model} failed: ${err.message}`);
+        markFail("openrouter", err);
+        if (isBlocked("openrouter")) {
+          break;
+        }
+      }
+    }
+    return null;
+  }
+
   private async callGroq(messages: any[]): Promise<string | null> {
     try {
       const groq = this.getGroqClient();
@@ -1217,12 +1181,14 @@ ${identityBlock}
         });
         const response = completion.choices[0]?.message?.content?.trim();
         if (response) {
+          markOk("groq");
           console.log("🧠 [LLM] groq/" + model);
           return sanitize(response);
         }
       }
     } catch (err: any) {
       logger.warn(`⚠️ [callGroq] Groq failed: ${err.message}`);
+      markFail("groq", err);
     }
     return null;
   }
@@ -1248,11 +1214,13 @@ ${identityBlock}
       });
       const response = completion.text?.trim();
       if (response) {
+        markOk("gemini");
         console.log("🧠 [LLM] gemini/" + GEMINI_MODEL);
         return sanitize(response);
       }
     } catch (gErr: any) {
       logger.warn(`⚠️ [callGemini] Gemini failed: ${gErr?.message || gErr}`);
+      markFail("gemini", gErr);
     }
     return null;
   }

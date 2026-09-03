@@ -44,17 +44,22 @@ export class CacheService {
   }
 
   // Кэширование ответов LLM
-  async getCachedResponse(chatId: string, message: string): Promise<string | null> {
+  async getCachedResponse(chatId: string, message: string, systemPrompt?: string): Promise<string | null> {
     if (process.env.DISABLE_LLM_CACHE === 'true') return null;
     const userText = message || '';
-    const key = `cache:${chatId}:${crypto.createHash('sha256').update(userText.trim()).digest('hex')}`;
+    const promptStr = systemPrompt || '';
+    const hash = crypto
+      .createHash("md5")
+      .update(String(chatId) + userText + promptStr)
+      .digest("hex");
+    const redisKey = `cache:${hash}`;
 
     try {
       const { redisService } = await import('../services/RedisService');
       if (redisService.isAvailable()) {
-        const val = await redisService.get(key);
+        const val = await redisService.get(redisKey);
         if (val) {
-          logger.info(`✨ [Cache] Redis HIT for key: ${key}`);
+          logger.info(`✨ [Cache] Redis HIT for key: ${redisKey}`);
           return val;
         }
       }
@@ -63,16 +68,20 @@ export class CacheService {
     }
 
     if (!this.isConnected || !this.db) return null;
-    const sqliteKey = `${chatId}::${userText.trim()}`;
     const now = Date.now();
-    const row = this.db.prepare('SELECT value FROM cache WHERE key = ? AND expires > ?').get(sqliteKey, now);
+    const row = this.db.prepare('SELECT value FROM cache WHERE key = ? AND expires > ?').get(hash, now);
     return row ? row.value : null;
   }
 
-  async setCachedResponse(chatId: string, message: string, response: string): Promise<void> {
+  async setCachedResponse(chatId: string, message: string, response: string, systemPrompt?: string): Promise<void> {
     if (process.env.DISABLE_LLM_CACHE === 'true') return;
     const userText = message || '';
-    const key = `cache:${chatId}:${crypto.createHash('sha256').update(userText.trim()).digest('hex')}`;
+    const promptStr = systemPrompt || '';
+    const hash = crypto
+      .createHash("md5")
+      .update(String(chatId) + userText + promptStr)
+      .digest("hex");
+    const redisKey = `cache:${hash}`;
     
     // Определим TTL: 30 минут (1800с) для погоды/новостей/пробок, иначе 120 секунд по умолчанию
     const lowerText = userText.toLowerCase();
@@ -82,8 +91,8 @@ export class CacheService {
     try {
       const { redisService } = await import('../services/RedisService');
       if (redisService.isAvailable()) {
-        await redisService.set(key, response, ttlSeconds);
-        logger.info(`✨ [Cache] Redis SET for key: ${key} with TTL: ${ttlSeconds}s`);
+        await redisService.set(redisKey, response, ttlSeconds);
+        logger.info(`✨ [Cache] Redis SET for key: ${redisKey} with TTL: ${ttlSeconds}s`);
         return;
       }
     } catch (e) {
@@ -91,10 +100,9 @@ export class CacheService {
     }
 
     if (!this.isConnected || !this.db) return;
-    const sqliteKey = `${chatId}::${userText.trim()}`;
     const expires = Date.now() + (ttlSeconds * 1000);
     this.db.prepare('INSERT OR REPLACE INTO cache (key, value, expires) VALUES (?, ?, ?)')
-      .run(sqliteKey, response, expires);
+      .run(hash, response, expires);
   }
 
   // Сессии пользователей

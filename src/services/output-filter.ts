@@ -60,7 +60,7 @@ export function filterAIOutput(response: string, context: RequestContext = {}): 
   if (asksForSystemPrompt && (filtered.includes("Selin AI") || filtered.includes("Enterprise") || filtered.includes("инструкция"))) {
     exfiltrationDetected = true;
     exfiltrationReason = "SYSTEM_PROMPT_EXFILTRATION";
-    filtered = "Я — Selin AI, ваш автономный бизнес-ассистент. Мои системные инструкции защищены политикой безопасности.";
+    filtered = "Я не обсуждаю эту тему.";
   }
 
   // 4. Handle Incident Logging & Penalties

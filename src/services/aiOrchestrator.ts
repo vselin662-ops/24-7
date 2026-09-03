@@ -108,55 +108,8 @@ class AIOrchestrator {
   }
 
   async getResponse(userMessage: string, customSystemPrompt?: string): Promise<string> {
-    if (this.providers.length === 0) {
-      return 'Нет доступных AI-провайдеров. Проверь настройки API.';
-    }
-
-    // Если фолбэк уже использован, начинаем со второго провайдера
-    const startIndex = this.fallbackUsed ? 1 : 0;
-    const errors: string[] = [];
-
-    for (let i = startIndex; i < this.providers.length; i++) {
-      const provider = this.providers[i];
-      if (!provider.enabled) continue;
-
-      try {
-        console.log(`🔄 Trying ${provider.name} (${provider.model})...`);
-        
-        const completion = await provider.client!.chat.completions.create({
-          model: provider.model,
-          messages: [
-            { role: 'system', content: customSystemPrompt || this.getSystemPrompt() },
-            { role: 'user', content: userMessage }
-          ],
-          temperature: 0.7,
-          max_tokens: 1500,
-          reasoning: { exclude: true },
-          include_reasoning: false
-        } as any);
-
-        const response = completion.choices[0]?.message?.content;
-        console.log(`✅ ${provider.name} responded successfully`);
-        
-        if (i === 0) {
-          this.fallbackUsed = false;
-        }
-        
-        return sanitize(response || 'Извини, не понял.');
-      } catch (error: any) {
-        const errMsg = error?.message || 'Unknown error';
-        console.warn(`❌ ${provider.name} failed: ${errMsg.slice(0, 80)}`);
-        errors.push(`${provider.name}: ${errMsg.slice(0, 50)}`);
-        
-        if (i === 0) {
-          this.fallbackUsed = true;
-        }
-      }
-    }
-
-    this.fallbackUsed = true;
-    console.error('❌ All AI providers failed:', errors.join('; '));
-    return 'Все AI-провайдеры временно недоступны. Попробуй позже.';
+    const { llmService } = await import('../core/LLMService');
+    return llmService.smartCall('orchestrator', userMessage, customSystemPrompt);
   }
 
   switchToProvider(name: string): boolean {

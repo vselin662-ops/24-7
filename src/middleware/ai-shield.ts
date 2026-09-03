@@ -102,8 +102,8 @@ export function aiShieldMiddleware(req: Request, res: Response, next: NextFuncti
     const jailbreakResult = checkJailbreak(tenantId, userMessage);
     if (jailbreakResult.isJailbreak) {
       res.status(200).json({
-        response: jailbreakResult.reason || "Я не могу выполнить эту просьбу. Я — Selin AI, ваш бизнес-ассистент.",
-        text: jailbreakResult.reason || "Я не могу выполнить эту просьбу. Я — Selin AI, ваш бизнес-ассистент.",
+        response: jailbreakResult.reason || "Я не обсуждаю эту тему.",
+        text: jailbreakResult.reason || "Я не обсуждаю эту тему.",
         status: "blocked",
         security_alert: "JAILBREAK_ATTEMPT_BLOCKED"
       });
