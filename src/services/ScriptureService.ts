@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { sqliteDb } from '../../db';
 import { logger } from '../logger';
+import { bibleLocalVerses } from '../data/bibleLocal';
 
 export interface ScriptureVerse {
   book: string;
@@ -163,6 +164,7 @@ class ScriptureServiceImpl {
 
   public loadSynodalFile(): boolean {
     const jsonPath = path.join(process.cwd(), 'data', 'bible_synodal.json');
+    let loadedFromFile = false;
     try {
       if (fs.existsSync(jsonPath)) {
         const raw = fs.readFileSync(jsonPath, 'utf8');
@@ -187,12 +189,74 @@ class ScriptureServiceImpl {
 
           this.isLoaded = true;
           logger.info(`📖 [Scripture] Loaded ${verses.length} verses from data/bible_synodal.json`);
+          loadedFromFile = true;
           return true;
         }
       }
     } catch (err) {
-      logger.error('❌ [Scripture] Failed to load data/bible_synodal.json:', err);
+      logger.warn('⚠️ [Scripture] Local file data/bible_synodal.json could not be loaded, using offline fallback database:', err);
     }
+
+    if (!loadedFromFile) {
+      // Offline fallback using high-quality local verses
+      try {
+        this.fileVersesMap.clear();
+        this.chapterVersesMap.clear();
+
+        let loadedCount = 0;
+        for (const localV of bibleLocalVerses) {
+          // Parse e.g. "Псалтирь 22:1" or "Псалтирь 1:1-2"
+          // We can split by the last space to get the book vs reference
+          const lastSpaceIdx = localV.reference.lastIndexOf(' ');
+          if (lastSpaceIdx === -1) continue;
+
+          const bookName = localV.reference.substring(0, lastSpaceIdx).trim();
+          const refParts = localV.reference.substring(lastSpaceIdx + 1).trim(); // e.g. "22:1" or "1:1-2"
+
+          const colonIdx = refParts.indexOf(':');
+          if (colonIdx === -1) continue;
+
+          const chapterNum = parseInt(refParts.substring(0, colonIdx), 10);
+          const versePart = refParts.substring(colonIdx + 1); // e.g. "1" or "1-2"
+          
+          let startVerse = 1;
+          if (versePart.includes('-')) {
+            startVerse = parseInt(versePart.split('-')[0], 10);
+          } else {
+            startVerse = parseInt(versePart, 10);
+          }
+
+          if (isNaN(chapterNum) || isNaN(startVerse)) continue;
+
+          const canonicalBook = this.normalizeBookName(bookName);
+          const v: ScriptureVerse = {
+            book: canonicalBook,
+            chapter: chapterNum,
+            verse: startVerse,
+            text: localV.text
+          };
+
+          const key = `${canonicalBook.toLowerCase()}_${chapterNum}_${startVerse}`;
+          this.fileVersesMap.set(key, v);
+
+          const chKey = `${canonicalBook.toLowerCase()}_${chapterNum}`;
+          let list = this.chapterVersesMap.get(chKey);
+          if (!list) {
+            list = [];
+            this.chapterVersesMap.set(chKey, list);
+          }
+          list.push(v);
+          loadedCount++;
+        }
+
+        this.isLoaded = true;
+        logger.info(`📖 [Scripture] Initialized offline database with ${loadedCount} local verses.`);
+        return true;
+      } catch (err) {
+        logger.warn('⚠️ [Scripture] Error initializing offline fallback database:', err);
+      }
+    }
+
     return false;
   }
 

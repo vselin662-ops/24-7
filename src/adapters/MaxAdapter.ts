@@ -1464,22 +1464,32 @@ export class MaxAdapter {
       }
 
       // === ПЕРЕХВАТ ВОПРОСОВ О ПЛАНЕ ПОБЕДЫ ДО LLM ===
-      const isPlanQuestion = /план[а-я]*\s+побед[а-я]*/i.test(lowerText) || /побед[а-я]*\s+план[а-я]*/i.test(lowerText) || lowerText === 'план победы' || lowerText === 'план_победы';
+      const isPlanQuestion = /план[а-я]*\s+побед[а-я]*/i.test(lowerText) || /побед[а-я]*\s+план[а-я]*/i.test(lowerText) || lowerText === 'план победы' || lowerText === 'план_победы' || lowerText === '/plan';
       if (isPlanQuestion) {
         logger.info(`❓ [Intent] fn=plan chat=${cleanId}`);
         const { getUserPlanConfig } = await import("../services/ProfileService");
-        const { getNearestPlanSlotTime, PLAN_QUESTION_EXTRA } = await import("../services/bibleService");
         const cfg = getUserPlanConfig(cleanId);
-        const isEnabled = (cfg.plan_status === 'on_buttons' || cfg.plan_status === 'on_quiet' || cfg.plan_enabled === 1) && cfg.plan_status !== 'off';
-        const statusStr = isEnabled ? 'включён' : 'отключён';
-        const nextSlot = getNearestPlanSlotTime(cfg);
 
-        const planReply = `🕊 План Победы: ${statusStr}. Ближайшее голосовое: ${nextSlot}. Утро=ВЗ, обед=НЗ, вечер=Псалом+Притчи.`;
+        if (lowerText.includes('настройк') || lowerText.includes('настроек') || lowerText.includes('настройки')) {
+          const { renderPlanMenu } = await import("../services/CallbackRouter");
+          const menu = renderPlanMenu(cleanId);
+          if (isVoiceInput) {
+            await this.synthesizeAndSendVoice(cleanId, menu.text);
+          }
+          await this.safeSendMessageToChat(cleanId, menu.text, menu.extra);
+          return res.status(200).send('ok');
+        }
+
+        const { getNearestPlanSlotTime, PLAN_SIMPLE_EXTRA } = await import("../services/bibleService");
+        const isEnabled = (cfg.plan_status === 'on_buttons' || cfg.plan_status === 'on_quiet' || cfg.plan_enabled === 1) && cfg.plan_status !== 'off';
+        const statusStr = isEnabled ? 'включён' : 'выключен';
+
+        const planReply = `🕊 **План Победы**\n\nКаждый день вы будете получать духовный разбор Писания и практическую мотивацию в виде голосовых сообщений.\n\nТекущий статус: **${statusStr}**\n\nВыберите действие:`;
 
         if (isVoiceInput) {
           await this.synthesizeAndSendVoice(cleanId, planReply);
         }
-        await this.safeSendMessageToChat(cleanId, planReply, PLAN_QUESTION_EXTRA);
+        await this.safeSendMessageToChat(cleanId, planReply, PLAN_SIMPLE_EXTRA);
         return res.status(200).send('ok');
       }
 

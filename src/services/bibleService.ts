@@ -9,7 +9,7 @@ import {
   UserPlanConfig,
   PlanStatus 
 } from "./ProfileService";
-import { scriptureService } from "./ScriptureService";
+import { bibleLocalVerses, FALLBACK_VERSES } from "../data/bibleLocal";
 import { 
   oneYearPlan, 
   DayPlan, 
@@ -90,11 +90,24 @@ export const PLAN_QUESTION_EXTRA = {
       payload: {
         buttons: [
           [
-            { type: 'callback', text: '▶️ Включить', payload: 'plan_on' },
-            { type: 'callback', text: '❌ Отключить', payload: 'plan_off' }
-          ],
+            { type: 'callback', text: '✅ Включить', payload: 'plan_on' },
+            { type: 'callback', text: '❌ Выключить', payload: 'plan_off' }
+          ]
+        ]
+      }
+    }
+  ]
+};
+
+export const PLAN_SIMPLE_EXTRA = {
+  attachments: [
+    {
+      type: 'inline_keyboard',
+      payload: {
+        buttons: [
           [
-            { type: 'callback', text: '⚙️ План Победы', payload: 'plan_open' }
+            { type: 'callback', text: '✅ Включить', payload: 'plan_on' },
+            { type: 'callback', text: '❌ Выключить', payload: 'plan_off' }
           ]
         ]
       }
@@ -213,48 +226,19 @@ export function isPlanSlotAlreadySent(chatId: string, slot: string, dateStr: str
 }
 
 /**
- * Получение священного текста для слота Плана Победы
+ * Получение священного текста для слота Плана Победы (Офлайн из bibleLocal)
  */
 export async function getSlotScripture(dayNum: number, slot: 'm' | 'n' | 'e'): Promise<{ refStr: string; text: string }> {
-  const plan: DayPlan = oneYearPlan.getPlanForDay(dayNum);
+  const slotName = slot === 'm' ? 'morning' : slot === 'n' ? 'noon' : 'evening';
+  const slotVerses = bibleLocalVerses.filter(v => v.slot === slotName);
   
-  if (slot === 'm') {
-    // Утро: Ветхий Завет
-    const morningReading = plan.morning[0];
-    if (!morningReading) {
-      const res = await scriptureService.getChapter('Бытие', 1, 5);
-      return { refStr: 'Бытие 1', text: res?.text || '📖 Источник Писания временно недоступен.' };
-    }
-    const res = await scriptureService.getChapter(morningReading.b, morningReading.c, 5);
-    const refStr = `${morningReading.b}, глава ${morningReading.c}`;
-    return { refStr, text: res?.text || '📖 Источник Писания временно недоступен.' };
+  if (slotVerses.length === 0) {
+    const fb = FALLBACK_VERSES[dayNum % FALLBACK_VERSES.length];
+    return { refStr: fb.reference, text: fb.text };
   }
 
-  if (slot === 'n') {
-    // День: Новый Завет / Евангелие
-    const noonReading = plan.noon[0];
-    if (!noonReading) {
-      const res = await scriptureService.getChapter('От Матфея', 1, 5);
-      return { refStr: 'Матфея 1', text: res?.text || '📖 Источник Писания временно недоступен.' };
-    }
-    const res = await scriptureService.getChapter(noonReading.b, noonReading.c, 5);
-    const refStr = `${noonReading.b}, глава ${noonReading.c}`;
-    return { refStr, text: res?.text || '📖 Источник Писания временно недоступен.' };
-  }
-
-  // Вечер: Псалом + Притчи
-  const psalmNum = plan.evening.psalm.c;
-  const proverbCh = plan.evening.proverb.c;
-
-  const psalmRes = await scriptureService.getChapter('Псалтирь', psalmNum, 4);
-  const proverbRes = await scriptureService.getPassage('Притчи', proverbCh, { start: 1, end: 3 });
-
-  const refStr = `Псалом ${psalmNum} и Притчи ${proverbCh}:1-3`;
-  const psalmText = psalmRes?.text || '';
-  const proverbText = proverbRes?.text || '';
-
-  const combinedText = `[Псалом ${psalmNum}]\n${psalmText}\n\n[Притчи ${proverbCh}:1-3]\n${proverbText}`.trim();
-  return { refStr, text: combinedText || '📖 Источник Писания временно недоступен.' };
+  const verse = slotVerses[dayNum % slotVerses.length];
+  return { refStr: verse.reference, text: verse.text };
 }
 
 /**

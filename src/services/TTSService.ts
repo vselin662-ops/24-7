@@ -3,7 +3,7 @@ import { LRUCache } from 'lru-cache';
 import { logger } from '../logger';
 import { ttsRequestsTotal } from "../metrics/prometheus";
 import { getVoiceGender } from '../../db';
-import { normalizeForSpeech, chunkText } from '../utils/textUtils';
+import { normalizeForSpeech, chunkText, sanitizeForTTS } from '../utils/textUtils';
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import { synthesizeWithGroq, getCachedStaticAudio, saveCachedStaticAudio } from './tts/groq-tts';
 
@@ -88,7 +88,8 @@ export class TTSService {
    * Основной метод синтеза речи. Возвращает готовый бинарный Buffer или null при ошибке.
    */
   public async synthesize(text: string, options: TTSSynthesisOptions = {}, isSelfTest: boolean = false): Promise<Buffer | null> {
-    const cleanText = text.trim();
+    const sanitizedText = sanitizeForTTS(text);
+    const cleanText = sanitizedText.trim();
     let voice = options.voice || process.env.TTS_VOICE || 'ru-RU-DmitryNeural';
     if (voice.toLowerCase().includes('svetlana') || voice.toLowerCase().includes('female')) {
       logger.warn("⚠️ [TTS] Female voice detected. Forcing male voice DmitryNeural.");
@@ -399,14 +400,16 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   const cleanId = chatId ? String(chatId) : 'default';
   const isSelfTest = (chatId === "test_self_check_chat");
 
+  const sanitized = sanitizeForTTS(text);
+
   // Шаг 1: Проверка кэша статики (хук и приветствия) -> assets/*.mp3
-  const staticCached = await getCachedStaticAudio(text);
+  const staticCached = await getCachedStaticAudio(sanitized);
   if (staticCached) {
     return staticCached;
   }
 
   // Шаг 2: Глобальный нормализатор (для всех ответов)
-  const normalized = normalizeForSpeech(text);
+  const normalized = normalizeForSpeech(sanitized);
   if (!normalized.trim()) {
     return ttsService.synthesize("", {}, isSelfTest);
   }

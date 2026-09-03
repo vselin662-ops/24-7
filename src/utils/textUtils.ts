@@ -142,3 +142,48 @@ export function chunkText(text: string, maxLen: number = 300): string[] {
  */
 export const splitTextSmart = chunkText;
 
+
+/**
+ * Очистка и фонетическая оптимизация текста перед озвучкой в TTS
+ */
+export function sanitizeForTTS(text: string): string {
+  if (!text) return "";
+
+  let cleaned = text;
+
+  // 1. Номер дня в голосе убирай полностью (или пиши словами)
+  // Убираем выражения типа "План Победы (День 246/365 — Утреннее чтение: Псалтирь 22:1)"
+  // А также любые упоминания "День 246" или "день 246/365"
+  cleaned = cleaned.replace(/день\s+\d+(\/\d+)?(\s*[-—]\s*)?/gi, '');
+
+  // 2. Удаляет ВСЁ содержимое в скобках вместе со скобками
+  cleaned = cleaned.replace(/\([^)]*\)/g, '');
+  cleaned = cleaned.replace(/\[[^\]]*\]/g, '');
+  cleaned = cleaned.replace(/\{[^}]*\}/g, '');
+
+  // 3. Удаляет служебные фразы
+  cleaned = cleaned.replace(/источник\s+писания\s+временно\s+недоступен/gi, '');
+  cleaned = cleaned.replace(/временно\s+недоступен/gi, '');
+  cleaned = cleaned.replace(/недоступен/gi, '');
+
+  // 4. Исправляет ошибки
+  cleaned = cleaned.replace(/тот-же/gi, 'тот же');
+  cleaned = cleaned.replace(/не\s+доступин/gi, '');
+
+  // 5. Фонетические замены для верного произношения
+  cleaned = cleaned.replace(/\bГоспода\b/g, 'Госпада');
+  cleaned = cleaned.replace(/\bгоспода\b/g, 'госпада');
+  cleaned = cleaned.replace(/\bГосподу\b/g, 'Госпаду');
+  cleaned = cleaned.replace(/\bгосподу\b/g, 'госпаду');
+  cleaned = cleaned.replace(/\bГосподом\b/g, 'Госпадом');
+  cleaned = cleaned.replace(/\bгосподом\b/g, 'госпадом');
+  cleaned = cleaned.replace(/\bвовеки\b/gi, 'во веки');
+
+  // 6. Убирает двойные пробелы и лишние символы
+  cleaned = cleaned.replace(/\s+/g, ' ');
+  cleaned = cleaned.trim();
+
+  return cleaned;
+}
+
+
