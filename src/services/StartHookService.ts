@@ -1,10 +1,6 @@
 import { logger } from "../logger";
 
-export const HOOK_TEXT = `Скажу честно: сколько времени вы сегодня потратили на погоду, новости и планы? Десять минут? Двадцать? Умножьте на триста шестьдесят пять — получится от пяти до десяти дней жизни в год, которые уходят на рутину.
-Я — Селин, личный ИИ-ассистент. Пока вы завтракаете, я уже собрал ваш брифинг: погода, план дня, важное. Озвучиваю книги и Библию, понимаю фото, нахожу цены и новости. Смогу собрать список продуктов под любое блюдо и посчитать смету. Соберу заказ под ваши потребности — от продуктов до стройматериалов — и организую доставку. Запоминаю ваши привычки и с каждым днём становлюсь точнее.
-Представьте: через неделю ваше утро начинается не с лихорадочного листания лент, а с готового плана, озвученного для вас.
-Это стоит сто девяносто девять рублей в месяц — дешевле чашки кофе за время, которое я возвращаю вам каждый день.
-Нажмите кнопку оплаты и пришлите скриншот — я приступаю к работе с этой минуты.`;
+export const HOOK_TEXT = `Приветствую! Я — Селин, ваш персональный AI-ассистент нового поколения. Я говорю с вами голосом, как настоящий помощник. Больше не нужно печатать — просто скажите, что вам нужно. Хотите заказать продукты из магазина? Просто скажите: 'Нужны продукты' — и я помогу выбрать и оформить доставку. Требуются строительные материалы? Скажите: 'Нужны стройматериалы' — и я найду лучшие предложения. Помогу с бизнесом, найду дорогу, напомню важное. Подписка стоит всего 199 рублей в месяц — дешевле чашки кофе. Готовы попробовать? Просто напишите или скажите что-нибудь — и мы начнём!`;
 
 export const VOICE_HOOK_TEXT = HOOK_TEXT;
 
@@ -21,7 +17,7 @@ export async function getStartHookAudio(): Promise<Buffer | null> {
   try {
     const { redisService } = await import("./RedisService");
     if (redisService.isAvailable()) {
-      const b64 = await redisService.get("selin:start_hook_audio_v3_male");
+      const b64 = await redisService.get("selin:start_hook_audio_v4_male");
       if (b64) {
         START_HOOK_AUDIO = Buffer.from(b64, "base64");
         return START_HOOK_AUDIO;
@@ -41,7 +37,7 @@ export async function pregenerateStartHook(): Promise<void> {
     // 1. Try to load from Redis first if available
     if (redisService.isAvailable()) {
       try {
-        const cachedB64 = await redisService.get("selin:start_hook_audio_v3_male");
+        const cachedB64 = await redisService.get("selin:start_hook_audio_v4_male");
         if (cachedB64) {
           START_HOOK_AUDIO = Buffer.from(cachedB64, "base64");
           console.log("🎙️ [StartHook] pre-generated and cached (memory+redis)");
@@ -57,7 +53,7 @@ export async function pregenerateStartHook(): Promise<void> {
       START_HOOK_AUDIO = synth;
       if (redisService.isAvailable()) {
         try {
-          await redisService.set("selin:start_hook_audio_v3_male", synth.toString("base64"), 30 * 86400);
+          await redisService.set("selin:start_hook_audio_v4_male", synth.toString("base64"), 30 * 86400);
           console.log("🎙️ [StartHook] pre-generated and cached (memory+redis)");
           logger.info("🎙️ [StartHook] pre-generated and cached (memory+redis)");
         } catch (_) {
