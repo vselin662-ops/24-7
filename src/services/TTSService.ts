@@ -36,9 +36,9 @@ export function prepareSSMLText(text: string): string {
   escaped = escaped.replace(/__BREAK_400__/g, '<break time="400ms"/>');
 
   // Акценты на ключевых словах через SSML <emphasis> при поддержке
-  escaped = escaped.replace(/Селин/g, '<emphasis level="moderate">Селин</emphasis>');
-  escaped = escaped.replace(/дешевле чашки кофе/g, '<emphasis level="moderate">дешевле чашки кофе</emphasis>');
-  escaped = escaped.replace(/с этой минуты/g, '<emphasis level="moderate">с этой минуты</emphasis>');
+  escaped = escaped.replace(/Сели́?н/gi, '<emphasis level="moderate">$&</emphasis>');
+  escaped = escaped.replace(/деше́?вле ча́?шки ко́?фе/gi, '<emphasis level="moderate">$&</emphasis>');
+  escaped = escaped.replace(/с этой минуты/gi, '<emphasis level="moderate">$&</emphasis>');
 
   return escaped;
 }
@@ -48,10 +48,10 @@ export function preparePlainProsody(text: string): string {
   // Паузы между абзацами 600мс в не-SSML
   processed = processed.replace(/\n+/g, ' ... — ... ');
   
-  // Интонационная пунктуация на ключевых словах
-  processed = processed.replace(/Селин/g, 'Селин — ');
-  processed = processed.replace(/дешевле чашки кофе/g, '— дешевле чашки кофе! —');
-  processed = processed.replace(/с этой минуты/g, 'с этой минуты!');
+  // Интонационная пунктуация на ключевых словах (не добавляем тире, если оно уже стоит)
+  processed = processed.replace(/(?<![—\-]\s*)Сели́?н(?!\s*[—\-])/gi, 'Селин — ');
+  processed = processed.replace(/(?<![—\-]\s*)деше́?вле ча́?шки ко́?фе(?!\s*[—\-])/gi, '— дешевле чашки кофе! —');
+  processed = processed.replace(/с этой минуты/gi, 'с этой минуты!');
   
   processed = processed.replace(/([;:])(?!\d)/g, '$1 — ... ');
   return processed;
@@ -95,14 +95,22 @@ export class TTSService {
       logger.warn("⚠️ [TTS] Female voice detected. Forcing male voice DmitryNeural.");
       voice = 'ru-RU-DmitryNeural';
     }
-    const rate = '+0%'; // rate 1.0 — стандартная ораторская скорость, без замедления и ускорения
+    let rate = options.rate;
+    if (!rate && options.speed) {
+      rate = `${Math.round(options.speed * 100)}%`;
+    }
+    if (!rate) {
+      rate = '+0%';
+    } else if (rate === '0.95') {
+      rate = '95%';
+    }
     const pitch = options.pitch || '+0Hz';
 
     if (!cleanText) {
       return isSelfTest ? this.generateSilentWav() : null;
     }
 
-    const cacheKey = this.getCacheKey(cleanText, voice);
+    const cacheKey = this.getCacheKey(cleanText, voice, rate, pitch);
 
     // 1. Проверка кэша
     if (this.cache.has(cacheKey)) {
@@ -114,7 +122,8 @@ export class TTSService {
       return cached;
     }
 
-    logger.info(`[TTSService] Synthesizing speech (${cleanText.length} chars) via Cascade (Primary: Edge TTS)`);
+    logger.info(`[TTSService] Synthesizing speech (${cleanText.length} chars) via Cascade (Primary: Edge TTS) [Text: "${cleanText}"]`);
+    logger.info(`🎙️ [TTS] Text with stress: "${cleanText}"`);
 
     let audioBuffer: Buffer | null = null;
     let contentType = 'audio/mpeg';
@@ -303,9 +312,14 @@ export class TTSService {
     return Buffer.concat(audioChunks);
   }
 
-  private getCacheKey(text: string, voice: string): string {
-    const payload = text + voice + 'v2_seamless';
+  private getCacheKey(text: string, voice: string, rate: string = '', pitch: string = ''): string {
+    const payload = text + voice + rate + pitch + 'v3_seamless';
     return crypto.createHash('md5').update(payload).digest('hex');
+  }
+
+  public clearCache(): void {
+    this.cache.clear();
+    logger.info('[TTSService] In-memory synthesis cache cleared.');
   }
 
   private getWavHeader(dataLength: number, sampleRate: number = 24000, numChannels: number = 1, bitsPerSample: number = 16): Buffer {
@@ -396,7 +410,11 @@ async function synthesizeWithOpenAI(text: string): Promise<Buffer> {
  * 2. Нарезка строго по границам предложений (chunkText)
  * 3. Синтез и бесшовная склейка буферов в ОДНО аудио
  */
-export async function synthesizeForChat(chatId: string | number | null | undefined, text: string): Promise<Buffer | null> {
+export async function synthesizeForChat(
+  chatId: string | number | null | undefined,
+  text: string,
+  options: TTSSynthesisOptions = {}
+): Promise<Buffer | null> {
   const cleanId = chatId ? String(chatId) : 'default';
   const isSelfTest = (chatId === "test_self_check_chat");
 
@@ -411,7 +429,7 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   // Шаг 2: Глобальный нормализатор (для всех ответов)
   const normalized = normalizeForSpeech(sanitized);
   if (!normalized.trim()) {
-    return ttsService.synthesize("", {}, isSelfTest);
+    return ttsService.synthesize("", options, isSelfTest);
   }
 
   // Шаг 3: Нарезка на чанки по границам предложений
@@ -442,18 +460,21 @@ export async function synthesizeForChat(chatId: string | number | null | undefin
   }
 
   // Шаг 5: Фолбэк на нейронный Edge TTS (ru-RU-DmitryNeural) при ошибке или отсутствии ключа
-  let voice = process.env.TTS_VOICE || 'ru-RU-DmitryNeural';
+  let voice = options.voice || process.env.TTS_VOICE || 'ru-RU-DmitryNeural';
   if (voice.toLowerCase().includes('svetlana') || voice.toLowerCase().includes('female')) {
     voice = 'ru-RU-DmitryNeural';
   }
 
   if (!audioBuffer) {
     engine = 'Edge';
-    const rate = '+0%'; // rate 1.0 — стандартная ораторская скорость
-    const pitch = '+0Hz';
+    const isHook = (chatId === "global_start_hook") ||
+      text.includes("Здравствуй! Я — Селин") ||
+      text.includes("Здравствуй! Я — Сели\u0301н");
+    const rate = options.rate || (isHook ? '95%' : (options.speed ? `${Math.round(options.speed * 100)}%` : '+0%'));
+    const pitch = options.pitch || '+0Hz';
 
     try {
-      audioBuffer = await ttsService.synthesize(normalized, { voice, rate, pitch }, isSelfTest);
+      audioBuffer = await ttsService.synthesize(normalized, { ...options, voice, rate, pitch }, isSelfTest);
       if (audioBuffer) {
         console.log(`🎙️ [TTS] engine=${engine} chunks=${chunksCount} glued into one audio`);
         logger.info(`🎙️ [TTS] engine=${engine} chunks=${chunksCount} glued into one audio`);

@@ -152,6 +152,7 @@ if (sqliteDb) {
         last_lon REAL,
         last_route TEXT,
         plan_day_offset INTEGER DEFAULT 0,
+        adult_confirmed INTEGER DEFAULT 0,
         updated_at TEXT
       );
 
@@ -192,7 +193,8 @@ if (sqliteDb) {
       { name: 'plan_day_offset', sql: `ALTER TABLE user_profiles ADD COLUMN plan_day_offset INTEGER DEFAULT 0;` },
       { name: 'onboarding_done', sql: `ALTER TABLE user_profiles ADD COLUMN onboarding_done INTEGER DEFAULT 0;` },
       { name: 'onboarding_asked', sql: `ALTER TABLE user_profiles ADD COLUMN onboarding_asked INTEGER DEFAULT 0;` },
-      { name: 'personality_json', sql: `ALTER TABLE user_profiles ADD COLUMN personality_json TEXT;` }
+      { name: 'personality_json', sql: `ALTER TABLE user_profiles ADD COLUMN personality_json TEXT;` },
+      { name: 'adult_confirmed', sql: `ALTER TABLE user_profiles ADD COLUMN adult_confirmed INTEGER DEFAULT 0;` }
     ];
 
     for (const col of columnsToEnsure) {
@@ -794,4 +796,41 @@ async function parseUserIntents(text: string, chatId: string): Promise<string[]>
   }
 
   return matchedIntents;
+}
+
+/**
+ * Проверка статуса подтверждения совершеннолетия (18+ по ФЗ-436)
+ */
+export function isAdultConfirmed(chatId: string | number): boolean {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim();
+  if (!sqliteDb) return false;
+  try {
+    const row = sqliteDb.prepare("SELECT adult_confirmed FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    return row?.adult_confirmed === 1;
+  } catch (err) {
+    logger.warn(`⚠️ [Profile] Failed to check adult_confirmed for ${cleanId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Установка статуса подтверждения совершеннолетия (18+ по ФЗ-436)
+ */
+export function setAdultConfirmed(chatId: string | number, confirmed: boolean): void {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '').trim();
+  if (!sqliteDb) return;
+  const val = confirmed ? 1 : 0;
+  const nowStr = new Date().toISOString();
+  try {
+    const exists = sqliteDb.prepare("SELECT chat_id FROM user_profiles WHERE chat_id = ?").get(cleanId);
+    if (exists) {
+      sqliteDb.prepare("UPDATE user_profiles SET adult_confirmed = ?, updated_at = ? WHERE chat_id = ?")
+        .run(val, nowStr, cleanId);
+    } else {
+      sqliteDb.prepare("INSERT INTO user_profiles (chat_id, adult_confirmed, updated_at) VALUES (?, ?, ?)")
+        .run(cleanId, val, nowStr);
+    }
+  } catch (err) {
+    logger.error(`❌ [Profile] Failed to set adult_confirmed for ${cleanId}:`, err);
+  }
 }

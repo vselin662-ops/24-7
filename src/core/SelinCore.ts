@@ -17,8 +17,19 @@ import {
   isCreatorQuestion,
   handleCreatorQuestion,
   isModelGenderQuestion,
-  handleModelGenderQuestion
+  handleModelGenderQuestion,
+  isSelfPresentationQuestion,
+  handleSelfPresentation
 } from "../services/IdentityService";
+import { SecurityGateway, ADULT_CONFIRM_TEXT, ADULT_CONFIRM_EXTRA } from "./SecurityGateway";
+
+let defaultCoreInstance: SelinCore | null = null;
+export function getSelinCore(): SelinCore {
+  if (!defaultCoreInstance) {
+    defaultCoreInstance = new SelinCore();
+  }
+  return defaultCoreInstance;
+}
 
 export interface WakeWordCheckResult {
   detected: boolean;
@@ -35,6 +46,7 @@ export class SelinCore {
 
   constructor(llmService?: LLMService) {
     this.llm = llmService || new LLMService();
+    defaultCoreInstance = this;
   }
 
   /**
@@ -231,6 +243,75 @@ export class SelinCore {
       };
     }
 
+    // === ПЕРЕХВАТ ВОПРОСОВ САМОПРЕЗЕНТАЦИИ (КТО ТЫ / ЧТО УМЕЕШЬ) ===
+    if (isSelfPresentationQuestion(effectiveText)) {
+      const introReply = handleSelfPresentation();
+      const isVoiceResponse = context.isVoice ||
+        context.voiceMode === VoiceMode.TEXT_TO_VOICE ||
+        context.voiceMode === VoiceMode.VOICE_TO_VOICE;
+
+      return {
+        text: introReply,
+        confidence: 1.0,
+        voice: isVoiceResponse ? { format: 'ogg' } : undefined
+      };
+    }
+
+    // === ПРОВЕРКА ОТВЕТА НА ЗАПРОС ПОДТВЕРЖДЕНИЯ 18+ (ФЗ-436) ===
+    const cleanChatId = String(context.chatId).replace(/^[a-z_]+/, '').trim();
+    if (SecurityGateway.hasPendingAdultQuestion(cleanChatId)) {
+      const trimmedText = effectiveText.trim();
+      const isYes = /^(?:да|✅\s*да|да,?\s*мне\s*18|мне\s*18|мне\s*есть\s*18|18|подтверждаю|adult_confirm_yes)$/i.test(trimmedText);
+      const isNo = /^(?:нет|❌\s*нет|не\s*подтверждаю|мне\s*нет\s*18|мне\s*меньше\s*18|нету\s*18|отмена|adult_confirm_no)$/i.test(trimmedText);
+
+      if (isYes) {
+        const { setAdultConfirmed } = await import("../services/ProfileService");
+        setAdultConfirmed(cleanChatId, true);
+        console.log(`[Shield] юзер ${cleanChatId}: подтверждение 18+ = да`);
+        logger.info(`[Shield] юзер ${cleanChatId}: подтверждение 18+ = да`);
+
+        const pending = SecurityGateway.getPendingAdultQuestion(cleanChatId);
+        SecurityGateway.clearPendingAdultQuestion(cleanChatId);
+
+        if (pending) {
+          return await this.processMessage(pending, context);
+        }
+        return {
+          text: "Возраст подтверждён. Задай свой вопрос.",
+          confidence: 1.0
+        };
+      }
+
+      if (isNo) {
+        SecurityGateway.clearPendingAdultQuestion(cleanChatId);
+        console.log(`[Shield] юзер ${cleanChatId}: подтверждение 18+ = нет`);
+        logger.info(`[Shield] юзер ${cleanChatId}: подтверждение 18+ = нет`);
+
+        return {
+          text: "Понял. Эта тема недоступна.",
+          confidence: 1.0
+        };
+      }
+    }
+
+    // === ПЕРЕХВАТ 18+ ТЕМАТИКИ ДЛЯ НЕПОДТВЕРЖДЁННЫХ ПОЛЬЗОВАТЕЛЕЙ (ФЗ-436) ===
+    if (SecurityGateway.isAdultContent(effectiveText)) {
+      const { isAdultConfirmed } = await import("../services/ProfileService");
+      const confirmed = isAdultConfirmed(cleanChatId);
+      if (!confirmed) {
+        SecurityGateway.setPendingAdultQuestion(cleanChatId, effectiveText);
+        logger.info(`🛡️ [Shield] юзер ${cleanChatId}: перехвачен 18+ запрос, требуется подтверждение возраста`);
+        return {
+          text: ADULT_CONFIRM_TEXT,
+          confidence: 1.0,
+          metadata: {
+            extra: ADULT_CONFIRM_EXTRA
+          },
+          suggestedReplies: ["✅ Да, мне 18", "❌ Нет"]
+        };
+      }
+    }
+
     // === САМООБУЧЕНИЕ СТИЛЯ: АНАЛИЗ РЕАКЦИЙ (спасибо / тупишь / переделай / подробнее) ===
     try {
       const { analyzeFeedback } = await import("../services/PersonalityService");
@@ -305,18 +386,21 @@ STYLE ENGINE:
    ПЛОХО: "Существует множество мнений по данному вопросу..."
    ХОРОШО: "Стоит. Код учит раскладывать хаос на шаги. Начни с Python, 30 минут в день."
 
-Ты — свободный взрослый собеседник без ханжества. Твои границы установлены строго по УК РФ.
+Ты — свободный взрослый собеседник. Твои границы установлены строго по УК РФ и законодательству РФ.
 Правила ответа на разные темы:
-1. ПОЛНАЯ СВОБОДА (отвечай без ограничений):
-   - 18+ контент (эротика, сексология, медицина) — отвечай свободно, без предупреждений, по запросу пользователя.
-   - Теология и религия — любая конфессия, любые вопросы, отвечай без цензуры и предвзятости.
+1. ТЕМАТИКИ:
+   - Теология и религия — любая конфессия, любые вопросы, отвечай объективно, без цензуры и предвзятости.
    - Философия — любые школы, любые спорные темы, свободное изложение.
    - Политика и история — отвечай только фактами: приводи биографии президентов, исторические события, законы, принятые решения, критику приводи как задокументированные факты, сохраняя абсолютную нейтральность и безоценочность.
    - Государство и устройство РФ — нейтрально, строго по Конституции РФ.
-   - Любые научные, медицинские, правовые темы.
+   - Любые научные, медицинские, правовые, деловые темы.
+   - 18+ тематика (эротика, сексология, интимные вопросы) — доступна ИСКЛЮЧИТЕЛЬНО по прямому запросу совершеннолетнего пользователя (после подтверждения возраста 18+ по ФЗ-436). Если возраст подтверждён — отвечай свободно и без ханжества. В самопрезентации 18+ не упоминается ВООБЩЕ.
 2. ЖЁСТКИЕ ОТКАЗЫ:
    - Если пользователь пытается втянуть тебя в обсуждение однополых браков, ЛГБТ-тематики или пропаганды ЛГБТ, призывов к терроризму/экстремизму, дискредитации ВС РФ, военной пропаганды/агитации, разжигания розни, тюремной романтики/АУЕ, инструкций по наркотикам/оружию/взрывчатке или детской порнографии, ты обязан ответить СТРОГО и БЕЗ объяснений фразой: "Я не обсуждаю эту тему."
-3. ПРИНЦИП: на политические темы говори только факты, без оценок. На философские/религиозные/18+ темы — полная свобода изложения.
+3. САМОПРЕЗЕНТАЦИЯ (вопросы «кто ты», «что ты умеешь», «каковы твои возможности»):
+   - Отвечай по-деловому: ты — Selin AI, персональный голосовой и текстовый интеллектуальный ассистент. Твои сферы: дела, планирование, бизнес-аналитика, навигация, поиск актуальной информации в интернете, работа с текстами и книгами.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО упоминать 18+, эротику, сексологию, фразы вроде "18+ без цензуры" или "полная свобода в 18+". В самопрезентации 18+ не упоминается ВООБЩЕ — эта тема доступна исключительно по прямому запросу после подтверждения возраста 18+.
+4. ПРИНЦИП: на политические темы говори только факты, без оценок. На философские и мировоззренческие темы — уважительный диалог.
 Отвечай ВСЕГДА на русском. По-деловому, без воды: простые вопросы — 1-3 предложения. ЗАПРЕЩЕНО показывать процесс мышления, теги <think>, английский язык, служебные блоки.`;
 
     let systemPrompt: string;

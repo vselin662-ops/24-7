@@ -1,5 +1,73 @@
+import { logger } from "../logger";
 import { normalizeForVoice as normalizeVoiceUtil, normalizeForSpeech as normalizeSpeechUtil } from "./voiceNormalizer";
 import { preprocessTextForTTS, applyStressDict, prepareIntonation, TTSEngineType } from "../services/StressService";
+
+/**
+ * Словарь ударений (STRESS_DICT) для правильного произношения TTS.
+ * Символ ударения: комбинируемый акут (combining acute) U+0301.
+ */
+export const STRESS_DICT: Record<string, string> = {
+  // Формы слова "понять"
+  "понял": "по\u0301нял",
+  "поняла": "по\u0301няла",
+  "поняли": "по\u0301няли",
+  "поняло": "по\u0301няло",
+
+  // Формы слова "начать"
+  "начал": "на\u0301чал",
+  "начала": "начала\u0301",
+  "начали": "на\u0301чали",
+
+  // Частые глаголы и частые жертвы TTS
+  "занял": "за\u0301нял",
+  "позвонит": "позвони\u0301т",
+  "включит": "включи\u0301т",
+  "отключит": "отключи\u0301т",
+
+  // Дополнительные формы
+  "звонит": "звони\u0301т",
+  "перезвонит": "перезвони\u0301т",
+  "включат": "включа\u0301т",
+  "отключат": "отключа\u0301т",
+  "селин": "Сели\u0301н",
+  "помощник": "помо\u0301щник",
+  "голосом": "го\u0301лосом",
+  "дешевле": "деше\u0301вле",
+  "кофе": "ко\u0301фе"
+};
+
+/**
+ * Регистронезависимое применение словаря ударений STRESS_DICT с сохранением регистра слова
+ */
+export function applyStress(text: string): string {
+  if (!text) return '';
+  let result = text;
+
+  for (const [key, stressedVal] of Object.entries(STRESS_DICT)) {
+    const wordKey = key.trim().toLowerCase();
+    if (!wordKey) continue;
+
+    // Регулярное выражение с границами русских слов
+    const regex = new RegExp(`(?<![а-яА-ЯёЁa-zA-Z0-9])${wordKey}(?![а-яА-ЯёЁa-zA-Z0-9])`, 'gi');
+
+    if (regex.test(result)) {
+      result = result.replace(regex, (matched) => {
+        let replacement: string;
+        if (matched === matched.toUpperCase() && matched !== matched.toLowerCase()) {
+          replacement = stressedVal.toUpperCase();
+        } else if (matched[0] === matched[0].toUpperCase() && matched[0] !== matched[0].toLowerCase()) {
+          replacement = stressedVal.charAt(0).toUpperCase() + stressedVal.slice(1);
+        } else {
+          replacement = stressedVal.toLowerCase();
+        }
+        logger.info(`🎙️ [TTS] stress-applied: "${matched}" -> "${replacement}"`);
+        return replacement;
+      });
+    }
+  }
+
+  return result;
+}
 
 export function cleanForMax(text: string): string {
   if (!text) return '';
@@ -362,7 +430,10 @@ export function sanitizeForTTS(text: string): string {
   cleaned = cleaned.replace(/\bгосподом\b/g, 'госпадом');
   cleaned = cleaned.replace(/\bвовеки\b/gi, 'во веки');
 
-  // 6. Убирает двойные пробелы и лишние символы
+  // 6. Ударения из STRESS_DICT (U+0301)
+  cleaned = applyStress(cleaned);
+
+  // 7. Убирает двойные пробелы и лишние символы
   cleaned = cleaned.replace(/\s+/g, ' ');
   cleaned = cleaned.trim();
 

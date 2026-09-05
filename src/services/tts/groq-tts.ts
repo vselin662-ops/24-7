@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../../logger';
-import { HOOK_TEXT } from '../StartHookService';
+import { HOOK_TEXT, VOICE_HOOK_TEXT } from '../StartHookService';
 
 let groqTTSModelsCache: string[] | null = null;
 let groqTTSModelsCacheTime = 0;
@@ -78,7 +78,7 @@ export async function pickGroqTTSModel(): Promise<string | null> {
 
 /**
  * Check if the text matches either of the static texts (Start Hook or Welcome Voice)
- * and load the cached .mp3 from /src/assets/ if it exists.
+ * and load the cached .mp3 from assets if it exists.
  */
 export async function getCachedStaticAudio(text: string): Promise<Buffer | null> {
   const cleanText = text.trim();
@@ -86,7 +86,12 @@ export async function getCachedStaticAudio(text: string): Promise<Buffer | null>
 
   if (cleanText === WELCOME_VOICE.trim()) {
     fileName = 'welcome.mp3';
-  } else if (cleanText === HOOK_TEXT.trim()) {
+  } else if (
+    cleanText === HOOK_TEXT.trim() ||
+    cleanText === VOICE_HOOK_TEXT.trim() ||
+    cleanText.includes("Здравствуй! Я — Селин") ||
+    cleanText.includes("Здравствуй! Я — Сели\u0301н")
+  ) {
     fileName = 'start_hook.mp3';
   }
 
@@ -94,26 +99,30 @@ export async function getCachedStaticAudio(text: string): Promise<Buffer | null>
     return null;
   }
 
-  const assetsDir = path.join(process.cwd(), 'src', 'assets');
-  const filePath = path.join(assetsDir, fileName);
+  const possiblePaths = [
+    path.join(process.cwd(), 'src', 'assets', fileName),
+    path.join(process.cwd(), 'assets', fileName)
+  ];
 
-  try {
-    if (fs.existsSync(filePath)) {
-      const buf = await fs.promises.readFile(filePath);
-      if (buf && buf.length > 0) {
-        logger.info(`⚡ [TTS] Static audio loaded from asset file cache: ${fileName}`);
-        return buf;
+  for (const filePath of possiblePaths) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const buf = await fs.promises.readFile(filePath);
+        if (buf && buf.length > 0) {
+          logger.info(`⚡ [TTS] Static audio loaded from asset file cache: ${filePath}`);
+          return buf;
+        }
       }
+    } catch (err: any) {
+      logger.warn(`⚠️ [TTS] Failed to read cached asset ${filePath}: ${err?.message || err}`);
     }
-  } catch (err: any) {
-    logger.warn(`⚠️ [TTS] Failed to read cached asset ${fileName}: ${err?.message || err}`);
   }
 
   return null;
 }
 
 /**
- * Write the successfully synthesized static audio to /src/assets/
+ * Write the successfully synthesized static audio to /src/assets/ and /assets/
  */
 export async function saveCachedStaticAudio(text: string, buffer: Buffer): Promise<void> {
   const cleanText = text.trim();
@@ -121,7 +130,12 @@ export async function saveCachedStaticAudio(text: string, buffer: Buffer): Promi
 
   if (cleanText === WELCOME_VOICE.trim()) {
     fileName = 'welcome.mp3';
-  } else if (cleanText === HOOK_TEXT.trim()) {
+  } else if (
+    cleanText === HOOK_TEXT.trim() ||
+    cleanText === VOICE_HOOK_TEXT.trim() ||
+    cleanText.includes("Здравствуй! Я — Селин") ||
+    cleanText.includes("Здравствуй! Я — Сели\u0301н")
+  ) {
     fileName = 'start_hook.mp3';
   }
 
@@ -129,17 +143,43 @@ export async function saveCachedStaticAudio(text: string, buffer: Buffer): Promi
     return;
   }
 
-  const assetsDir = path.join(process.cwd(), 'src', 'assets');
-  const filePath = path.join(assetsDir, fileName);
+  const targetDirs = [
+    path.join(process.cwd(), 'src', 'assets'),
+    path.join(process.cwd(), 'assets')
+  ];
 
-  try {
-    if (!fs.existsSync(assetsDir)) {
-      await fs.promises.mkdir(assetsDir, { recursive: true });
+  for (const dir of targetDirs) {
+    try {
+      if (!fs.existsSync(dir)) {
+        await fs.promises.mkdir(dir, { recursive: true });
+      }
+      const filePath = path.join(dir, fileName);
+      await fs.promises.writeFile(filePath, buffer);
+      logger.info(`💾 [TTS] Static audio saved to assets: ${filePath}`);
+    } catch (err: any) {
+      logger.warn(`⚠️ [TTS] Failed to save static audio asset to ${dir}: ${err?.message || err}`);
     }
-    await fs.promises.writeFile(filePath, buffer);
-    logger.info(`💾 [TTS] Static audio saved to assets: ${fileName}`);
-  } catch (err: any) {
-    logger.warn(`⚠️ [TTS] Failed to save static audio asset ${fileName}: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Delete start_hook.mp3 from all asset locations
+ */
+export async function deleteStartHookAsset(): Promise<void> {
+  const possiblePaths = [
+    path.join(process.cwd(), 'src', 'assets', 'start_hook.mp3'),
+    path.join(process.cwd(), 'assets', 'start_hook.mp3')
+  ];
+
+  for (const filePath of possiblePaths) {
+    try {
+      if (fs.existsSync(filePath)) {
+        await fs.promises.unlink(filePath);
+        logger.info(`🗑️ [StartHook] Deleted asset: ${filePath}`);
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ [StartHook] Error deleting ${filePath}: ${err?.message || err}`);
+    }
   }
 }
 

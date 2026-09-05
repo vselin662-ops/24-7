@@ -904,7 +904,7 @@ export class MaxAdapter {
     if (!voiceSent) {
       try {
         const { synthesizeForChat } = await import("../services/TTSService");
-        audio = await synthesizeForChat(cleanId, HOOK_TEXT);
+        audio = await synthesizeForChat(cleanId, VOICE_HOOK_TEXT, { rate: "95%", speed: 0.95 });
         if (audio && audio.length > 0 && !isNaN(numericId) && numericId > 0) {
           voiceSent = await this.sendSingleAudioBuffer(numericId, audio);
         }
@@ -1116,7 +1116,7 @@ export class MaxAdapter {
         if (!voiceSent) {
           try {
             const { synthesizeForChat } = await import("../services/TTSService");
-            audio = await synthesizeForChat(cleanId, HOOK_TEXT);
+            audio = await synthesizeForChat(cleanId, VOICE_HOOK_TEXT, { rate: "95%", speed: 0.95 });
             if (audio && audio.length > 0 && !isNaN(numericId) && numericId > 0) {
               voiceSent = await this.sendSingleAudioBuffer(numericId, audio);
             }
