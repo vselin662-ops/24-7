@@ -1536,8 +1536,18 @@ export class MaxAdapter {
         return res.status(200).send('ok');
       }
 
+      // === ПЕРЕХВАТ ВОПРОСОВ О ПОЛЕ / РОДЕ МОДЕЛИ ===
+      const { isCreatorQuestion, handleCreatorQuestion, isModelGenderQuestion, handleModelGenderQuestion } = await import("../services/IdentityService");
+      if (isModelGenderQuestion(lowerText)) {
+        const reply = handleModelGenderQuestion();
+        if (isVoiceInput) {
+          await this.synthesizeAndSendVoice(cleanId, reply);
+        }
+        await this.safeSendMessageToChat(cleanId, reply);
+        return res.status(200).send('ok');
+      }
+
       // === ПЕРЕХВАТ ВОПРОСОВ О СОЗДАТЕЛЕ (IDENTITY) ===
-      const { isCreatorQuestion, handleCreatorQuestion } = await import("../services/IdentityService");
       if (isCreatorQuestion(lowerText)) {
         const reply = handleCreatorQuestion(cleanId);
         if (isVoiceInput) {

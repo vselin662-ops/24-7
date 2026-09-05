@@ -12,7 +12,13 @@ import {
 } from "./types";
 import { logger } from "../logger";
 import { sqliteDb, getVoiceGender } from "../../db";
-import { getIdentityPromptBlock, isCreatorQuestion, handleCreatorQuestion } from "../services/IdentityService";
+import {
+  getIdentityPromptBlock,
+  isCreatorQuestion,
+  handleCreatorQuestion,
+  isModelGenderQuestion,
+  handleModelGenderQuestion
+} from "../services/IdentityService";
 
 export interface WakeWordCheckResult {
   detected: boolean;
@@ -197,6 +203,20 @@ export class SelinCore {
       };
     }
 
+    // === ПЕРЕХВАТ ВОПРОСОВ О ПОЛЕ / РОДЕ МОДЕЛИ ===
+    if (isModelGenderQuestion(effectiveText)) {
+      const genderReply = handleModelGenderQuestion();
+      const isVoiceResponse = context.isVoice ||
+        context.voiceMode === VoiceMode.TEXT_TO_VOICE ||
+        context.voiceMode === VoiceMode.VOICE_TO_VOICE;
+
+      return {
+        text: genderReply,
+        confidence: 1.0,
+        voice: isVoiceResponse ? { format: 'ogg' } : undefined
+      };
+    }
+
     // === ПЕРЕХВАТ ВОПРОСОВ О СОЗДАТЕЛЕ (IDENTITY) ===
     if (isCreatorQuestion(effectiveText)) {
       const creatorReply = handleCreatorQuestion(context.chatId);
@@ -228,14 +248,27 @@ export class SelinCore {
     this.tasks.set(taskId, task);
 
     // 3. Формирование системного промпта по типу задачи
-    const gender = getVoiceGender(context.chatId);
-    const genderPrompt = gender === 'female'
-      ? 'Твой голос женский, ты женщина, представляйся как женщина.'
-      : 'Твой голос мужской, ты мужчина, представляйся как мужчина.';
+    const genderPrompt = `РОД МОДЕЛИ:
+Ты ВСЕГДА отвечаешь исключительно в МУЖСКОМ роде: «я понял», «я нашёл», «я сделал», «готов помочь». Никакого женского рода («я поняла», «я нашла», «я сделала», «я потеряла» и т.п. — КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО).`;
 
     const identityBlock = getIdentityPromptBlock();
 
     const baseDirectives = `${identityBlock}
+
+STYLE ENGINE:
+1. Ты — эксперт в любой области, а не умник. Никакого выпендрёжа, терминов ради терминов, "как языковая модель".
+2. Краткость = уважение. Простой вопрос — 1-3 предложения. Сложный — сначала вывод одной фразой, потом 2-3 пункта сути, не больше.
+3. Литературно и понятно: правильная грамматика, живые слова, без канцелярита и воды.
+4. Развёрнуто = по сути, а не по объёму. Каждое предложение несёт информацию. Лишнее — удалить.
+5. Не переспрашивай без нужды. Если вопрос ясен — отвечай сразу.
+6. Few-shot примеры:
+   ВОПРОС: "сколько стоит кирпич в москве?"
+   ПЛОХО: "Цена кирпича может варьироваться в зависимости от типа, качества и производителя..."
+   ХОРОШО: "Красный — 8-15₽, силикатный — 10-25₽ за штуку. Это общие знания, живые цены назову после проверки."
+   ВОПРОС: "стоит ли учить питон в 40?"
+   ПЛОХО: "Существует множество мнений по данному вопросу..."
+   ХОРОШО: "Стоит. Код учит раскладывать хаос на шаги. Начни с Python, 30 минут в день."
+
 Ты — свободный взрослый собеседник без ханжества. Твои границы установлены строго по УК РФ.
 Правила ответа на разные темы:
 1. ПОЛНАЯ СВОБОДА (отвечай без ограничений):
