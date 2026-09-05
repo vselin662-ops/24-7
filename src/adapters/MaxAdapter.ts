@@ -2077,7 +2077,7 @@ export class MaxAdapter {
             await this.safeSendMessageToChat(cleanId, reply);
           }
         } else {
-          const reply = 'Ваш профиль пока пуст. Расскажите о себе (например: «Нас четверо, свинину не едим, магазин Пятёрочка рядом»), и я запомню ваши предпочтения!';
+          const reply = 'Ваш профиль пока пуст. Вы можете рассказать о своих интересах и предпочтениях, и я их сохраню.';
           if (isVoiceInput) {
             await this.synthesizeAndSendVoice(cleanId, reply);
           } else {
@@ -2156,19 +2156,6 @@ export class MaxAdapter {
 
       const response = await this.core.processMessage(text, context);
       let replyText = response.text;
-
-      // Если у пользователя нет профиля и ему еще не предлагали онбординг — предлагаем один раз после первого ответа
-      try {
-        const { getProfile, hasOfferedProfile, markProfileOffered } = await import("../services/ProfileService");
-        const profile = await getProfile(cleanId);
-        const wasOffered = await hasOfferedProfile(cleanId);
-        if (!profile && !wasOffered) {
-          replyText += `\n\n💡 Кстати, расскажите о себе (голосом или текстом) — я запомню и учту. Например: «Нас четверо, свинину не едим, магазин Пятёрочка рядом».`;
-          await markProfileOffered(cleanId);
-        }
-      } catch (profErr) {
-        logger.error("❌ Failed to offer profile onboarding:", profErr);
-      }
 
       if (isVoiceInput) {
         await this.synthesizeAndSendVoice(cleanId, replyText);

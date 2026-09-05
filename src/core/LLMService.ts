@@ -628,6 +628,16 @@ ${identityBlock}
       console.log("⚠️ [LLMService] Failed to append profile prompt:", profErr);
     }
 
+    try {
+      const { getStyleDirectives } = await import("../services/PersonalityService");
+      const styleDirectives = await getStyleDirectives(chatId);
+      if (styleDirectives) {
+        finalSystem += `\n\n${styleDirectives}`;
+      }
+    } catch (styleErr) {
+      console.log("⚠️ [LLMService] Failed to append style directives:", styleErr);
+    }
+
     // === АВТОЗАПРОС ВРЕМЕНИ (только чистые вопросы про время/дату) ===
     const isPureTimeQuery = /^(который\s*час|сколько\s*времени|какое\s*(сейчас\s*)?время|какая\s*дата|какой\s*(сегодня\s*)?день|точное\s*время)(\s*\?)?$/i.test(userMessage.trim()) || (/^(время|дата)(\s*\?)?$/i.test(userMessage.trim()));
     if (isPureTimeQuery) {
@@ -721,7 +731,7 @@ ${identityBlock}
 
     // Ordered list of providers
     const providersToTry = [
-      { name: 'groq', call: () => this.callGroq(messages) },
+      ...(this.getGroqClient() ? [{ name: 'groq', call: () => this.callGroq(messages) }] : []),
       { name: 'gemini', call: () => this.callGemini(messages, finalSystem) },
       { name: 'teamo', call: () => this.callTeamo(messages) },
       { name: 'openrouter', call: () => this.callOpenRouterChain(messages) }

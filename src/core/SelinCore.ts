@@ -33,8 +33,8 @@ export class SelinCore {
   private llm: LLMService;
   private tasks: Map<string, Task> = new Map();
 
-  constructor(llmService: LLMService) {
-    this.llm = llmService;
+  constructor(llmService?: LLMService) {
+    this.llm = llmService || new LLMService();
   }
 
   /**
@@ -231,6 +231,36 @@ export class SelinCore {
       };
     }
 
+    // === САМООБУЧЕНИЕ СТИЛЯ: АНАЛИЗ РЕАКЦИЙ (спасибо / тупишь / переделай / подробнее) ===
+    try {
+      const { analyzeFeedback } = await import("../services/PersonalityService");
+      await analyzeFeedback(context.chatId, effectiveText);
+    } catch (feedbackErr) {
+      logger.warn(`⚠️ [SelinCore] Error analyzing feedback: ${feedbackErr}`);
+    }
+
+    // === ЕДИНОРАЗОВЫЙ ОНБОРДИНГ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ ===
+    try {
+      const { handleOnboarding } = await import("../services/ProfileService");
+      const onboardingResult = await handleOnboarding(context.chatId, effectiveText);
+      if (onboardingResult.handled && onboardingResult.replyText) {
+        const isVoiceResponse = context.isVoice ||
+          context.voiceMode === VoiceMode.TEXT_TO_VOICE ||
+          context.voiceMode === VoiceMode.VOICE_TO_VOICE;
+
+        const { recordLastResponse } = await import("../services/PersonalityService");
+        recordLastResponse(context.chatId, onboardingResult.replyText);
+
+        return {
+          text: onboardingResult.replyText,
+          confidence: 1.0,
+          voice: isVoiceResponse ? { format: 'ogg' } : undefined
+        };
+      }
+    } catch (onboardingErr) {
+      logger.error(`❌ [SelinCore] Error in onboarding flow: ${onboardingErr}`);
+    }
+
     // 2. Определение типа задачи
     const taskType = this.detectTaskType(effectiveText, context.isVoice);
 
@@ -253,8 +283,14 @@ export class SelinCore {
 
     const identityBlock = getIdentityPromptBlock();
 
-    const baseDirectives = `${identityBlock}
+    let styleDirectives = "";
+    try {
+      const { getStyleDirectives } = await import("../services/PersonalityService");
+      styleDirectives = await getStyleDirectives(context.chatId);
+    } catch {}
 
+    const baseDirectives = `${identityBlock}
+${styleDirectives ? `\n${styleDirectives}\n` : ''}
 STYLE ENGINE:
 1. Ты — эксперт в любой области, а не умник. Никакого выпендрёжа, терминов ради терминов, "как языковая модель".
 2. Краткость = уважение. Простой вопрос — 1-3 предложения. Сложный — сначала вывод одной фразой, потом 2-3 пункта сути, не больше.
@@ -352,6 +388,11 @@ ${genderPrompt}
       task.status = 'completed';
       task.completedAt = Date.now();
       task.result = responseText;
+
+      try {
+        const { recordLastResponse } = await import("../services/PersonalityService");
+        recordLastResponse(context.chatId, responseText);
+      } catch {}
 
       // Сохраняем в кэш и историю диалога
       cacheService.setCachedResponse(context.chatId, effectiveText, responseText, systemPrompt).catch(() => {});

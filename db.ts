@@ -264,6 +264,15 @@ try {
       gender TEXT DEFAULT 'male'
     );
 
+    CREATE TABLE IF NOT EXISTS style_memory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      pattern TEXT NOT NULL,
+      score INTEGER DEFAULT 1,
+      updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_style_memory_chat ON style_memory(chat_id);
+
     CREATE INDEX IF NOT EXISTS idx_chats_tenant ON chats(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_tenant ON knowledge_base(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_kb_docs_tenant ON kb_documents(tenant_id);

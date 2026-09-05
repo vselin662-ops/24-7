@@ -9,6 +9,7 @@ export interface UserProfile {
   city?: string;
   interests?: string[];
   faith?: boolean;
+  intents?: string[];
 }
 
 export type PlanStatus = 'on_buttons' | 'on_quiet' | 'off';
@@ -188,7 +189,10 @@ if (sqliteDb) {
       { name: 'last_lat', sql: `ALTER TABLE user_profiles ADD COLUMN last_lat REAL;` },
       { name: 'last_lon', sql: `ALTER TABLE user_profiles ADD COLUMN last_lon REAL;` },
       { name: 'last_route', sql: `ALTER TABLE user_profiles ADD COLUMN last_route TEXT;` },
-      { name: 'plan_day_offset', sql: `ALTER TABLE user_profiles ADD COLUMN plan_day_offset INTEGER DEFAULT 0;` }
+      { name: 'plan_day_offset', sql: `ALTER TABLE user_profiles ADD COLUMN plan_day_offset INTEGER DEFAULT 0;` },
+      { name: 'onboarding_done', sql: `ALTER TABLE user_profiles ADD COLUMN onboarding_done INTEGER DEFAULT 0;` },
+      { name: 'onboarding_asked', sql: `ALTER TABLE user_profiles ADD COLUMN onboarding_asked INTEGER DEFAULT 0;` },
+      { name: 'personality_json', sql: `ALTER TABLE user_profiles ADD COLUMN personality_json TEXT;` }
     ];
 
     for (const col of columnsToEnsure) {
@@ -629,7 +633,165 @@ export async function profilePrompt(chatId: string | number): Promise<string> {
   if (profile.faith !== undefined) {
     parts.push(`вера/религия: ${profile.faith ? 'православный христианин' : 'не указано'}`);
   }
+  if (profile.intents && profile.intents.length > 0) {
+    parts.push(`выбранные направления: ${profile.intents.join(', ')}`);
+  }
 
   if (parts.length === 0) return '';
   return `ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ: ${parts.join(', ')}.`;
+}
+
+export const ONBOARDING_QUESTION = "Привет! Я Селин. Скажи, что тебе от меня нужно: помощь с заказами, Библия и План Победы, напоминания, советы или просто разговор? Я подстроюсь.";
+
+export async function isOnboardingDone(chatId: string | number): Promise<boolean> {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return true;
+  try {
+    const row = sqliteDb.prepare("SELECT onboarding_done FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    if (row && typeof row.onboarding_done === 'number') {
+      return row.onboarding_done === 1;
+    }
+  } catch (err) {
+    logger.warn(`⚠️ [Profile] Failed to check onboarding_done for ${cleanId}:`, err);
+  }
+  return false;
+}
+
+export async function handleOnboarding(
+  chatId: string | number,
+  userMessage: string
+): Promise<{ handled: boolean; replyText?: string }> {
+  const cleanId = String(chatId).replace(/^[a-z_]+/, '');
+  if (!sqliteDb) return { handled: false };
+
+  try {
+    const row = sqliteDb.prepare("SELECT onboarding_done, onboarding_asked, profile_json FROM user_profiles WHERE chat_id = ?").get(cleanId) as any;
+    const isDone = row?.onboarding_done === 1;
+    if (isDone) {
+      return { handled: false };
+    }
+
+    const wasAsked = row?.onboarding_asked === 1;
+
+    // Шаг 1: Первое сообщение нового юзера (флаг = 0, еще не спрашивали)
+    if (!wasAsked) {
+      const nowStr = new Date().toISOString();
+      if (row) {
+        sqliteDb.prepare("UPDATE user_profiles SET onboarding_asked = 1, updated_at = ? WHERE chat_id = ?")
+          .run(nowStr, cleanId);
+      } else {
+        sqliteDb.prepare("INSERT INTO user_profiles (chat_id, onboarding_done, onboarding_asked, updated_at) VALUES (?, 0, 1, ?)")
+          .run(cleanId, nowStr);
+      }
+      return {
+        handled: true,
+        replyText: ONBOARDING_QUESTION
+      };
+    }
+
+    // Шаг 2: Ответ юзера на вопрос онбординга (onboarding_asked = 1, onboarding_done = 0)
+    // Разбираем намерения (intents)
+    const intents = await parseUserIntents(userMessage, cleanId);
+
+    // Сохраняем в profile_json
+    let profile: UserProfile = {};
+    if (row && row.profile_json) {
+      try {
+        profile = JSON.parse(row.profile_json);
+      } catch {}
+    }
+    profile.intents = intents;
+
+    const nowStr = new Date().toISOString();
+    sqliteDb.prepare(`
+      UPDATE user_profiles 
+      SET onboarding_done = 1, onboarding_asked = 1, profile_json = ?, updated_at = ? 
+      WHERE chat_id = ?
+    `).run(JSON.stringify(profile), nowStr, cleanId);
+
+    // Сразу влияем на поведение и стиль через PersonalityService
+    const { getStyleProfile, saveStyleProfile } = await import("./PersonalityService");
+    const style = await getStyleProfile(cleanId);
+    if (intents.includes("заказы") || intents.some(i => i.toLowerCase().includes("заказ"))) {
+      style.strictness = 0.8;
+      style.verbosity = 0.25;
+    }
+    if (intents.includes("разговор") || intents.some(i => i.toLowerCase().includes("разговор"))) {
+      style.strictness = 0.25;
+      style.warmth = 0.8;
+      style.verbosity = 0.6;
+    }
+    if (intents.includes("Библия") || intents.some(i => i.toLowerCase().includes("библия"))) {
+      style.warmth = 0.75;
+    }
+    await saveStyleProfile(cleanId, style);
+
+    // Формируем немедленный ответ юзеру
+    const isBible = intents.includes("Библия") || intents.some(i => i.toLowerCase().includes("библия"));
+    const isOrders = intents.includes("заказы") || intents.some(i => i.toLowerCase().includes("заказ"));
+    const isChat = intents.includes("разговор") || intents.some(i => i.toLowerCase().includes("разговор"));
+
+    let replyText = "";
+    if (isBible && isOrders) {
+      replyText = "Принято! Буду краток и по делу. Предлагаю также включить План Победы — ежедневные чтения и разборы стихов Библии 3 раза в день. Включить?";
+    } else if (isBible) {
+      replyText = "Принято, всё настроил! Предлагаю сразу включить План Победы — ежедневные чтения и разборы стихов Библии 3 раза в день. Включить?";
+    } else if (isOrders) {
+      replyText = "Принято! Буду краток и по делу. С какими заказами или покупками помочь?";
+    } else if (isChat) {
+      replyText = "Отлично! Всегда рад хорошему разговору на любые темы. О чём побеседуем?";
+    } else {
+      replyText = "Понял тебя, всё настроил под твои задачи. Чем займёмся прямо сейчас?";
+    }
+
+    return {
+      handled: true,
+      replyText
+    };
+  } catch (err) {
+    logger.error(`❌ [Profile] Error in handleOnboarding for ${cleanId}:`, err);
+    return { handled: false };
+  }
+}
+
+async function parseUserIntents(text: string, chatId: string): Promise<string[]> {
+  const lower = text.toLowerCase();
+  const matchedIntents: string[] = [];
+
+  if (/(?:библи|план побед|стих|вер|бог|христ|молитв)/i.test(lower)) {
+    matchedIntents.push("Библия");
+  }
+  if (/(?:заказ|доставк|продукт|магазин|покупк|корзин)/i.test(lower)) {
+    matchedIntents.push("заказы");
+  }
+  if (/(?:разговор|поболтать|поговорить|общен|собеседник|диалог)/i.test(lower)) {
+    matchedIntents.push("разговор");
+  }
+  if (/(?:напомин|дела|расписан|план|будильник)/i.test(lower)) {
+    matchedIntents.push("напоминания");
+  }
+  if (/(?:совет|помощ|подсказ|рекомендац)/i.test(lower)) {
+    matchedIntents.push("советы");
+  }
+
+  // Также пробуем LLM для глубокого понимания
+  try {
+    const systemPrompt = `Определи список намерений пользователя из списка: ["заказы", "Библия", "напоминания", "советы", "разговор"]. Верни СТРОГО JSON-массив строк, например: ["Библия", "советы"]. Только JSON, без markdown.`;
+    const raw = await llmService.smartCall(`intents_parse_${chatId}`, text, systemPrompt);
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      for (const item of parsed) {
+        if (typeof item === 'string' && !matchedIntents.includes(item)) {
+          matchedIntents.push(item);
+        }
+      }
+    }
+  } catch {}
+
+  if (matchedIntents.length === 0) {
+    matchedIntents.push("разговор");
+  }
+
+  return matchedIntents;
 }
