@@ -52,7 +52,32 @@ export const SUBSCRIPTION_EXTRA = {
 export function isBibleQuery(text: string): boolean {
   if (!text) return false;
   const lower = text.toLowerCase().trim();
+
+  const isStrictPlanCommand = 
+    lower === 'план победы' ||
+    lower === 'настройки план победы' ||
+    lower === 'включить план победы' ||
+    lower === 'включить план' ||
+    lower === 'отключить план победы' ||
+    lower === 'выключить план победы' ||
+    lower === 'стоп план победы' ||
+    lower === 'маисей' ||
+    lower === 'голос вкл' ||
+    lower === 'голос выкл' ||
+    lower === 'план на сегодня' ||
+    lower === 'план сегодня' ||
+    lower === 'план на завтра' ||
+    lower === 'план завтра' ||
+    lower === 'план содержание' ||
+    lower === 'тест рассылки' ||
+    lower === 'тест_рассылки' ||
+    lower === '/bible' ||
+    lower === 'подписаться на библию' ||
+    lower.startsWith('план пропустить ') ||
+    lower.startsWith('/plan_');
+
   return (
+    isStrictPlanCommand ||
     lower.includes('библи') ||
     lower.includes('псалом') ||
     lower.includes('псалтир') ||
@@ -62,20 +87,6 @@ export function isBibleQuery(text: string): boolean {
     lower.includes('новый завет') ||
     lower.includes('отцов церкви') ||
     lower.includes('бог благ и милость его велика') ||
-    lower.includes('план победы') ||
-    lower.includes('включить план') ||
-    lower.includes('план на сегодня') ||
-    lower.includes('план на завтра') ||
-    lower.includes('план сегодня') ||
-    lower.includes('план завтра') ||
-    lower.includes('план содержание') ||
-    lower.startsWith('план пропустить') ||
-    lower.startsWith('/plan_') ||
-    lower.includes('тест рассылки') ||
-    lower.includes('тест_рассылки') ||
-    lower.includes('маисей') ||
-    lower === '/bible' ||
-    lower === 'подписаться на библию' ||
     lower.startsWith('библи') ||
     lower.startsWith('псалом')
   );
@@ -1438,7 +1449,16 @@ export class MaxAdapter {
       }
 
       // === ПЕРЕХВАТ ВОПРОСОВ О БРИФИНГЕ ДО LLM ===
-      if (lowerText.includes('брифинг') || /брифинг[а-я]*/i.test(lowerText)) {
+      const isBriefingCommand = 
+        lowerText === 'брифинг' ||
+        lowerText === '⚙️ брифинг' ||
+        lowerText === 'брифинг настройки' ||
+        lowerText === 'настройки брифинга' ||
+        lowerText === '/briefing' ||
+        lowerText === 'briefing_settings' ||
+        lowerText === '/briefing_settings';
+
+      if (isBriefingCommand) {
         logger.info(`❓ [Intent] fn=briefing chat=${cleanId}`);
         const { getUserBriefingConfig } = await import("../services/ProfileService");
         const { BRIEFING_QUESTION_EXTRA } = await import("../services/bibleService");
@@ -1464,7 +1484,7 @@ export class MaxAdapter {
       }
 
       // === ПЕРЕХВАТ ВОПРОСОВ О ПЛАНЕ ПОБЕДЫ ДО LLM ===
-      const isPlanQuestion = /план[а-я]*\s+побед[а-я]*/i.test(lowerText) || /побед[а-я]*\s+план[а-я]*/i.test(lowerText) || lowerText === 'план победы' || lowerText === 'план_победы' || lowerText === '/plan';
+      const isPlanQuestion = lowerText === 'план победы' || lowerText === 'план_победы' || lowerText === '/plan';
       if (isPlanQuestion) {
         logger.info(`❓ [Intent] fn=plan chat=${cleanId}`);
         const { getUserPlanConfig } = await import("../services/ProfileService");

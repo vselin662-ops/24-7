@@ -45,36 +45,33 @@ export async function handleTextCommand(
 
   let action: string | null = null;
 
+  // СТРОГОЕ СОВПАДЕНИЕ ДЛЯ КОМАНД БРИФИНГА
   if (lower === '⚙️ брифинг' || lower === 'брифинг настройки' || lower === 'настройки брифинга') {
     action = 'brief_open';
-  } else if (lower.startsWith('🏙 город') || lower === '🏙 город' || lower === 'город') {
+  } else if (lower === '🏙 город' || lower === 'город') {
     action = 'brief_city';
-  } else if (lower.startsWith('☀️ погода') || lower === '☀️ погода' || lower === 'погода') {
+  } else if (lower === '☀️ погода' || lower === 'погода') {
     action = 'brief_weather';
-  } else if (lower.startsWith('📖 притча') || lower === '📖 притча' || lower === 'притча') {
+  } else if (lower === '📖 притча' || lower === 'притча') {
     action = 'brief_parable';
-  } else if (lower.startsWith('🎼 псалом') || lower === '🎼 псалом' || lower === 'псалом') {
+  } else if (lower === '🎼 псалом' || lower === 'псалом') {
     action = 'brief_psalm';
-  } else if (lower.startsWith('✝️ стих') || lower === '✝️ стих' || lower === 'стих') {
+  } else if (lower === '✝️ стих' || lower === 'стих') {
     action = 'brief_verse';
-  } else if (lower.startsWith('✅ готово') || lower === 'готово' || lower === '✅ готово') {
+  } else if (lower === '✅ готово' || lower === 'готово') {
     action = 'brief_done';
-  } else if (lower.startsWith('▶️ включить') || lower.includes('включить план') || lower === 'включить план победы') {
+  }
+  // СТРОГОЕ СОВПАДЕНИЕ ДЛЯ КОМАНД ПЛАНА ПОБЕДЫ
+  else if (lower === 'включить план победы' || lower === 'включить план') {
     action = 'plan_on';
-  } else if (lower.startsWith('❌ отключить') || lower.includes('отключить план') || lower === 'отключить план победы' || lower === 'выключить план победы') {
+  } else if (lower === 'отключить план победы' || lower === 'выключить план победы' || lower === 'стоп план победы') {
     action = 'plan_off';
-  } else if (lower === '⚙️ план победы' || lower === 'план победы' || lower === 'план победы настройки' || lower === 'настройки плана') {
+  } else if (lower === '⚙️ план победы' || lower === 'план победы' || lower === 'план победы настройки' || lower === 'настройки план победы' || lower === 'настройки плана') {
     action = 'plan_open';
-  } else if (lower.startsWith('🌅 утро') || lower.includes('утро')) {
-    action = 'plan_time_m';
-  } else if (lower.startsWith('🌞 обед') || lower.includes('обед')) {
-    action = 'plan_time_n';
-  } else if (lower.startsWith('🌙 вечер') || lower.includes('вечер')) {
-    action = 'plan_time_e';
-  } else if (lower.includes('пояс') || lower.includes('🌍')) {
-    action = 'plan_tz';
-  } else if (lower.startsWith('🔊 голос') || lower.includes('голос')) {
-    action = 'plan_voice';
+  } else if (lower === 'голос вкл') {
+    action = 'plan_voice_on';
+  } else if (lower === 'голос выкл') {
+    action = 'plan_voice_off';
   }
 
   if (!action) return null;
@@ -528,9 +525,11 @@ export async function handleCallback(
     };
   }
 
-  if (lower === 'plan_voice' || lower === 'plan_toggle_voice') {
+  if (lower === 'plan_voice' || lower === 'plan_toggle_voice' || lower === 'plan_voice_on' || lower === 'plan_voice_off') {
     const cfg = getUserPlanConfig(cleanId);
-    const nextVoice = cfg.voice_on !== 0 ? 0 : 1;
+    let nextVoice = cfg.voice_on !== 0 ? 0 : 1;
+    if (lower === 'plan_voice_on') nextVoice = 1;
+    if (lower === 'plan_voice_off') nextVoice = 0;
     updateUserPlanConfig(cleanId, { voice_on: nextVoice });
     const menu = renderPlanMenu(cleanId);
     return {
