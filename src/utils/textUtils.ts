@@ -143,13 +143,196 @@ export function chunkText(text: string, maxLen: number = 300): string[] {
 export const splitTextSmart = chunkText;
 
 
+// Словарь числительных в падежах (формат: именительный/родительный/дательный/творительный/предложный)
+const NUMERALS_DICT: Record<string, string> = {
+  "1": "один/одного/одному/одним/одном",
+  "2": "два/двух/двум/двумя/двух",
+  "3": "три/трёх/трём/тремя/трёх",
+  "4": "четыре/четырёх/четырём/четырьмя/четырёх",
+  "5": "пять/пяти/пяти/пятью/пяти",
+  "6": "шесть/шести/шести/шестью/шести",
+  "7": "семь/семи/семи/семью/семи",
+  "8": "восемь/восьми/восьми/восьмью/восьми",
+  "9": "девять/девяти/девяти/девятью/девяти",
+  "10": "десять/десяти/десяти/десятью/десяти",
+  "11": "одиннадцать/одиннадцати/одиннадцати/одиннадцатью/одиннадцати",
+  "12": "двенадцать/двенадцати/двенадцати/двенадцатью/двенадцати",
+  "13": "тринадцать/тринадцати/тринадцати/тринадцатью/тринадцати",
+  "14": "четырнадцать/четырнадцати/четырнадцати/четырнадцатью/четырнадцати",
+  "15": "пятнадцать/пятнадцати/пятнадцати/пятнадцатью/пятнадцати",
+  "16": "шестнадцать/шестнадцати/шестнадцати/шестнадцатью/шестнадцати",
+  "17": "семнадцать/семнадцати/семнадцати/семнадцатью/семнадцати",
+  "18": "восемнадцать/восемнадцати/восемнадцати/восемнадцатью/восемнадцати",
+  "19": "девятнадцать/девятнадцати/девятнадцати/девятнадцатью/девятнадцати",
+  "20": "двадцать/двадцати/двадцати/двадцатью/двадцати",
+  "21": "двадцать один/двадцати одного/двадцати одному/двадцатью одним/двадцати одном",
+  "22": "двадцать два/двадцати двух/двадцати двум/двадцатью двумя/двадцати двух",
+  "23": "двадцать три/двадцати трёх/двадцати трём/двадцатью тремя/двадцати трёх",
+  "24": "двадцать четыре/двадцати четырёх/двадцати четырём/двадцатью четырьмя/двадцати четырёх",
+  "25": "двадцать пять/двадцати пяти/двадцати пяти/двадцатью пятью/двадцати пяти",
+  "26": "двадцать шесть/двадцати шести/двадцати шести/двадцатью шестью/двадцати шести",
+  "27": "двадцать семь/двадцати семи/двадцати семи/двадцатью семью/двадцати семи",
+  "28": "двадцать восемь/двадцати восьми/двадцати восьми/двадцатью восьмью/двадцати восьми",
+  "29": "двадцать девять/двадцати девяти/двадцати девяти/двадцатью девятью/двадцати девяти",
+  "30": "тридцать/тридцати/тридцати/тридцатью/тридцати",
+  "40": "сорок/сорока/сорока/сорока/сорока",
+  "50": "пятьдесят/пятидесяти/пятидесяти/пятьюдесятью/пятидесяти",
+  "60": "шестьдесят/шестидесяти/шестидесяти/шестьюдесятью/шестидесяти",
+  "70": "семьдесят/семидесяти/семидесяти/семьюдесятью/семидесяти",
+  "80": "восемьдесят/восьмидесяти/восьмидесяти/восьмьюдесятью/восьмидесяти",
+  "90": "девяносто/девяноста/девяноста/девяноста/девяноста",
+  "100": "сто/ста/ста/ста/ста"
+};
+
+const WORD_TO_DIGIT: Record<string, string> = {
+  "один": "1", "одна": "1", "одно": "1",
+  "два": "2", "две": "2",
+  "три": "3",
+  "четыре": "4",
+  "пять": "5",
+  "шесть": "6",
+  "семь": "7",
+  "восемь": "8",
+  "девять": "9",
+  "десять": "10",
+  "одиннадцать": "11",
+  "двенадцать": "12",
+  "тринадцать": "13",
+  "четырнадцать": "14",
+  "пятнадцать": "15",
+  "шестнадцать": "16",
+  "семнадцать": "17",
+  "восемнадцать": "18",
+  "девятнадцать": "19",
+  "двадцать": "20",
+  "тридцать": "30",
+  "сорок": "40",
+  "пятьдесят": "50",
+  "шестьдесят": "60",
+  "семьдесят": "70",
+  "восемьдесят": "80",
+  "девяносто": "90",
+  "сто": "100"
+};
+
+type RussianCase = 'nom' | 'gen' | 'dat' | 'ins' | 'pre' | 'acc';
+
+export function getDeclinedNumber(numStr: string, rCase: RussianCase): string {
+  const s = numStr.trim();
+  
+  if (NUMERALS_DICT[s]) {
+    const parts = NUMERALS_DICT[s].split('/');
+    switch (rCase) {
+      case 'nom': return parts[0];
+      case 'gen': return parts[1];
+      case 'dat': return parts[2];
+      case 'ins': return parts[3];
+      case 'pre': return parts[4];
+      case 'acc':
+        return parts[0];
+    }
+  }
+
+  const val = parseInt(s, 10);
+  if (!isNaN(val) && val > 20 && val < 100) {
+    const tens = Math.floor(val / 10) * 10;
+    const units = val % 10;
+    if (units === 0) {
+      return getDeclinedNumber(String(tens), rCase);
+    } else {
+      const tensDeclined = getDeclinedNumber(String(tens), rCase);
+      const unitsDeclined = getDeclinedNumber(String(units), rCase);
+      return `${tensDeclined} ${unitsDeclined}`;
+    }
+  }
+
+  return s;
+}
+
+function parseNumber(str: string): string | null {
+  const s = str.toLowerCase().trim();
+  if (/^\d+$/.test(s)) return s;
+  if (WORD_TO_DIGIT[s]) return WORD_TO_DIGIT[s];
+  return null;
+}
+
+export function normalizeNumeralsAndPrepositions(text: string): string {
+  if (!text) return "";
+  let res = text;
+
+  // 1. Нормализация диапазонов числительных: "1-2" -> "от 1 до 2"
+  res = res.replace(/(?<![а-яА-ЯёЁ\d])(\d+)\s*-\s*(\d+)(?![а-яА-ЯёЁ\d])/g, 'от $1 до $2');
+
+  // 2. Правила предлогов (regex):
+  // а) "от X до Y [лет/месяцев/дней]" (и вообще "от X до Y") -> родительный падеж (gen)
+  res = res.replace(/(?<![а-яА-ЯёЁ\d])от\s+([а-яА-ЯёЁ\d]+)\s+до\s+([а-яА-ЯёЁ\d]+)(?![а-яА-ЯёЁ\d])/gi, (match, xStr, yStr) => {
+    const xNum = parseNumber(xStr);
+    const yNum = parseNumber(yStr);
+    if (xNum && yNum) {
+      const xDecl = getDeclinedNumber(xNum, 'gen');
+      const yDecl = getDeclinedNumber(yNum, 'gen');
+      const isTitleCase = match.startsWith('От');
+      return `${isTitleCase ? 'От' : 'от'} ${xDecl} до ${yDecl}`;
+    }
+    return match;
+  });
+
+  // б) "между X и Y" -> творительный падеж (ins)
+  res = res.replace(/(?<![а-яА-ЯёЁ\d])между\s+([а-яА-ЯёЁ\d]+)\s+и\s+([а-яА-ЯёЁ\d]+)(?![а-яА-ЯёЁ\d])/gi, (match, xStr, yStr) => {
+    const xNum = parseNumber(xStr);
+    const yNum = parseNumber(yStr);
+    if (xNum && yNum) {
+      const xDecl = getDeclinedNumber(xNum, 'ins');
+      const yDecl = getDeclinedNumber(yNum, 'ins');
+      const isTitleCase = match.startsWith('Между');
+      return `${isTitleCase ? 'Между' : 'между'} ${xDecl} и ${yDecl}`;
+    }
+    return match;
+  });
+
+  // в) "с X по Y" -> X родительный, Y винительный (acc)
+  res = res.replace(/(?<![а-яА-ЯёЁ\d])с\s+([а-яА-ЯёЁ\d]+)\s+по\s+([а-яА-ЯёЁ\d]+)(?![а-яА-ЯёЁ\d])/gi, (match, xStr, yStr) => {
+    const xNum = parseNumber(xStr);
+    const yNum = parseNumber(yStr);
+    if (xNum && yNum) {
+      const xDecl = getDeclinedNumber(xNum, 'gen');
+      const yDecl = getDeclinedNumber(yNum, 'acc');
+      const isTitleCase = match.startsWith('С');
+      return `${isTitleCase ? 'С' : 'с'} ${xDecl} по ${yDecl}`;
+    }
+    return match;
+  });
+
+  // 3. Контекст: после числительного смотрим следующее слово (лет/месяцев/дней) для выбора падежа:
+  // - "лет/месяцев/дней" -> родительный
+  // - "год/месяц/день" -> винительный
+  const PLURAL_STEMS = /^(лет|месяцев|дней|часов)/i;
+  const SINGULAR_STEMS = /^(год|месяц|день|дн|час)/i;
+
+  res = res.replace(/(?<![а-яА-ЯёЁ\d])(\d+)\s+([а-яА-ЯёЁ]+)(?![а-яА-ЯёЁ\d])/gi, (match, numStr, noun) => {
+    if (PLURAL_STEMS.test(noun)) {
+      const declined = getDeclinedNumber(numStr, 'gen');
+      return `${declined} ${noun}`;
+    }
+    if (SINGULAR_STEMS.test(noun)) {
+      const declined = getDeclinedNumber(numStr, 'acc');
+      return `${declined} ${noun}`;
+    }
+    return match;
+  });
+
+  return res;
+}
+
+
 /**
  * Очистка и фонетическая оптимизация текста перед озвучкой в TTS
  */
 export function sanitizeForTTS(text: string): string {
   if (!text) return "";
 
-  let cleaned = text;
+  // Нормализуем числительные и предлоги в самом начале
+  let cleaned = normalizeNumeralsAndPrepositions(text);
 
   // 1. Номер дня в голосе убирай полностью (или пиши словами)
   // Убираем выражения типа "План Победы (День 246/365 — Утреннее чтение: Псалтирь 22:1)"

@@ -2,6 +2,8 @@ import { sqliteDb } from "../../db";
 import { logger } from "../logger";
 import { checkOutputForCanary } from "./canary-tokens";
 import { deductTrustScore } from "./trust-engine";
+import { spawnSync } from "child_process";
+import { normalizeNumeralsAndPrepositions } from "../utils/textUtils";
 
 const SENSITIVE_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: "Google API Key", pattern: /AIzaSy[a-zA-Z0-9_\-]{33}/g },
@@ -16,6 +18,59 @@ export interface RequestContext {
   isOwner?: boolean;
   userPrompt?: string;
   voice_mode?: boolean;
+}
+
+function callLLMForGrammarCorrectionSync(text: string): string {
+  const apiKey = process.env.GEMINI_API_KEY || "";
+  if (!apiKey || apiKey.includes("your_") || apiKey.includes("placeholder")) {
+    throw new Error("Missing GEMINI_API_KEY for sync LLM correction");
+  }
+
+  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const systemPrompt = "Ты — лингвистический корректор русского языка. Исправь грамматические ошибки в числительных и падежах (особенно конструкции типа 'от одна до два лет' -> 'от одного до двух лет', 'от одна до два' -> 'от одного до двух'). Верни исправленный русский текст. Ничего не комментируй, не добавляй отсебятины.";
+  
+  const escapedText = JSON.stringify(text);
+  const escapedSystem = JSON.stringify(systemPrompt);
+
+  const code = `
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) process.exit(1);
+
+async function main() {
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=' + apiKey, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: ${escapedSystem} + "\\n\\nТекст для исправления: " + ${escapedText} }] }]
+      }),
+      signal: AbortSignal.timeout(2500)
+    });
+    if (!res.ok) process.exit(2);
+    const json = await res.json();
+    const txt = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (txt) {
+      console.log(txt.trim());
+      process.exit(0);
+    }
+    process.exit(3);
+  } catch (err) {
+    process.exit(4);
+  }
+}
+main();
+`;
+
+  const result = spawnSync("node", ["-e", code], {
+    env: process.env,
+    timeout: 3000,
+    encoding: "utf-8"
+  });
+
+  if (result.status === 0 && result.stdout) {
+    return result.stdout.trim();
+  }
+  throw new Error("Sync LLM correction failed or timed out: status=" + result.status);
 }
 
 export function filterAIOutput(response: string, context: RequestContext = {}): string {
@@ -87,6 +142,24 @@ export function filterAIOutput(response: string, context: RequestContext = {}): 
     }
 
     deductTrustScore(tenantId, 30, exfiltrationReason);
+  }
+
+  // 5. Check and correct numeral grammar constructions
+  const badNumeralPattern = /(?<![а-яА-ЯёЁ\d])от\s+(одна|две|[а-яА-ЯёЁ]+?[ая])\s+до\s+([а-яА-ЯёЁ\d]+)(?![а-яА-ЯёЁ\d])/i;
+  if (badNumeralPattern.test(filtered)) {
+    logger.info("⚠️ [Output Filter] Detected bad grammar construction: " + (filtered.match(badNumeralPattern)?.[0] || ""));
+    try {
+      const corrected = callLLMForGrammarCorrectionSync(filtered);
+      if (corrected && corrected.length > 5) {
+        logger.info("✅ [Output Filter] Successfully corrected grammar via LLM");
+        filtered = corrected;
+      } else {
+        throw new Error("Empty correction received");
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ [Output Filter] LLM correction failed or timed out, falling back to local rules. Error: ${err?.message || err}`);
+      filtered = normalizeNumeralsAndPrepositions(filtered);
+    }
   }
 
   return filtered;
